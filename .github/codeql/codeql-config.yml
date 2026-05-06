@@ -1,0 +1,13 @@
+name: hevc.js CodeQL config
+
+# Exclude generated bundles and standalone tooling from JavaScript/TypeScript
+# analysis. The library source lives in packages/*/src and src/, which are
+# scanned normally.
+paths-ignore:
+  - 'demo/dash-bundle.js'
+  - 'demo/transcode-worker.js'
+  - 'demo/worker.js'
+  - 'demo/hevc-decode.js'
+  - 'tools/bench_wasm.cjs'
+  - 'tools/bench_wasm.mjs'
+  - 'site/index.html'
