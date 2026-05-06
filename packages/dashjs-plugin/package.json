@@ -49,7 +49,7 @@
     "url": "https://github.com/privaloops/hevc.js/issues"
   },
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && tsc -p tsconfig.build.json",
     "dev": "tsup --watch"
   },
   "dependencies": {
