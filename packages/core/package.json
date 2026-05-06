@@ -48,7 +48,7 @@
     "url": "https://github.com/privaloops/hevc.js/issues"
   },
   "scripts": {
-    "build": "tsup && mv dist/transcode-worker.global.js dist/transcode-worker.js && mv dist/transcode-worker.global.js.map dist/transcode-worker.js.map && mkdir -p dist/wasm && cp wasm/hevc-decode.js wasm/hevc-decode.wasm dist/wasm/",
+    "build": "tsup && tsc -p tsconfig.build.json && mv dist/transcode-worker.global.js dist/transcode-worker.js && mv dist/transcode-worker.global.js.map dist/transcode-worker.js.map && mkdir -p dist/wasm && cp wasm/hevc-decode.js wasm/hevc-decode.wasm dist/wasm/",
     "dev": "tsup --watch"
   },
   "dependencies": {
