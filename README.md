@@ -248,6 +248,29 @@ pnpm build:demo     # Builds WASM + JS bundles + copies assets
 npx serve demo      # Open http://localhost:3000
 ```
 
+## Contributors
+
+Thanks goes to these people ([emoji key](https://allcontributors.org/docs/en/emoji-key)):
+
+<table>
+  <tr>
+    <td align="center">
+      <a href="https://github.com/privaloops">
+        <img src="https://github.com/privaloops.png" width="80" alt="privaloops" /><br />
+        <sub><b>Thibaut Lion</b></sub>
+      </a><br />
+      💻 📖 🤔 👀 🚇 ⚠️ 🚧
+    </td>
+    <td align="center">
+      <a href="https://github.com/kasty">
+        <img src="https://github.com/kasty.png" width="80" alt="kasty" /><br />
+        <sub><b>Marie</b></sub>
+      </a><br />
+      🤔 👀 ⚠️
+    </td>
+  </tr>
+</table>
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
