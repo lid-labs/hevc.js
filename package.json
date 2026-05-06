@@ -69,7 +69,7 @@
   "devDependencies": {
     "@playwright/test": "^1.59.1",
     "browserstack-local": "^1.5.13",
-    "browserstack-node-sdk": "^1.52.2",
+    "browserstack-node-sdk": "^1.52.3",
     "esbuild": "^0.28.0"
   }
 }
