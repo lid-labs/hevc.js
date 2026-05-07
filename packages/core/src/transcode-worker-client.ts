@@ -14,7 +14,10 @@ export interface TranscodeWorkerClientConfig extends SegmentTranscoderConfig {
 }
 
 export class TranscodeWorkerClient {
-  private _worker: Worker;
+  // Resolves once the worker exists. All postMessage paths await this first
+  // so that cross-origin worker loading (fetch + blob URL) stays transparent
+  // to the synchronous public constructor.
+  private _workerReady: Promise<Worker>;
   private _ready = false;
   private _initParsed = false;
   private _initResult: TranscodedInit | null = null;
@@ -27,20 +30,18 @@ export class TranscodeWorkerClient {
   private _initParsedReject!: (err: Error) => void;
 
   constructor(config: TranscodeWorkerClientConfig) {
-    // Classic worker (not module) — needed for importScripts() to load WASM glue
-    this._worker = new Worker(config.workerUrl);
-
     this._readyPromise = new Promise<void>((resolve) => { this._readyResolve = resolve; });
     this._initParsedPromise = new Promise<void>((resolve, reject) => { this._initParsedResolve = resolve; this._initParsedReject = reject; });
 
-    this._worker.onmessage = (e: MessageEvent) => this._onMessage(e.data);
-    this._worker.onerror = (e: ErrorEvent) => {
-      log.error("Worker error:", e.message);
-    };
-
-    // Init the transcoder inside the worker
     const { workerUrl: _, ...transcoderConfig } = config;
-    this._worker.postMessage({ type: "init", config: transcoderConfig });
+    this._workerReady = loadWorker(config.workerUrl).then((worker) => {
+      worker.onmessage = (e: MessageEvent) => this._onMessage(e.data);
+      worker.onerror = (e: ErrorEvent) => {
+        log.error("Worker error:", e.message);
+      };
+      worker.postMessage({ type: "init", config: transcoderConfig });
+      return worker;
+    });
   }
 
   get isInitialized(): boolean { return this._ready; }
@@ -49,12 +50,16 @@ export class TranscodeWorkerClient {
 
   /** Wait for the WASM decoder to be ready inside the worker */
   async waitReady(): Promise<void> {
+    // Surface worker creation failures (cross-origin fetch, blob URL, etc.)
+    // before we sit waiting on _readyPromise that would never resolve.
+    await this._workerReady;
     return this._readyPromise;
   }
 
   /** Send an init segment (ftyp + moov) to the worker for parsing */
   async processInitSegment(data: Uint8Array): Promise<void> {
-    this._worker.postMessage(
+    const worker = await this._workerReady;
+    worker.postMessage(
       { type: "initSegment", data: data.buffer },
       [data.buffer],
     );
@@ -63,10 +68,11 @@ export class TranscodeWorkerClient {
 
   /** Send a media segment to the worker for transcoding */
   async processMediaSegment(data: Uint8Array): Promise<Uint8Array | null> {
+    const worker = await this._workerReady;
     const id = this._segmentId++;
     return new Promise<Uint8Array | null>((resolve, reject) => {
       this._pendingResolves.set(id, { resolve, reject });
-      this._worker.postMessage(
+      worker.postMessage(
         { type: "mediaSegment", data: data.buffer, id },
         [data.buffer],
       );
@@ -78,11 +84,11 @@ export class TranscodeWorkerClient {
     data: Uint8Array,
     onChunk: (h264: Uint8Array, initSegment: Uint8Array | null, codec: string | null) => Promise<void> | void,
   ): Promise<void> {
+    const worker = await this._workerReady;
     const id = this._segmentId++;
     return new Promise<void>((resolve, reject) => {
       // Queue to serialize async onChunk calls (MSE appends must be sequential)
       let chainPromise = Promise.resolve();
-      let done = false;
 
       const handler = (e: MessageEvent) => {
         const msg = e.data;
@@ -99,17 +105,16 @@ export class TranscodeWorkerClient {
           // Chain async calls so MSE appends don't overlap
           chainPromise = chainPromise.then(() => onChunk(h264, init, msg.codec ?? null));
         } else if (msg.type === "streamingDone") {
-          done = true;
-          this._worker.removeEventListener("message", handler);
+          worker.removeEventListener("message", handler);
           // Wait for all queued onChunk calls to finish before resolving
           chainPromise.then(() => resolve()).catch(reject);
         } else if (msg.type === "error") {
-          this._worker.removeEventListener("message", handler);
+          worker.removeEventListener("message", handler);
           chainPromise.then(() => reject(new Error(msg.message as string))).catch(reject);
         }
       };
-      this._worker.addEventListener("message", handler);
-      this._worker.postMessage(
+      worker.addEventListener("message", handler);
+      worker.postMessage(
         { type: "mediaSegmentStreaming", data: data.buffer, id },
         [data.buffer],
       );
@@ -138,14 +143,16 @@ export class TranscodeWorkerClient {
       this._initParsedReject = reject;
     });
 
-    this._worker.postMessage({ type: "abort" });
+    this._workerReady.then((worker) => worker.postMessage({ type: "abort" }));
   }
 
   /** Destroy the worker */
   destroy(): void {
     this._pendingResolves.clear();
-    this._worker.postMessage({ type: "destroy" });
-    this._worker.terminate();
+    this._workerReady.then((worker) => {
+      worker.postMessage({ type: "destroy" });
+      worker.terminate();
+    });
   }
 
   private _onMessage(msg: Record<string, unknown>): void {
@@ -207,4 +214,19 @@ export class TranscodeWorkerClient {
         break;
     }
   }
+}
+
+// Classic Workers refuse cross-origin scripts even with CORS headers.
+// When workerUrl is cross-origin we fetch its source and wrap it in a
+// same-origin blob URL so `new Worker(...)` accepts it.
+async function loadWorker(workerUrl: string): Promise<Worker> {
+  const sameOrigin =
+    typeof location === "undefined" ||
+    new URL(workerUrl, location.href).origin === location.origin;
+  if (sameOrigin) return new Worker(workerUrl);
+  const code = await (await fetch(workerUrl)).text();
+  const blobUrl = URL.createObjectURL(
+    new Blob([code], { type: "application/javascript" }),
+  );
+  return new Worker(blobUrl);
 }

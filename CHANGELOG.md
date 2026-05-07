@@ -7,6 +7,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- **CDN-friendly asset loading** (`@hevcjs/core@1.0.5` + `@hevcjs/dashjs-plugin@1.0.3`): the plugin can now be loaded directly from a CDN (esm.sh, unpkg, jsDelivr) onto a page hosted on a different origin. Two related fixes:
+  - `TranscodeWorkerClient` auto-fetches a cross-origin `workerUrl` and wraps it in a same-origin `blob:` URL (the `Worker` constructor refuses cross-origin scripts even with CORS).
+  - `wasmBinaryUrl` is now plumbed through `MSEInterceptConfig` / `TranscodePipelineConfig` / `SegmentTranscoderConfig` and forwarded to Emscripten's `locateFile`, so the `.wasm` resolves correctly when the loader runs inside a `blob:` worker context. Same-origin callers are unaffected (additive option).
+- **E2E cross-origin asset test** (`tests/e2e/dash.spec.ts`): page on `localhost:8090`, worker + wasm fetched from `127.0.0.1:8090`. Local Python test server now sends permissive CORS headers (`tests/cors-server.py`).
+- **Demo URL parameter overrides** (`demo/dash.html`): `?workerUrl=`, `?wasmUrl=`, `?wasmBinaryUrl=` for testing alternate asset locations without rebuilding.
+
+
 - **Security hardening CI**: CodeQL static analysis (C++ + JS/TS) on push/PR/weekly schedule, Dependabot for npm deps + GitHub Actions versions, `pnpm audit --prod` in test pipeline
 - **SECURITY.md**: vulnerability reporting policy via GitHub Security Advisories
 - **CI hardening**: all GitHub Actions pinned by SHA (supply chain protection), github-script injection fix (env vars instead of inline `${{ }}`), permissions scoped per-job

@@ -17,6 +17,9 @@ import { MSEController } from "./mse-controller.js";
 export interface TranscodePipelineConfig {
   videoElement: HTMLVideoElement;
   wasmUrl?: string;
+  /** URL to the .wasm binary, forwarded to Emscripten's locateFile.
+   *  Required when assets are loaded from a different origin than the page. */
+  wasmBinaryUrl?: string;
   fps?: number;
   bitrate?: number;
 }
@@ -44,6 +47,7 @@ export class TranscodePipeline {
   async init(): Promise<void> {
     this._decoder = await HEVCDecoder.create({
       wasmUrl: this._config.wasmUrl,
+      wasmBinaryUrl: this._config.wasmBinaryUrl,
     });
     this._initialized = true;
   }
