@@ -20,6 +20,9 @@ import type { DecoderOptions } from "./types.js";
 
 export interface SegmentTranscoderConfig {
   wasmUrl?: string;
+  /** URL to the .wasm binary, forwarded to Emscripten's locateFile.
+   *  Required when assets are loaded from a different origin than the page. */
+  wasmBinaryUrl?: string;
   fps?: number;
   bitrate?: number;
 }
@@ -67,6 +70,7 @@ export class SegmentTranscoder {
   async init(): Promise<void> {
     const decoderOpts: DecoderOptions = {};
     if (this._config.wasmUrl) decoderOpts.wasmUrl = this._config.wasmUrl;
+    if (this._config.wasmBinaryUrl) decoderOpts.wasmBinaryUrl = this._config.wasmBinaryUrl;
     this._decoder = await HEVCDecoder.create(decoderOpts);
     this._initialized = true;
   }

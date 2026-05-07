@@ -41,6 +41,24 @@ installMSEIntercept({
 });
 ```
 
+### Loading from a CDN (zero build, cross-origin)
+
+`@hevcjs/core` works directly from a CDN — no install, no build step, no static asset copy:
+
+```html
+<script type="module">
+  import { installMSEIntercept } from 'https://esm.sh/@hevcjs/core@1';
+
+  installMSEIntercept({
+    workerUrl:     'https://unpkg.com/@hevcjs/core@1/dist/transcode-worker.js',
+    wasmUrl:       'https://unpkg.com/@hevcjs/core@1/dist/wasm/hevc-decode.js',
+    wasmBinaryUrl: 'https://unpkg.com/@hevcjs/core@1/dist/wasm/hevc-decode.wasm',
+  });
+</script>
+```
+
+`wasmBinaryUrl` is required when assets live on a different origin than the page (Emscripten otherwise fails to resolve the `.wasm` relative to the worker's `blob:` URL). Cross-origin worker loading is handled transparently — the plugin fetches the script and wraps it in a same-origin blob URL since classic Workers refuse cross-origin scripts even with CORS headers.
+
 ### Segment transcoder (manual control)
 
 ```js

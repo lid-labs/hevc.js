@@ -113,6 +113,7 @@ export async function attachHevcSupport(
   // Install MSE intercept — patches isTypeSupported + addSourceBuffer
   installMSEIntercept({
     wasmUrl: config.wasmUrl,
+    wasmBinaryUrl: config.wasmBinaryUrl,
     fps: config.fps,
     bitrate: config.bitrate,
     workerUrl: config.workerUrl,

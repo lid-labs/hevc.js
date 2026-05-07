@@ -41,12 +41,15 @@
   <div id="status" class="demo-status">Loading...</div>
   <textarea id="log" class="demo-log" readonly></textarea>
 
-  <div class="demo-code"><span class="cm">// npm install @hevcjs/dashjs-plugin dashjs</span>
-<span class="kw">import</span> dashjs <span class="kw">from</span> <span class="str">'dashjs'</span>;
-<span class="kw">import</span> { <span class="fn">attachHevcSupport</span> } <span class="kw">from</span> <span class="str">'@hevcjs/dashjs-plugin'</span>;
+  <div class="demo-code"><span class="cm">// Zero build — load everything from a CDN.</span>
+<span class="kw">import</span> { <span class="fn">attachHevcSupport</span> } <span class="kw">from</span> <span class="str">'https://esm.sh/@hevcjs/dashjs-plugin@1'</span>;
 
 <span class="kw">const</span> player = dashjs.<span class="fn">MediaPlayer</span>().<span class="fn">create</span>();
-<span class="kw">await</span> <span class="fn">attachHevcSupport</span>(player);
+<span class="kw">await</span> <span class="fn">attachHevcSupport</span>(player, {
+  wasmUrl:       <span class="str">'https://unpkg.com/@hevcjs/core@1/dist/wasm/hevc-decode.js'</span>,
+  wasmBinaryUrl: <span class="str">'https://unpkg.com/@hevcjs/core@1/dist/wasm/hevc-decode.wasm'</span>,
+  workerUrl:     <span class="str">'https://unpkg.com/@hevcjs/core@1/dist/transcode-worker.js'</span>,
+});
 player.<span class="fn">initialize</span>(videoElement, mpdUrl, <span class="kw">true</span>);</div>
 </main>
 
@@ -92,8 +95,11 @@ async function loadMPD(presetUrl) {
   player = dashjs.MediaPlayer().create();
 
   const forceTranscode = document.getElementById('force-transcode').checked;
+  const qp = new URLSearchParams(location.search);
   cleanup = await HevcDash.attachHevcSupport(player, {
-    workerUrl: './transcode-worker.js',
+    workerUrl: qp.get('workerUrl') || './transcode-worker.js',
+    wasmUrl: qp.get('wasmUrl') || undefined,
+    wasmBinaryUrl: qp.get('wasmBinaryUrl') || undefined,
     forceTranscode,
   });
 

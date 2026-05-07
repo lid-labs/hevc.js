@@ -153,6 +153,7 @@ function createTranscodingProxy(
     workerClient = new TranscodeWorkerClient({
       workerUrl: config.workerUrl!,
       wasmUrl: config.wasmUrl,
+      wasmBinaryUrl: config.wasmBinaryUrl,
       fps: config.fps,
       bitrate: config.bitrate,
     });

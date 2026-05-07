@@ -11588,6 +11588,7 @@ var HevcDash = (() => {
     async init() {
       const decoderOpts = {};
       if (this._config.wasmUrl) decoderOpts.wasmUrl = this._config.wasmUrl;
+      if (this._config.wasmBinaryUrl) decoderOpts.wasmBinaryUrl = this._config.wasmBinaryUrl;
       this._decoder = await HEVCDecoder.create(decoderOpts);
       this._initialized = true;
     }
@@ -11910,7 +11911,6 @@ var HevcDash = (() => {
       this._initResult = null;
       this._segmentId = 0;
       this._pendingResolves = /* @__PURE__ */ new Map();
-      this._worker = new Worker(config.workerUrl);
       this._readyPromise = new Promise((resolve) => {
         this._readyResolve = resolve;
       });
@@ -11918,12 +11918,15 @@ var HevcDash = (() => {
         this._initParsedResolve = resolve;
         this._initParsedReject = reject;
       });
-      this._worker.onmessage = (e) => this._onMessage(e.data);
-      this._worker.onerror = (e) => {
-        log.error("Worker error:", e.message);
-      };
       const { workerUrl: _, ...transcoderConfig } = config;
-      this._worker.postMessage({ type: "init", config: transcoderConfig });
+      this._workerReady = loadWorker(config.workerUrl).then((worker) => {
+        worker.onmessage = (e) => this._onMessage(e.data);
+        worker.onerror = (e) => {
+          log.error("Worker error:", e.message);
+        };
+        worker.postMessage({ type: "init", config: transcoderConfig });
+        return worker;
+      });
     }
     get isInitialized() {
       return this._ready;
@@ -11936,11 +11939,13 @@ var HevcDash = (() => {
     }
     /** Wait for the WASM decoder to be ready inside the worker */
     async waitReady() {
+      await this._workerReady;
       return this._readyPromise;
     }
     /** Send an init segment (ftyp + moov) to the worker for parsing */
     async processInitSegment(data) {
-      this._worker.postMessage(
+      const worker = await this._workerReady;
+      worker.postMessage(
         { type: "initSegment", data: data.buffer },
         [data.buffer]
       );
@@ -11948,10 +11953,11 @@ var HevcDash = (() => {
     }
     /** Send a media segment to the worker for transcoding */
     async processMediaSegment(data) {
+      const worker = await this._workerReady;
       const id = this._segmentId++;
       return new Promise((resolve, reject) => {
         this._pendingResolves.set(id, { resolve, reject });
-        this._worker.postMessage(
+        worker.postMessage(
           { type: "mediaSegment", data: data.buffer, id },
           [data.buffer]
         );
@@ -11959,10 +11965,10 @@ var HevcDash = (() => {
     }
     /** Send a media segment for streaming transcoding — onChunk called for each partial result */
     async processMediaSegmentStreaming(data, onChunk) {
+      const worker = await this._workerReady;
       const id = this._segmentId++;
       return new Promise((resolve, reject) => {
         let chainPromise = Promise.resolve();
-        let done = false;
         const handler = (e) => {
           const msg = e.data;
           if (msg.id !== id) return;
@@ -11977,16 +11983,15 @@ var HevcDash = (() => {
             const h264 = new Uint8Array(msg.h264);
             chainPromise = chainPromise.then(() => onChunk(h264, init, msg.codec ?? null));
           } else if (msg.type === "streamingDone") {
-            done = true;
-            this._worker.removeEventListener("message", handler);
+            worker.removeEventListener("message", handler);
             chainPromise.then(() => resolve()).catch(reject);
           } else if (msg.type === "error") {
-            this._worker.removeEventListener("message", handler);
+            worker.removeEventListener("message", handler);
             chainPromise.then(() => reject(new Error(msg.message))).catch(reject);
           }
         };
-        this._worker.addEventListener("message", handler);
-        this._worker.postMessage(
+        worker.addEventListener("message", handler);
+        worker.postMessage(
           { type: "mediaSegmentStreaming", data: data.buffer, id },
           [data.buffer]
         );
@@ -12009,13 +12014,15 @@ var HevcDash = (() => {
         this._initParsedResolve = resolve;
         this._initParsedReject = reject;
       });
-      this._worker.postMessage({ type: "abort" });
+      this._workerReady.then((worker) => worker.postMessage({ type: "abort" }));
     }
     /** Destroy the worker */
     destroy() {
       this._pendingResolves.clear();
-      this._worker.postMessage({ type: "destroy" });
-      this._worker.terminate();
+      this._workerReady.then((worker) => {
+        worker.postMessage({ type: "destroy" });
+        worker.terminate();
+      });
     }
     _onMessage(msg) {
       switch (msg.type) {
@@ -12067,6 +12074,15 @@ var HevcDash = (() => {
       }
     }
   };
+  async function loadWorker(workerUrl) {
+    const sameOrigin = typeof location === "undefined" || new URL(workerUrl, location.href).origin === location.origin;
+    if (sameOrigin) return new Worker(workerUrl);
+    const code = await (await fetch(workerUrl)).text();
+    const blobUrl = URL.createObjectURL(
+      new Blob([code], { type: "application/javascript" })
+    );
+    return new Worker(blobUrl);
+  }
   var HEVC_DETECT_RE = /hev1|hvc1/i;
   var HEVC_CODEC_RE = /hev1[^"']*|hvc1[^"']*/gi;
   var H264_CODEC = "avc1.640033";
@@ -12145,6 +12161,7 @@ var HevcDash = (() => {
       workerClient = new TranscodeWorkerClient({
         workerUrl: config.workerUrl,
         wasmUrl: config.wasmUrl,
+        wasmBinaryUrl: config.wasmBinaryUrl,
         fps: config.fps,
         bitrate: config.bitrate
       });
@@ -12482,6 +12499,7 @@ var HevcDash = (() => {
     console.log("[hevc.js/dash] No native HEVC support \u2014 installing WASM transcoder");
     installMSEIntercept({
       wasmUrl: config.wasmUrl,
+      wasmBinaryUrl: config.wasmBinaryUrl,
       fps: config.fps,
       bitrate: config.bitrate,
       workerUrl: config.workerUrl
