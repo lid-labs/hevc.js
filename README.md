@@ -107,6 +107,18 @@ No `Cross-Origin-Embedder-Policy` or `Cross-Origin-Opener-Policy` headers needed
 
 ## C/C++ decoder
 
+### Why a from-scratch decoder?
+
+[libde265](https://github.com/strukturag/libde265) exists, is mature, and works. So why write another HEVC decoder?
+
+This implementation targets a different niche on three axes:
+
+- **Size** — 236 KB WASM vs ~2 MB for libde265 compiled to WASM. 8× smaller — which matters when shipping to a browser, a microVM, or a sandboxed runtime.
+- **Modernity & license** — C++17 throughout (`std::optional`, `std::shared_ptr`, `std::array`, `constexpr`), single-threaded, zero dependencies, **MIT-licensed** (vs LGPL for libde265 — relevant for static linking in commercial products).
+- **Spec traceability** — function names mirror ITU-T H.265 section numbers, and [`docs/cross-reference.md`](docs/cross-reference.md) maps every spec section to its source file and test. Useful if you want to *understand* HEVC, not just decode it (universities, codec research, contributors).
+
+This is **not a libde265 replacement** — libde265 is faster on pure native and battle-tested in production (GStreamer, VLC, libheif, FFmpeg fallback). For embedding in browsers, microVMs, and sandboxed environments where binary size, license, or readability matter more than the last 20% of native throughput, this decoder is a viable alternative.
+
 ### C API
 
 ```c
@@ -179,17 +191,17 @@ cmake --build build-wasm
 
 Single-threaded, Apple Silicon (M-series):
 
-| | Native C++ | WASM (Chrome) |
-|---|---|---|
-| **1080p decode** | 76 fps | 61 fps |
-| **4K decode** | 28 fps | 21 fps |
-| **1080p transcode** | — | ~2.5x realtime (6s segment in 2.4s) |
+| | Native C++ | WASM (Chrome) | vs libde265 (WASM) |
+|---|---|---|---|
+| **1080p decode** | 76 fps | 61 fps | **83%** of libde265 speed |
+| **4K decode** | 28 fps | 21 fps | — |
+| **1080p transcode** | — | ~2.5x realtime (6s segment in 2.4s) | — |
 
-The WASM decoder is within 20% of native C++ performance, and reaches **83% of libde265** speed (a mature, 10-year-old optimized HEVC decoder) when both are compiled to WASM.
+The WASM decoder is within 20% of native C++ performance, and reaches **83% the speed of libde265** (a mature, 10-year-old optimized HEVC decoder) when both are compiled to WASM — in **1/8th the binary size** (236 KB vs ~2 MB).
 
 ### Spec conformance
 
-Implemented per **ITU-T H.265 (v8, 08/2021)** — 716 pages, transcribed directly from the spec. Validated pixel-perfect against ffmpeg on 128 test bitstreams.
+Implemented per **ITU-T H.265 (v8, 08/2021)** — 716 pages, transcribed directly from the spec. Validated pixel-perfect against ffmpeg on 128 test bitstreams. Each spec section is mapped 1:1 to its source file and test in [`docs/cross-reference.md`](docs/cross-reference.md).
 
 | Feature | Status |
 |---|---|
