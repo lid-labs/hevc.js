@@ -11557,6 +11557,15 @@ var HevcDash = (() => {
     }
     return box("mdat", payload);
   }
+  function hevcMimeToH264Codec(mime) {
+    if (typeof mime !== "string") return "avc1.640033";
+    const match = mime.match(/\.[LH](\d+)/);
+    if (!match) return "avc1.640033";
+    const level = parseInt(match[1], 10);
+    if (level >= 150) return "avc1.640033";
+    if (level >= 120) return "avc1.64002a";
+    return "avc1.640028";
+  }
   var SegmentTranscoder = class {
     constructor(config = {}) {
       this._decoder = null;
@@ -12085,7 +12094,6 @@ var HevcDash = (() => {
   }
   var HEVC_DETECT_RE = /hev1|hvc1/i;
   var HEVC_CODEC_RE = /hev1[^"']*|hvc1[^"']*/gi;
-  var H264_CODEC = "avc1.640033";
   var interceptState = null;
   function installMSEIntercept(config = {}) {
     if (config.logLevel) setLogLevel(config.logLevel);
@@ -12105,7 +12113,8 @@ var HevcDash = (() => {
     };
     MediaSource.isTypeSupported = function(mimeType) {
       if (HEVC_DETECT_RE.test(mimeType)) {
-        const h264Mime = mimeType.replace(HEVC_CODEC_RE, H264_CODEC);
+        const h264Codec = hevcMimeToH264Codec(mimeType);
+        const h264Mime = mimeType.replace(HEVC_CODEC_RE, h264Codec);
         const result = originalIsTypeSupported.call(MediaSource, h264Mime);
         log.debug(`isTypeSupported("${mimeType}") \u2192 "${h264Mime}" \u2192 ${result}`);
         return result;
@@ -12117,7 +12126,8 @@ var HevcDash = (() => {
       interceptState.originalDecodingInfo = originalDecodingInfo;
       navigator.mediaCapabilities.decodingInfo = async function(cfg) {
         if (cfg.video?.contentType && HEVC_DETECT_RE.test(cfg.video.contentType)) {
-          const h264Type = cfg.video.contentType.replace(HEVC_CODEC_RE, H264_CODEC);
+          const h264Codec = hevcMimeToH264Codec(cfg.video.contentType);
+          const h264Type = cfg.video.contentType.replace(HEVC_CODEC_RE, h264Codec);
           const h264Config = { ...cfg, video: { ...cfg.video, contentType: h264Type } };
           return originalDecodingInfo(h264Config);
         }
@@ -12128,8 +12138,9 @@ var HevcDash = (() => {
       if (!HEVC_DETECT_RE.test(mimeType)) {
         return originalAddSourceBuffer.call(this, mimeType);
       }
-      log.info(`addSourceBuffer("${mimeType}") \u2192 creating H.264 proxy`);
-      const h264Mime = `video/mp4; codecs="${H264_CODEC}"`;
+      const h264Codec = hevcMimeToH264Codec(mimeType);
+      log.info(`addSourceBuffer("${mimeType}") \u2192 creating H.264 proxy with ${h264Codec}`);
+      const h264Mime = `video/mp4; codecs="${h264Codec}"`;
       const realSB = originalAddSourceBuffer.call(this, h264Mime);
       return createTranscodingProxy(realSB, interceptState.config);
     };
