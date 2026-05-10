@@ -25,3 +25,4 @@ export { SegmentTranscoder } from "./segment-transcoder.js";
 export type { SegmentTranscoderConfig, TranscodedInit } from "./segment-transcoder.js";
 export { TranscodeWorkerClient } from "./transcode-worker-client.js";
 export type { TranscodeWorkerClientConfig } from "./transcode-worker-client.js";
+export { hevcMimeToH264Codec } from "./codec-mapping.js";

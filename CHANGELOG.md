@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- **`hevcMimeToH264Codec` helper** (`packages/core/src/codec-mapping.ts`): parses the HEVC level (`L<level*30>` field) from a mime/codec string and returns a matching H.264 codec string. Used by MSE intercept to advertise an `avc1.X` profile/level that fits the resolution implied by the input HEVC level, instead of always advertising High@5.1.
+- **vitest setup for `packages/core`**: first JS/TS unit tests in the project (`codec-mapping.test.ts`, 14 cases covering boundary levels, hev1/hvc1/H prefixes, malformed input, dot-anchored regex). Added `pnpm test:unit` workspace script.
+
+### Changed
+- **MSE intercept advertises a dynamic H.264 codec** (`packages/core/src/mse-intercept.ts`): `isTypeSupported`, `decodingInfo`, and `addSourceBuffer` no longer hardcode `avc1.640033`. The advertised string is now derived from the incoming HEVC mime via `hevcMimeToH264Codec`. A 720p HEVC manifest now advertises `avc1.640028`, a 1080p manifest `avc1.64002a`, a 4K manifest `avc1.640033`. `dashjs-plugin` benefits transparently — no code change in the plugin itself.
+
 - **CDN-friendly asset loading** (`@hevcjs/core@1.0.5` + `@hevcjs/dashjs-plugin@1.0.3`): the plugin can now be loaded directly from a CDN (esm.sh, unpkg, jsDelivr) onto a page hosted on a different origin. Two related fixes:
   - `TranscodeWorkerClient` auto-fetches a cross-origin `workerUrl` and wraps it in a same-origin `blob:` URL (the `Worker` constructor refuses cross-origin scripts even with CORS).
   - `wasmBinaryUrl` is now plumbed through `MSEInterceptConfig` / `TranscodePipelineConfig` / `SegmentTranscoderConfig` and forwarded to Emscripten's `locateFile`, so the `.wasm` resolves correctly when the loader runs inside a `blob:` worker context. Same-origin callers are unaffected (additive option).
