@@ -34,6 +34,9 @@
     "test:native": "cmake -B build -DCMAKE_BUILD_TYPE=Debug && cmake --build build && cd build && ctest --output-on-failure",
     "test:unit": "pnpm -r --if-present test",
     "test:e2e": "npx playwright test --project=local-chromium",
+    "changeset": "changeset",
+    "version": "changeset version && pnpm install --lockfile-only",
+    "release": "pnpm build:js && changeset publish",
     "test:e2e:bs": "npx playwright test --project=bs-chrome-windows --project=bs-edge-windows --project=bs-firefox-windows --project=bs-chrome-macos --project=bs-safari-macos",
     "clean": "rm -rf build build-wasm packages/*/dist"
   },
@@ -68,6 +71,8 @@
     "node": ">=18"
   },
   "devDependencies": {
+    "@changesets/changelog-github": "^0.7.0",
+    "@changesets/cli": "^2.31.0",
     "@playwright/test": "^1.59.1",
     "browserstack-local": "^1.5.13",
     "browserstack-node-sdk": "^1.52.3",
