@@ -5,5 +5,5 @@
     "noEmit": false
   },
   "include": ["src"],
-  "exclude": ["src/transcode-worker.ts"]
+  "exclude": ["src/transcode-worker.ts", "src/**/*.test.ts"]
 }

@@ -32,6 +32,7 @@
     "dev": "pnpm -r --parallel dev",
     "test": "cd build && ctest --output-on-failure",
     "test:native": "cmake -B build -DCMAKE_BUILD_TYPE=Debug && cmake --build build && cd build && ctest --output-on-failure",
+    "test:unit": "pnpm -r --if-present test",
     "test:e2e": "npx playwright test --project=local-chromium",
     "test:e2e:bs": "npx playwright test --project=bs-chrome-windows --project=bs-edge-windows --project=bs-firefox-windows --project=bs-chrome-macos --project=bs-safari-macos",
     "clean": "rm -rf build build-wasm packages/*/dist"
