@@ -13,16 +13,22 @@
       "import": "./packages/dashjs-plugin/dist/index.js",
       "types": "./packages/dashjs-plugin/dist/index.d.ts"
     },
+    "./shaka-plugin": {
+      "import": "./packages/shaka-plugin/dist/index.js",
+      "types": "./packages/shaka-plugin/dist/index.d.ts"
+    },
     "./wasm": "./packages/core/dist/wasm/hevc-decode.wasm"
   },
   "files": [
     "packages/core/dist/",
-    "packages/dashjs-plugin/dist/"
+    "packages/dashjs-plugin/dist/",
+    "packages/shaka-plugin/dist/"
   ],
   "scripts": {
     "build:wasm": "emcmake cmake -B build-wasm -DBUILD_WASM=ON -DCMAKE_BUILD_TYPE=Release && cmake --build build-wasm && cp build-wasm/hevc-decode.js build-wasm/hevc-decode.wasm packages/core/dist/wasm/",
     "build:core": "pnpm --filter @hevcjs/core build",
     "build:dashjs": "pnpm --filter @hevcjs/dashjs-plugin build",
+    "build:shaka": "pnpm --filter @hevcjs/shaka-plugin build",
     "build:demo:dash-bundle": "npx esbuild demo/dash-entry.ts --bundle --format=iife --global-name=HevcDash --outfile=demo/dash-bundle.js --external:dashjs --sourcemap --target=es2020",
     "build:demo:worker": "npx esbuild packages/core/src/transcode-worker.ts --bundle --format=iife --outfile=demo/transcode-worker.js --sourcemap --target=es2020",
     "build:demo:wasm": "cp build-wasm/hevc-decode.js build-wasm/hevc-decode.wasm demo/",
@@ -55,7 +61,9 @@
     "media-source",
     "streaming",
     "dash",
-    "dashjs"
+    "dashjs",
+    "shaka",
+    "shaka-player"
   ],
   "license": "MIT",
   "author": "Thibaut Lion",
