@@ -1,5 +1,5 @@
 "use strict";
-var HevcDash = (() => {
+var HevcShaka = (() => {
   var __defProp = Object.defineProperty;
   var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
   var __getOwnPropNames = Object.getOwnPropertyNames;
@@ -26,10 +26,11 @@ var HevcDash = (() => {
   var __privateSet = (obj, member, value, setter) => (__accessCheck(obj, member, "write to private field"), setter ? setter.call(obj, value) : member.set(obj, value), value);
   var __privateMethod = (obj, member, method) => (__accessCheck(obj, member, "access private method"), method);
 
-  // demo/dash-entry.ts
-  var dash_entry_exports = {};
-  __export(dash_entry_exports, {
-    attachHevcSupport: () => attachHevcSupport
+  // demo/shaka-entry.ts
+  var shaka_entry_exports = {};
+  __export(shaka_entry_exports, {
+    HevcTransmuxer: () => HevcTransmuxer,
+    registerHevcTransmuxer: () => registerHevcTransmuxer
   });
 
   // node_modules/.pnpm/mp4box@2.3.0/node_modules/mp4box/dist/mp4box.all.js
@@ -11176,9 +11177,6 @@ var HevcDash = (() => {
     silent: 4
   };
   var currentLevel = "info";
-  function setLogLevel(level) {
-    currentLevel = level;
-  }
   var log = {
     debug: (...args) => {
       if (LEVELS[currentLevel] <= LEVELS.debug) console.log("[hevc.js]", ...args);
@@ -11650,7 +11648,7 @@ var HevcDash = (() => {
       if (this._width === 0 || this._height === 0) {
         throw new Error("prepareInit: missing dimensions in HEVC init segment");
       }
-      this._encoder = new H264Encoder({
+      const warmup = new H264Encoder({
         width: this._width,
         height: this._height,
         fps: this._fps,
@@ -11669,11 +11667,13 @@ var HevcDash = (() => {
         bitDepth: 8,
         poc: 0
       };
-      this._encoder.onChunk = () => {
+      warmup.onChunk = () => {
       };
-      this._encoder.encode(blackFrame, 0, true);
-      await this._encoder.flush();
-      const avcC = this._encoder.codecDescription;
+      warmup.encode(blackFrame, 0, true);
+      await warmup.flush();
+      const avcC = warmup.codecDescription;
+      const codec = warmup.codec;
+      warmup.close();
       if (!avcC) {
         throw new Error("prepareInit: encoder produced no avcC after warmup");
       }
@@ -11683,7 +11683,7 @@ var HevcDash = (() => {
         timescale: this._timescale,
         avcC
       });
-      this._initResult = { initSegment, codec: this._encoder.codec };
+      this._initResult = { initSegment, codec };
       return this._initResult;
     }
     async processMediaSegment(data) {
@@ -11966,615 +11966,153 @@ var HevcDash = (() => {
     }
     return null;
   }
-  var TranscodeWorkerClient = class {
-    constructor(config) {
-      this._ready = false;
-      this._initParsed = false;
-      this._initResult = null;
-      this._segmentId = 0;
-      this._pendingResolves = /* @__PURE__ */ new Map();
-      this._readyPromise = new Promise((resolve) => {
-        this._readyResolve = resolve;
-      });
-      this._initParsedPromise = new Promise((resolve, reject) => {
-        this._initParsedResolve = resolve;
-        this._initParsedReject = reject;
-      });
-      const { workerUrl: _, ...transcoderConfig } = config;
-      this._workerReady = loadWorker(config.workerUrl).then((worker) => {
-        worker.onmessage = (e) => this._onMessage(e.data);
-        worker.onerror = (e) => {
-          log.error("Worker error:", e.message);
-        };
-        worker.postMessage({ type: "init", config: transcoderConfig });
-        return worker;
-      });
+
+  // packages/shaka-plugin/src/transmuxer.ts
+  var HEVC_MIME_PATTERN = /^video\/mp4\s*;.*codecs="?(hev1|hvc1)/i;
+  var FREE_BOX_8B = new Uint8Array([
+    0,
+    0,
+    0,
+    8,
+    // size = 8
+    102,
+    114,
+    101,
+    101
+    // 'free'
+  ]);
+  function isInitSegment(bytes) {
+    if (bytes.length < 8) return false;
+    const boxType = String.fromCharCode(
+      bytes[4],
+      bytes[5],
+      bytes[6],
+      bytes[7]
+    );
+    return boxType === "ftyp";
+  }
+  var HevcTransmuxer = class {
+    constructor(mimeType) {
+      this.transcoder_ = null;
+      this.initPromise_ = null;
+      this.pendingHevcInit_ = null;
+      this.h264InitEmitted_ = false;
+      this.originalMimeType_ = mimeType;
     }
-    get isInitialized() {
-      return this._ready;
-    }
-    get isInitParsed() {
-      return this._initParsed;
-    }
-    get initResult() {
-      return this._initResult;
-    }
-    /** Wait for the WASM decoder to be ready inside the worker */
-    async waitReady() {
-      await this._workerReady;
-      return this._readyPromise;
-    }
-    /** Send an init segment (ftyp + moov) to the worker for parsing */
-    async processInitSegment(data) {
-      const worker = await this._workerReady;
-      worker.postMessage(
-        { type: "initSegment", data: data.buffer },
-        [data.buffer]
-      );
-      return this._initParsedPromise;
-    }
-    /** Send a media segment to the worker for transcoding */
-    async processMediaSegment(data) {
-      const worker = await this._workerReady;
-      const id = this._segmentId++;
-      return new Promise((resolve, reject) => {
-        this._pendingResolves.set(id, { resolve, reject });
-        worker.postMessage(
-          { type: "mediaSegment", data: data.buffer, id },
-          [data.buffer]
-        );
-      });
-    }
-    /** Send a media segment for streaming transcoding — onChunk called for each partial result */
-    async processMediaSegmentStreaming(data, onChunk) {
-      const worker = await this._workerReady;
-      const id = this._segmentId++;
-      return new Promise((resolve, reject) => {
-        let chainPromise = Promise.resolve();
-        const handler = (e) => {
-          const msg = e.data;
-          if (msg.id !== id) return;
-          if (msg.type === "partialTranscoded") {
-            const init = msg.initSegment ? new Uint8Array(msg.initSegment) : null;
-            if (init && !this._initResult) {
-              this._initResult = {
-                initSegment: init,
-                codec: msg.codec || "avc1.640033"
-              };
-            }
-            const h264 = new Uint8Array(msg.h264);
-            chainPromise = chainPromise.then(() => onChunk(h264, init, msg.codec ?? null));
-          } else if (msg.type === "streamingDone") {
-            worker.removeEventListener("message", handler);
-            chainPromise.then(() => resolve()).catch(reject);
-          } else if (msg.type === "error") {
-            worker.removeEventListener("message", handler);
-            chainPromise.then(() => reject(new Error(msg.message))).catch(reject);
-          }
-        };
-        worker.addEventListener("message", handler);
-        worker.postMessage(
-          { type: "mediaSegmentStreaming", data: data.buffer, id },
-          [data.buffer]
-        );
-      });
-    }
-    /** Abort current transcoding, reset state for seek */
-    abort() {
-      for (const [, { reject }] of this._pendingResolves) {
-        reject(new Error("Aborted"));
-      }
-      this._pendingResolves.clear();
-      this._segmentId = 0;
-      this._ready = false;
-      this._readyPromise = new Promise((resolve) => {
-        this._readyResolve = resolve;
-      });
-      this._initParsed = false;
-      this._initResult = null;
-      this._initParsedPromise = new Promise((resolve, reject) => {
-        this._initParsedResolve = resolve;
-        this._initParsedReject = reject;
-      });
-      this._workerReady.then((worker) => worker.postMessage({ type: "abort" }));
-    }
-    /** Destroy the worker */
     destroy() {
-      this._pendingResolves.clear();
-      this._workerReady.then((worker) => {
-        worker.postMessage({ type: "destroy" });
-        worker.terminate();
-      });
+      this.transcoder_?.destroy();
+      this.transcoder_ = null;
+      this.initPromise_ = null;
+      this.pendingHevcInit_ = null;
+      this.h264InitEmitted_ = false;
     }
-    _onMessage(msg) {
-      switch (msg.type) {
-        case "ready":
-          this._ready = true;
-          this._readyResolve();
-          break;
-        case "initParsed":
-          this._initParsed = true;
-          this._initParsedResolve();
-          break;
-        case "transcoded": {
-          const id = msg.id;
-          const perf = msg.perf;
-          if (perf) {
-            const totalMs = perf.demuxMs + perf.decodeMs + perf.encodeMs;
-            log.debug(`Segment #${id} transcoded in ${totalMs.toFixed(0)}ms (${perf.frames}f \u2014 demux:${perf.demuxMs.toFixed(0)}ms decode:${perf.decodeMs.toFixed(0)}ms encode:${perf.encodeMs.toFixed(0)}ms)`);
-          }
-          const pending = this._pendingResolves.get(id);
-          if (!pending) break;
-          this._pendingResolves.delete(id);
-          if (msg.initSegment && !this._initResult) {
-            this._initResult = {
-              initSegment: new Uint8Array(msg.initSegment),
-              codec: msg.codec || "avc1.640033"
-            };
-          }
-          const h264 = msg.h264 ? new Uint8Array(msg.h264) : null;
-          pending.resolve(h264);
-          break;
-        }
-        case "error": {
-          const id = msg.id;
-          const pending = this._pendingResolves.get(id);
-          if (pending) {
-            this._pendingResolves.delete(id);
-            pending.reject(new Error(msg.message));
-          } else if (id === -1 && !this._initParsed) {
-            this._initParsedReject(new Error(msg.message));
-          } else {
-            log.error(msg.message);
-          }
-          break;
-        }
-        case "aborted":
-          this._ready = true;
-          this._readyResolve();
-          break;
+    isSupported(mimeType, _contentType) {
+      return HEVC_MIME_PATTERN.test(mimeType);
+    }
+    /**
+     * Output mime advertised to Shaka before any frame has been encoded.
+     * Best-effort mapping based on the HEVC level declared in the input
+     * (see `@hevcjs/core/codec-mapping`). The actual encoded stream may
+     * use a slightly different profile/level if `H264Encoder` decides
+     * differently from the encoded resolution.
+     */
+    convertCodecs(_contentType, mimeType) {
+      if (!HEVC_MIME_PATTERN.test(mimeType)) return mimeType;
+      return `video/mp4; codecs="${hevcMimeToH264Codec(mimeType)}"`;
+    }
+    getOriginalMimeType() {
+      return this.originalMimeType_;
+    }
+    /**
+     * Convert one HEVC fMP4 segment into an MSE-ready H.264 fMP4 segment.
+     *
+     * Shaka calls this once per segment with `reference === null` for the
+     * init segment and a non-null `reference` for media segments.
+     *
+     *  - Init segment: warm up the H.264 encoder eagerly (encodes a single
+     *    black frame to obtain a valid avcC) and return a complete H.264
+     *    init segment that MSE can immediately ingest.
+     *  - Media segment: decode HEVC, re-encode to H.264, mux fMP4, return.
+     *
+     * Returns a raw `Uint8Array` rather than `{data, init}` so the same
+     * code path works on Shaka 4.x (which expects a `Uint8Array` directly)
+     * and on Shaka 5+ (which accepts either via an `ArrayBuffer.isView`
+     * check). Init/media segmentation is implicit in the call sequence.
+     */
+    async transmux(data, _stream, reference, _duration, _contentType) {
+      const bytes = toUint8(data);
+      const isInit = reference == null || isInitSegment(bytes);
+      if (!this.transcoder_) {
+        this.transcoder_ = new SegmentTranscoder();
+        this.initPromise_ = this.transcoder_.init();
       }
+      await this.initPromise_;
+      if (isInit) {
+        const result = await this.transcoder_.prepareInit(bytes);
+        this.h264InitEmitted_ = true;
+        const copy = new Uint8Array(result.initSegment.byteLength);
+        copy.set(result.initSegment);
+        return copy;
+      }
+      const h264Media = await this.transcoder_.processMediaSegment(bytes);
+      if (!h264Media) {
+        return FREE_BOX_8B;
+      }
+      return h264Media;
     }
   };
-  async function loadWorker(workerUrl) {
-    const sameOrigin = typeof location === "undefined" || new URL(workerUrl, location.href).origin === location.origin;
-    if (sameOrigin) return new Worker(workerUrl);
-    const code = await (await fetch(workerUrl)).text();
-    const blobUrl = URL.createObjectURL(
-      new Blob([code], { type: "application/javascript" })
-    );
-    return new Worker(blobUrl);
-  }
-  var HEVC_DETECT_RE = /hev1|hvc1/i;
-  var HEVC_CODEC_RE = /hev1[^"']*|hvc1[^"']*/gi;
-  var interceptState = null;
-  function installMSEIntercept(config = {}) {
-    if (config.logLevel) setLogLevel(config.logLevel);
-    if (interceptState?.active) {
-      Object.assign(interceptState.config, config);
-      return;
-    }
-    const originalAddSourceBuffer = MediaSource.prototype.addSourceBuffer;
-    const originalIsTypeSupported = MediaSource.isTypeSupported;
-    let originalDecodingInfo = null;
-    interceptState = {
-      active: true,
-      originalAddSourceBuffer,
-      originalIsTypeSupported,
-      originalDecodingInfo: null,
-      config
-    };
-    MediaSource.isTypeSupported = function(mimeType) {
-      if (HEVC_DETECT_RE.test(mimeType)) {
-        const h264Codec = hevcMimeToH264Codec(mimeType);
-        const h264Mime = mimeType.replace(HEVC_CODEC_RE, h264Codec);
-        const result = originalIsTypeSupported.call(MediaSource, h264Mime);
-        log.debug(`isTypeSupported("${mimeType}") \u2192 "${h264Mime}" \u2192 ${result}`);
-        return result;
-      }
-      return originalIsTypeSupported.call(MediaSource, mimeType);
-    };
-    if (typeof navigator !== "undefined" && navigator.mediaCapabilities) {
-      originalDecodingInfo = navigator.mediaCapabilities.decodingInfo.bind(navigator.mediaCapabilities);
-      interceptState.originalDecodingInfo = originalDecodingInfo;
-      navigator.mediaCapabilities.decodingInfo = async function(cfg) {
-        if (cfg.video?.contentType && HEVC_DETECT_RE.test(cfg.video.contentType)) {
-          const h264Codec = hevcMimeToH264Codec(cfg.video.contentType);
-          const h264Type = cfg.video.contentType.replace(HEVC_CODEC_RE, h264Codec);
-          const h264Config = { ...cfg, video: { ...cfg.video, contentType: h264Type } };
-          return originalDecodingInfo(h264Config);
-        }
-        return originalDecodingInfo(cfg);
-      };
-    }
-    MediaSource.prototype.addSourceBuffer = function(mimeType) {
-      if (!HEVC_DETECT_RE.test(mimeType)) {
-        return originalAddSourceBuffer.call(this, mimeType);
-      }
-      const h264Codec = hevcMimeToH264Codec(mimeType);
-      log.info(`addSourceBuffer("${mimeType}") \u2192 creating H.264 proxy with ${h264Codec}`);
-      const h264Mime = `video/mp4; codecs="${h264Codec}"`;
-      const realSB = originalAddSourceBuffer.call(this, h264Mime);
-      return createTranscodingProxy(realSB, interceptState.config);
-    };
-  }
-  function uninstallMSEIntercept() {
-    if (!interceptState?.active) return;
-    MediaSource.prototype.addSourceBuffer = interceptState.originalAddSourceBuffer;
-    MediaSource.isTypeSupported = interceptState.originalIsTypeSupported;
-    if (interceptState.originalDecodingInfo && navigator.mediaCapabilities) {
-      navigator.mediaCapabilities.decodingInfo = interceptState.originalDecodingInfo;
-    }
-    interceptState.active = false;
-    interceptState = null;
-  }
-  function createTranscodingProxy(realSB, config) {
-    const useWorker = !!config.workerUrl;
-    let workerClient = null;
-    let transcoder = null;
-    let initParsed = false;
-    let initAppended = false;
-    let lastInitSegment = null;
-    let fakeUpdating = false;
-    const queue = [];
-    let processing = false;
-    let abortGeneration = 0;
-    let cachedInitData = null;
-    const MAX_QUEUE_BEFORE_BACKPRESSURE = 2;
-    if (useWorker) {
-      workerClient = new TranscodeWorkerClient({
-        workerUrl: config.workerUrl,
-        wasmUrl: config.wasmUrl,
-        wasmBinaryUrl: config.wasmBinaryUrl,
-        fps: config.fps,
-        bitrate: config.bitrate
-      });
-      workerClient.waitReady().then(() => {
-        log.info("Worker transcoder ready");
-      }).catch((err) => {
-        log.error("Worker init failed:", err?.message ?? err);
-      });
-    } else {
-      transcoder = new SegmentTranscoder(config);
-      transcoder.init().catch((err) => {
-        log.error(
-          "Main-thread transcoder init failed:",
-          err?.message ?? err,
-          err?.stack
-        );
-      });
-    }
-    const listeners = /* @__PURE__ */ new Map();
-    function dispatchOnSB(type) {
-      const set = listeners.get(type);
-      if (set) {
-        const evt = new Event(type);
-        for (const fn of set) {
-          if (typeof fn === "function") fn.call(realSB, evt);
-          else fn.handleEvent(evt);
-        }
-      }
-      const onProp = realSB[`__hevc_on${type}`];
-      if (typeof onProp === "function") onProp.call(realSB, new Event(type));
-    }
-    const realAppend = realSB.appendBuffer.bind(realSB);
-    const realAbort = realSB.abort.bind(realSB);
-    const realAddEventListener = realSB.addEventListener.bind(realSB);
-    const realRemoveEventListener = realSB.removeEventListener.bind(realSB);
-    const updatingGetter = Object.getOwnPropertyDescriptor(SourceBuffer.prototype, "updating").get;
-    function waitForRealUpdateEnd() {
-      return new Promise((resolve) => {
-        if (!updatingGetter.call(realSB)) {
-          resolve();
-          return;
-        }
-        realAddEventListener("updateend", () => resolve(), { once: true });
-      });
-    }
-    Object.defineProperty(realSB, "appendBuffer", {
-      value: function(data) {
-        const bytes = toUint8Array(data);
-        queue.push(bytes);
-        fakeUpdating = true;
-        dispatchOnSB("updatestart");
-        if (queue.length < MAX_QUEUE_BEFORE_BACKPRESSURE) {
-          fakeUpdating = false;
-          dispatchOnSB("update");
-          dispatchOnSB("updateend");
-        }
-        processNext(realSB);
-      },
-      writable: true,
-      configurable: true
-    });
-    Object.defineProperty(realSB, "abort", {
-      value: function() {
-        abortGeneration++;
-        queue.length = 0;
-        processing = false;
-        fakeUpdating = false;
-        initParsed = false;
-        initAppended = false;
-        if (workerClient) workerClient.abort();
-        log.debug("abort() \u2014 queue + transcoder reset (gen=" + abortGeneration + ")");
-        realAbort();
-      },
-      writable: true,
-      configurable: true
-    });
-    Object.defineProperty(realSB, "addEventListener", {
-      value: function(type, fn, options) {
-        if (!listeners.has(type)) listeners.set(type, /* @__PURE__ */ new Set());
-        listeners.get(type).add(fn);
-      },
-      writable: true,
-      configurable: true
-    });
-    Object.defineProperty(realSB, "removeEventListener", {
-      value: function(type, fn) {
-        listeners.get(type)?.delete(fn);
-      },
-      writable: true,
-      configurable: true
-    });
-    const realRemove = realSB.remove.bind(realSB);
-    Object.defineProperty(realSB, "remove", {
-      value: function(start2, end) {
-        dispatchOnSB("updatestart");
-        realRemove(start2, end);
-        realAddEventListener("updateend", () => {
-          dispatchOnSB("update");
-          dispatchOnSB("updateend");
-        }, { once: true });
-      },
-      writable: true,
-      configurable: true
-    });
-    Object.defineProperty(realSB, "updating", {
-      get() {
-        return fakeUpdating || updatingGetter.call(realSB);
-      },
-      configurable: true
-    });
-    const tsOffsetDesc = Object.getOwnPropertyDescriptor(SourceBuffer.prototype, "timestampOffset");
-    Object.defineProperty(realSB, "timestampOffset", {
-      get() {
-        return tsOffsetDesc.get.call(realSB);
-      },
-      set(value) {
-        const old = tsOffsetDesc.get.call(realSB);
-        if (value !== old && (queue.length > 0 || processing)) {
-          log.debug(`timestampOffset changed (${old} \u2192 ${value}) \u2014 flushing queue`);
-          abortGeneration++;
-          queue.length = 0;
-          processing = false;
-          initParsed = false;
-          initAppended = false;
-          if (workerClient) workerClient.abort();
-          if (fakeUpdating) {
-            fakeUpdating = false;
-            dispatchOnSB("update");
-            dispatchOnSB("updateend");
-          }
-        }
-        tsOffsetDesc.set.call(realSB, value);
-      },
-      configurable: true
-    });
-    async function transcodeInit(segment) {
-      if (workerClient) {
-        await workerClient.waitReady();
-        await workerClient.processInitSegment(segment);
-      } else {
-        while (!transcoder.isInitialized) await new Promise((r) => setTimeout(r, 10));
-        await transcoder.processInitSegment(segment);
-      }
-    }
-    async function transcodeMedia(segment) {
-      if (workerClient) {
-        return workerClient.processMediaSegment(segment);
-      }
-      return transcoder.processMediaSegment(segment);
-    }
-    async function transcodeMediaStreaming(segment, onPartial) {
-      if (workerClient) {
-        return workerClient.processMediaSegmentStreaming(segment, onPartial);
-      }
-      return transcoder.processMediaSegmentStreaming(segment, (h264, init) => {
-        return onPartial(h264, init?.initSegment ?? null, init?.codec ?? null);
-      });
-    }
-    function getInitResult() {
-      if (workerClient) return workerClient.initResult;
-      return transcoder.initResult;
-    }
-    async function processNext(target) {
-      if (processing) return;
-      processing = true;
-      const myGeneration = abortGeneration;
-      try {
-        while (queue.length > 0) {
-          if (abortGeneration !== myGeneration) return;
-          const segment = queue.shift();
-          if (updatingGetter.call(realSB)) {
-            await waitForRealUpdateEnd();
-            if (abortGeneration !== myGeneration) return;
-          }
-          const isInit = isInitSegment(segment);
-          if (isInit || !initParsed) {
-            const initData = isInit ? segment : cachedInitData;
-            if (!initData) {
-              log.error("No init segment available \u2014 cannot process media");
-              continue;
-            }
-            cachedInitData = new Uint8Array(initData);
-            await transcodeInit(initData);
-            if (abortGeneration !== myGeneration) return;
-            initParsed = true;
-            initAppended = false;
-            log.debug("Init segment parsed");
-            if (isInit) {
-              if (fakeUpdating) {
-                fakeUpdating = false;
-                dispatchOnSB("update");
-                dispatchOnSB("updateend");
-              }
-              continue;
-            }
-          }
-          log.debug(`Transcoding segment (${segment.byteLength}B) [streaming]...`);
-          config.onTranscodeStart?.();
-          let chunkCount = 0;
-          let firstChunkEmitted = false;
-          await transcodeMediaStreaming(segment, async (h264, initSeg, _codec) => {
-            if (abortGeneration !== myGeneration) return;
-            if (initSeg && !initAppended) {
-              initAppended = true;
-              lastInitSegment = initSeg;
-              if (updatingGetter.call(realSB)) await waitForRealUpdateEnd();
-              if (abortGeneration !== myGeneration) return;
-              realAppend(initSeg.buffer);
-              await waitForRealUpdateEnd();
-              if (abortGeneration !== myGeneration) return;
-              log.debug("H.264 init segment appended [streaming]");
-            }
-            if (updatingGetter.call(realSB)) await waitForRealUpdateEnd();
-            if (abortGeneration !== myGeneration) return;
-            realAppend(h264.buffer);
-            await waitForRealUpdateEnd();
-            chunkCount++;
-            if (!firstChunkEmitted) {
-              firstChunkEmitted = true;
-              if (fakeUpdating && queue.length < MAX_QUEUE_BEFORE_BACKPRESSURE) {
-                fakeUpdating = false;
-                dispatchOnSB("update");
-                dispatchOnSB("updateend");
-              }
-            }
-          });
-          config.onTranscodeEnd?.();
-          if (abortGeneration !== myGeneration) return;
-          const buffered = target.buffered;
-          const end = buffered.length ? buffered.end(buffered.length - 1).toFixed(2) : "0";
-          log.debug(`Streaming done (${chunkCount} chunks), buffered: ${end}s`);
-          if (fakeUpdating && queue.length < MAX_QUEUE_BEFORE_BACKPRESSURE) {
-            fakeUpdating = false;
-            dispatchOnSB("update");
-            dispatchOnSB("updateend");
-          }
-        }
-      } catch (err) {
-        if (abortGeneration !== myGeneration) return;
-        log.error(
-          "Transcoding error:",
-          err?.message ?? err,
-          err?.stack
-        );
-        fakeUpdating = false;
-        dispatchOnSB("error");
-      } finally {
-        if (abortGeneration === myGeneration) {
-          processing = false;
-          if (fakeUpdating) {
-            fakeUpdating = false;
-            dispatchOnSB("update");
-            dispatchOnSB("updateend");
-          }
-        }
-      }
-    }
-    return realSB;
-  }
-  function isInitSegment(data) {
-    if (data.byteLength < 8) return false;
-    const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-    const boxType = view.getUint32(4);
-    return boxType === 1718909296 || boxType === 1836019574;
-  }
-  function toUint8Array(data) {
+  function toUint8(data) {
     if (data instanceof Uint8Array) return data;
     if (data instanceof ArrayBuffer) return new Uint8Array(data);
-    if (ArrayBuffer.isView(data)) {
-      return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
-    }
-    return new Uint8Array(data);
+    return new Uint8Array(
+      data.buffer,
+      data.byteOffset,
+      data.byteLength
+    );
   }
 
-  // packages/dashjs-plugin/src/plugin.ts
-  async function hasNativeHevcSupport() {
-    try {
-      if (typeof MediaSource === "undefined") return false;
-      if (!MediaSource.isTypeSupported('video/mp4; codecs="hev1.1.6.L93.B0"')) return false;
-      return await new Promise((resolve) => {
-        const ms = new MediaSource();
-        const url = URL.createObjectURL(ms);
-        const video = document.createElement("video");
-        const timeout = setTimeout(() => {
-          cleanup();
-          resolve(false);
-        }, 1e3);
-        function cleanup() {
-          clearTimeout(timeout);
-          video.removeAttribute("src");
-          video.load();
-          URL.revokeObjectURL(url);
-        }
-        ms.addEventListener("sourceopen", () => {
-          try {
-            const sb = ms.addSourceBuffer('video/mp4; codecs="hev1.1.6.L93.B0"');
-            ms.removeSourceBuffer(sb);
-            cleanup();
-            resolve(true);
-          } catch {
-            cleanup();
-            resolve(false);
-          }
-        });
-        video.src = url;
-      });
-    } catch {
-      return false;
-    }
-  }
-  async function attachHevcSupport(player, config = {}) {
-    if (!config.forceTranscode && await hasNativeHevcSupport()) {
-      console.log("[hevc.js/dash] Native HEVC support detected \u2014 transcoding not needed");
-      if (player?.registerCustomCapabilitiesFilter) {
-        player.registerCustomCapabilitiesFilter(() => true);
-      }
-      return () => {
-      };
-    }
-    if (!H264Encoder.isSupported()) {
+  // packages/shaka-plugin/src/index.ts
+  var HEVC_MIME_TYPES = [
+    'video/mp4; codecs="hev1"',
+    'video/mp4; codecs="hvc1"'
+  ];
+  function registerHevcTransmuxer(shaka, config = {}) {
+    const engine = shaka?.transmuxer?.TransmuxerEngine;
+    if (!engine || typeof engine.registerTransmuxer !== "function") {
       console.warn(
-        "[hevc.js/dash] WebCodecs VideoEncoder not available. HEVC transcoding requires Chrome 94+ or equivalent."
+        "[hevc.js/shaka] shaka.transmuxer.TransmuxerEngine.registerTransmuxer not found. Make sure shaka-player >= 4.0 is loaded before calling registerHevcTransmuxer()."
       );
       return () => {
       };
     }
-    const canEncode = await H264Encoder.checkSupport();
-    if (!canEncode) {
-      console.warn(
-        "[hevc.js/dash] VideoEncoder exists but H.264 encoding is not supported. HEVC transcoding is not available in this browser."
+    const priority = engine.PluginPriority?.APPLICATION ?? engine.PluginPriority?.PREFERRED ?? 4;
+    for (const mimeType of HEVC_MIME_TYPES) {
+      engine.registerTransmuxer(
+        mimeType,
+        () => new HevcTransmuxer(mimeType),
+        priority
       );
-      return () => {
-      };
     }
-    console.log("[hevc.js/dash] No native HEVC support \u2014 installing WASM transcoder");
-    installMSEIntercept({
-      wasmUrl: config.wasmUrl,
-      wasmBinaryUrl: config.wasmBinaryUrl,
-      fps: config.fps,
-      bitrate: config.bitrate,
-      workerUrl: config.workerUrl
-    });
-    if (player.registerCustomCapabilitiesFilter) {
-      player.registerCustomCapabilitiesFilter(() => true);
+    let restoreIsTypeSupported = null;
+    if (config.forceTranscode && typeof MediaSource !== "undefined") {
+      const originalIsTypeSupported = MediaSource.isTypeSupported;
+      MediaSource.isTypeSupported = function(mimeType) {
+        if (/hev1|hvc1/i.test(mimeType)) return false;
+        return originalIsTypeSupported.call(MediaSource, mimeType);
+      };
+      restoreIsTypeSupported = () => {
+        MediaSource.isTypeSupported = originalIsTypeSupported;
+      };
     }
     return () => {
-      uninstallMSEIntercept();
+      if (typeof engine.unregisterTransmuxer === "function") {
+        for (const mimeType of HEVC_MIME_TYPES) {
+          engine.unregisterTransmuxer(mimeType, priority);
+        }
+      }
+      restoreIsTypeSupported?.();
     };
   }
-  return __toCommonJS(dash_entry_exports);
+  return __toCommonJS(shaka_entry_exports);
 })();
-//# sourceMappingURL=dash-bundle.js.map
+//# sourceMappingURL=shaka-bundle.js.map

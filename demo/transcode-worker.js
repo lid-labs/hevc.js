@@ -11561,7 +11561,8 @@
       /**
        * Transcode an HEVC media segment to H.264.
        * Returns the H.264 fMP4 segment (moof + mdat).
-       * On the first call, also generates the H.264 init segment.
+       * On the first call, also generates the H.264 init segment if `prepareInit`
+       * was not called beforehand.
        */
       /** Perf stats from last processMediaSegment call */
       this.lastPerfStats = null;
@@ -11585,12 +11586,14 @@
       this._initialized = true;
     }
     /**
-     * Process an HEVC init segment (ftyp + moov).
-     * Parses track info, then returns the H.264 init segment to use instead.
+     * Process an HEVC init segment (ftyp + moov) — parses track metadata and
+     * extracts VPS/SPS/PPS for the WASM decoder. The H.264 init segment is
+     * generated lazily on the first media segment, because the H.264 avcC
+     * descriptor only exists after the first encoded frame.
      *
-     * The H.264 init segment is generated lazily — on the first media segment —
-     * because we need the encoder's avcC descriptor which requires encoding at least
-     * one frame. Returns null here; use getH264InitSegment() after first media segment.
+     * If you need the H.264 init segment up-front (e.g. when feeding Shaka's
+     * `Transmuxer.transmux()` which expects a result for the init segment
+     * before any media is delivered), use `prepareInit()` instead.
      */
     async processInitSegment(data) {
       this._demuxer = new FMP4Demuxer();
@@ -11615,6 +11618,57 @@
           off += ps.byteLength;
         }
       }
+    }
+    /**
+     * Process an HEVC init segment AND immediately produce a matching H.264
+     * fMP4 init segment by encoding a single black warmup frame to obtain a
+     * valid avcC descriptor. Useful for callers that must hand an init
+     * segment back to the player before any media segment has been seen
+     * (e.g. Shaka's `Transmuxer.transmux()`).
+     *
+     * After this call, `initResult` is populated and `processMediaSegment()`
+     * will skip the lazy init-generation path on its first call.
+     */
+    async prepareInit(data) {
+      await this.processInitSegment(data);
+      if (this._width === 0 || this._height === 0) {
+        throw new Error("prepareInit: missing dimensions in HEVC init segment");
+      }
+      this._encoder = new H264Encoder({
+        width: this._width,
+        height: this._height,
+        fps: this._fps,
+        bitrate: this._config.bitrate
+      });
+      const cw = this._width >> 1;
+      const ch = this._height >> 1;
+      const blackFrame = {
+        y: new Uint16Array(this._width * this._height),
+        cb: new Uint16Array(cw * ch).fill(128),
+        cr: new Uint16Array(cw * ch).fill(128),
+        width: this._width,
+        height: this._height,
+        chromaWidth: cw,
+        chromaHeight: ch,
+        bitDepth: 8,
+        poc: 0
+      };
+      this._encoder.onChunk = () => {
+      };
+      this._encoder.encode(blackFrame, 0, true);
+      await this._encoder.flush();
+      const avcC = this._encoder.codecDescription;
+      if (!avcC) {
+        throw new Error("prepareInit: encoder produced no avcC after warmup");
+      }
+      const initSegment = this._muxer.generateInit({
+        width: this._width,
+        height: this._height,
+        timescale: this._timescale,
+        avcC
+      });
+      this._initResult = { initSegment, codec: this._encoder.codec };
+      return this._initResult;
     }
     async processMediaSegment(data) {
       if (!this._decoder || !this._demuxer) {

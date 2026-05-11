@@ -50,7 +50,8 @@
   },
   "scripts": {
     "build": "tsup && tsc -p tsconfig.build.json",
-    "dev": "tsup --watch"
+    "dev": "tsup --watch",
+    "test": "vitest run"
   },
   "dependencies": {
     "@hevcjs/core": "workspace:*"
@@ -66,6 +67,7 @@
   "devDependencies": {
     "shaka-player": "^4.11.0",
     "tsup": "^8.0.0",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "vitest": "^3.0.0"
   }
 }

@@ -70,10 +70,13 @@ importers:
         version: 4.16.30
       tsup:
         specifier: ^8.0.0
-        version: 8.5.1(typescript@6.0.3)
+        version: 8.5.1(postcss@8.5.14)(typescript@6.0.3)
       typescript:
         specifier: ^6.0.3
         version: 6.0.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4(@types/node@25.6.0)
 
 packages:
 
@@ -2655,7 +2658,6 @@ packages:
 
   shaka-player@4.16.30:
     resolution: {integrity: sha512-AXXhJOdE6udbFQdkmaDfBhu4JcZsQzzqavR/LtjvXiygDlcYA2j0RC+jNs/qeFQFRAVI9kalOLtqU1RRljauJA==}
-    engines: {node: '>=18'}
 
   shebang-command@2.0.0:
     resolution: {integrity: sha512-kHxr2zZpYtdmrN1qDjrrX/Z1rR1kG8Dx+gkpK1G4eXmvXswmcE1hTWBWYUzlraYw1/yZp6YuDY77YtvbN0dmDA==}

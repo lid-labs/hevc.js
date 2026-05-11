@@ -76,12 +76,14 @@ export class SegmentTranscoder {
   }
 
   /**
-   * Process an HEVC init segment (ftyp + moov).
-   * Parses track info, then returns the H.264 init segment to use instead.
+   * Process an HEVC init segment (ftyp + moov) — parses track metadata and
+   * extracts VPS/SPS/PPS for the WASM decoder. The H.264 init segment is
+   * generated lazily on the first media segment, because the H.264 avcC
+   * descriptor only exists after the first encoded frame.
    *
-   * The H.264 init segment is generated lazily — on the first media segment —
-   * because we need the encoder's avcC descriptor which requires encoding at least
-   * one frame. Returns null here; use getH264InitSegment() after first media segment.
+   * If you need the H.264 init segment up-front (e.g. when feeding Shaka's
+   * `Transmuxer.transmux()` which expects a result for the init segment
+   * before any media is delivered), use `prepareInit()` instead.
    */
   async processInitSegment(data: Uint8Array): Promise<void> {
     this._demuxer = new FMP4Demuxer();
@@ -113,9 +115,75 @@ export class SegmentTranscoder {
   }
 
   /**
+   * Process an HEVC init segment AND immediately produce a matching H.264
+   * fMP4 init segment by encoding a single black warmup frame to obtain a
+   * valid avcC descriptor. Useful for callers that must hand an init
+   * segment back to the player before any media segment has been seen
+   * (e.g. Shaka's `Transmuxer.transmux()`).
+   *
+   * After this call, `initResult` is populated and `processMediaSegment()`
+   * will skip the lazy init-generation path on its first call.
+   */
+  async prepareInit(data: Uint8Array): Promise<TranscodedInit> {
+    await this.processInitSegment(data);
+    if (this._width === 0 || this._height === 0) {
+      throw new Error("prepareInit: missing dimensions in HEVC init segment");
+    }
+
+    // Use a *throwaway* encoder for the warmup so that the real encoder
+    // (created lazily by processMediaSegment) starts in a clean state and
+    // its first emitted chunk corresponds to the first real frame. Sharing
+    // the same encoder would leak the warmup frame into the timeline and
+    // shift the buffered range by ~1 frame duration.
+    const warmup = new H264Encoder({
+      width: this._width,
+      height: this._height,
+      fps: this._fps,
+      bitrate: this._config.bitrate,
+    });
+
+    const cw = this._width >> 1;
+    const ch = this._height >> 1;
+    const blackFrame: HEVCFrame = {
+      y: new Uint16Array(this._width * this._height),
+      cb: new Uint16Array(cw * ch).fill(128),
+      cr: new Uint16Array(cw * ch).fill(128),
+      width: this._width,
+      height: this._height,
+      chromaWidth: cw,
+      chromaHeight: ch,
+      bitDepth: 8,
+      poc: 0,
+    };
+
+    warmup.onChunk = () => { /* warmup discard */ };
+    warmup.encode(blackFrame, 0, true);
+    await warmup.flush();
+
+    const avcC = warmup.codecDescription;
+    const codec = warmup.codec;
+    warmup.close();
+
+    if (!avcC) {
+      throw new Error("prepareInit: encoder produced no avcC after warmup");
+    }
+
+    const initSegment = this._muxer.generateInit({
+      width: this._width,
+      height: this._height,
+      timescale: this._timescale,
+      avcC,
+    });
+
+    this._initResult = { initSegment, codec };
+    return this._initResult;
+  }
+
+  /**
    * Transcode an HEVC media segment to H.264.
    * Returns the H.264 fMP4 segment (moof + mdat).
-   * On the first call, also generates the H.264 init segment.
+   * On the first call, also generates the H.264 init segment if `prepareInit`
+   * was not called beforehand.
    */
   /** Perf stats from last processMediaSegment call */
   lastPerfStats: { demuxMs: number; decodeMs: number; encodeMs: number; frames: number } | null = null;
