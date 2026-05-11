@@ -129,4 +129,50 @@ describe("registerHevcTransmuxer", () => {
     expect(instance).toBeInstanceOf(HevcTransmuxer);
     expect(instance.getOriginalMimeType()).toBe(firstCall[0]);
   });
+
+  it("forwards wasmUrl / wasmBinaryUrl config to the HevcTransmuxer factory", async () => {
+    const shaka = buildShakaMock();
+    registerHevcTransmuxer(shaka, {
+      wasmUrl: "/custom-hevc-decode.js",
+      wasmBinaryUrl: "/custom-hevc-decode.wasm",
+    });
+
+    const firstCall =
+      shaka.transmuxer!.TransmuxerEngine!.registerTransmuxer.mock.calls[0]!;
+    const factory = firstCall[1] as () => HevcTransmuxer;
+    const instance = factory();
+
+    // The config is private state; we verify the cable indirectly by
+    // triggering a transmux() call and checking that SegmentTranscoder
+    // (mocked in vi.mock above) is constructed with our config.
+    const { SegmentTranscoder } = await import("@hevcjs/core");
+    const SegmentTranscoderMock = SegmentTranscoder as unknown as ReturnType<
+      typeof vi.fn
+    >;
+    SegmentTranscoderMock.mockClear();
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (SegmentTranscoderMock as any).mockImplementation(() => ({
+      init: vi.fn().mockResolvedValue(undefined),
+      prepareInit: vi.fn().mockResolvedValue({
+        initSegment: new Uint8Array(),
+        codec: "avc1.640028",
+      }),
+      processMediaSegment: vi.fn(),
+      destroy: vi.fn(),
+    }));
+
+    await instance.transmux(
+      new Uint8Array([0, 0, 0, 8, 0x66, 0x74, 0x79, 0x70]),
+      null,
+      null,
+      0,
+      "video",
+    );
+
+    expect(SegmentTranscoderMock).toHaveBeenCalledWith({
+      wasmUrl: "/custom-hevc-decode.js",
+      wasmBinaryUrl: "/custom-hevc-decode.wasm",
+    });
+  });
 });

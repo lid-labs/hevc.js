@@ -10,6 +10,7 @@
  */
 
 import { SegmentTranscoder, hevcMimeToH264Codec } from "@hevcjs/core";
+import type { SegmentTranscoderConfig } from "@hevcjs/core";
 
 // Loose typing while we don't pull `shaka.extern.*` into the build.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -60,13 +61,15 @@ export function isInitSegment(bytes: Uint8Array): boolean {
 
 export class HevcTransmuxer {
   private readonly originalMimeType_: string;
+  private readonly transcoderConfig_: SegmentTranscoderConfig;
   private transcoder_: SegmentTranscoder | null = null;
   private initPromise_: Promise<void> | null = null;
   private pendingHevcInit_: Uint8Array | null = null;
   private h264InitEmitted_ = false;
 
-  constructor(mimeType: string) {
+  constructor(mimeType: string, config: SegmentTranscoderConfig = {}) {
     this.originalMimeType_ = mimeType;
+    this.transcoderConfig_ = config;
   }
 
   destroy(): void {
@@ -124,7 +127,7 @@ export class HevcTransmuxer {
     const isInit = reference == null || isInitSegment(bytes);
 
     if (!this.transcoder_) {
-      this.transcoder_ = new SegmentTranscoder();
+      this.transcoder_ = new SegmentTranscoder(this.transcoderConfig_);
       this.initPromise_ = this.transcoder_.init();
     }
     await this.initPromise_;
