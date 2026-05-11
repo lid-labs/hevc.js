@@ -6,14 +6,21 @@
  * import shaka from 'shaka-player';
  * import { registerHevcTransmuxer } from '@hevcjs/shaka-plugin';
  *
- * registerHevcTransmuxer(shaka, { wasmUrl: '/hevc-decode.js' });
+ * registerHevcTransmuxer(shaka);
  * const player = new shaka.Player();
  * await player.attach(videoElement);
  * await player.load(manifestUrl);
  * ```
+ *
+ * To force the transmuxer even on browsers with native HEVC support
+ * (Safari, recent Chrome on macOS), use Shaka's built-in config rather
+ * than patching MSE yourself:
+ *
+ * ```ts
+ * player.configure({ mediaSource: { forceTransmux: true } });
+ * ```
  */
 
-import type { MSEInterceptConfig } from "@hevcjs/core";
 import { HevcTransmuxer } from "./transmuxer.js";
 
 export { HevcTransmuxer } from "./transmuxer.js";
@@ -21,14 +28,6 @@ export type { TransmuxOutput } from "./transmuxer.js";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type ShakaNamespace = any;
-
-export interface HevcShakaPluginConfig extends MSEInterceptConfig {
-  /**
-   * Force HEVC transmuxing even if the browser supports HEVC natively.
-   * Useful for testing. Default: false.
-   */
-  forceTranscode?: boolean;
-}
 
 const HEVC_MIME_TYPES = [
   'video/mp4; codecs="hev1"',
@@ -39,24 +38,13 @@ const HEVC_MIME_TYPES = [
  * Register the HEVC transmuxer with Shaka's TransmuxerEngine.
  *
  * Must be called before `player.load()`. Registers a factory for both
- * `hev1` and `hvc1` MIME types at PREFERRED priority so Shaka picks our
- * transmuxer over any default fallback.
- *
- * When `config.forceTranscode` is set, also patches
- * `MediaSource.isTypeSupported` to return `false` for HEVC so Shaka
- * routes through our transmuxer even on platforms where the browser
- * supports HEVC natively (Safari, recent Chrome on Mac, etc.). Useful
- * for cross-platform testing of the transmuxing pipeline.
+ * `hev1` and `hvc1` MIME types at APPLICATION priority so Shaka picks
+ * our transmuxer over any default fallback.
  *
  * @param shaka the global `shaka` namespace (import or window.shaka)
- * @param config plugin configuration
- * @returns A cleanup function that unregisters the transmuxer and
- *   restores any patched MSE methods.
+ * @returns A cleanup function that unregisters the transmuxer.
  */
-export function registerHevcTransmuxer(
-  shaka: ShakaNamespace,
-  config: HevcShakaPluginConfig = {},
-): () => void {
+export function registerHevcTransmuxer(shaka: ShakaNamespace): () => void {
   const engine = shaka?.transmuxer?.TransmuxerEngine;
   if (!engine || typeof engine.registerTransmuxer !== "function") {
     console.warn(
@@ -83,18 +71,6 @@ export function registerHevcTransmuxer(
     );
   }
 
-  let restoreIsTypeSupported: (() => void) | null = null;
-  if (config.forceTranscode && typeof MediaSource !== "undefined") {
-    const originalIsTypeSupported = MediaSource.isTypeSupported;
-    MediaSource.isTypeSupported = function (mimeType: string): boolean {
-      if (/hev1|hvc1/i.test(mimeType)) return false;
-      return originalIsTypeSupported.call(MediaSource, mimeType);
-    };
-    restoreIsTypeSupported = () => {
-      MediaSource.isTypeSupported = originalIsTypeSupported;
-    };
-  }
-
   return () => {
     if (typeof engine.unregisterTransmuxer === "function") {
       for (const mimeType of HEVC_MIME_TYPES) {
@@ -103,6 +79,5 @@ export function registerHevcTransmuxer(
         engine.unregisterTransmuxer(mimeType, priority);
       }
     }
-    restoreIsTypeSupported?.();
   };
 }

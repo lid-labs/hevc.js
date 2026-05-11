@@ -12076,7 +12076,7 @@ var HevcShaka = (() => {
     'video/mp4; codecs="hev1"',
     'video/mp4; codecs="hvc1"'
   ];
-  function registerHevcTransmuxer(shaka, config = {}) {
+  function registerHevcTransmuxer(shaka) {
     const engine = shaka?.transmuxer?.TransmuxerEngine;
     if (!engine || typeof engine.registerTransmuxer !== "function") {
       console.warn(
@@ -12093,24 +12093,12 @@ var HevcShaka = (() => {
         priority
       );
     }
-    let restoreIsTypeSupported = null;
-    if (config.forceTranscode && typeof MediaSource !== "undefined") {
-      const originalIsTypeSupported = MediaSource.isTypeSupported;
-      MediaSource.isTypeSupported = function(mimeType) {
-        if (/hev1|hvc1/i.test(mimeType)) return false;
-        return originalIsTypeSupported.call(MediaSource, mimeType);
-      };
-      restoreIsTypeSupported = () => {
-        MediaSource.isTypeSupported = originalIsTypeSupported;
-      };
-    }
     return () => {
       if (typeof engine.unregisterTransmuxer === "function") {
         for (const mimeType of HEVC_MIME_TYPES) {
           engine.unregisterTransmuxer(mimeType, priority);
         }
       }
-      restoreIsTypeSupported?.();
     };
   }
   return __toCommonJS(shaka_entry_exports);

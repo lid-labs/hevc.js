@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { HevcTransmuxer, registerHevcTransmuxer } from "./index.js";
 
 vi.mock("@hevcjs/core", () => ({
@@ -128,65 +128,5 @@ describe("registerHevcTransmuxer", () => {
     const instance = factory();
     expect(instance).toBeInstanceOf(HevcTransmuxer);
     expect(instance.getOriginalMimeType()).toBe(firstCall[0]);
-  });
-
-  describe("forceTranscode", () => {
-    let originalIsTypeSupported: typeof MediaSource.isTypeSupported;
-
-    beforeEach(() => {
-      // Provide a stub MediaSource on globalThis if running in pure Node
-      // (vitest defaults to a Node environment with no DOM).
-      if (typeof MediaSource === "undefined") {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (globalThis as any).MediaSource = {
-          isTypeSupported: vi.fn(() => true),
-        };
-      }
-      originalIsTypeSupported = MediaSource.isTypeSupported;
-    });
-
-    afterEach(() => {
-      MediaSource.isTypeSupported = originalIsTypeSupported;
-    });
-
-    it("does not patch MediaSource by default", () => {
-      const shaka = buildShakaMock();
-      registerHevcTransmuxer(shaka);
-      expect(MediaSource.isTypeSupported).toBe(originalIsTypeSupported);
-    });
-
-    it("patches MediaSource.isTypeSupported when forceTranscode is true", () => {
-      const shaka = buildShakaMock();
-      registerHevcTransmuxer(shaka, { forceTranscode: true });
-
-      expect(MediaSource.isTypeSupported).not.toBe(originalIsTypeSupported);
-      expect(
-        MediaSource.isTypeSupported('video/mp4; codecs="hev1.1.6.L93.B0"'),
-      ).toBe(false);
-      expect(
-        MediaSource.isTypeSupported('video/mp4; codecs="hvc1.1.6.L120.B0"'),
-      ).toBe(false);
-    });
-
-    it("delegates to the original isTypeSupported for non-HEVC mime", () => {
-      const shaka = buildShakaMock();
-      const originalSpy = vi.fn(() => true);
-      MediaSource.isTypeSupported = originalSpy;
-      registerHevcTransmuxer(shaka, { forceTranscode: true });
-
-      MediaSource.isTypeSupported('video/mp4; codecs="avc1.640028"');
-      expect(originalSpy).toHaveBeenCalledWith(
-        'video/mp4; codecs="avc1.640028"',
-      );
-    });
-
-    it("cleanup restores the original isTypeSupported", () => {
-      const shaka = buildShakaMock();
-      const cleanup = registerHevcTransmuxer(shaka, { forceTranscode: true });
-
-      expect(MediaSource.isTypeSupported).not.toBe(originalIsTypeSupported);
-      cleanup();
-      expect(MediaSource.isTypeSupported).toBe(originalIsTypeSupported);
-    });
   });
 });

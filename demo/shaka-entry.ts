@@ -9,8 +9,6 @@ import {
   HevcTransmuxer,
   registerHevcTransmuxer,
 } from "../packages/shaka-plugin/src/index.js";
-import type { HevcShakaPluginConfig } from "../packages/shaka-plugin/src/index.js";
 
 // Re-export for the demo HTML
 export { HevcTransmuxer, registerHevcTransmuxer };
-export type { HevcShakaPluginConfig };

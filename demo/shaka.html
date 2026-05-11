@@ -120,18 +120,15 @@ async function loadMPD(presetUrl) {
     }
   } catch (_) { /* fall through */ }
 
-  const qp = new URLSearchParams(location.search);
   const forceTranscode = document.getElementById('force-transcode').checked;
   console.log('[demo] forceTranscode =', forceTranscode);
   console.log('[demo] registerHevcTransmuxer');
-  cleanup = HevcShaka.registerHevcTransmuxer(shaka, {
-    workerUrl: qp.get('workerUrl') || './transcode-worker.js',
-    wasmUrl: qp.get('wasmUrl') || undefined,
-    wasmBinaryUrl: qp.get('wasmBinaryUrl') || undefined,
-    forceTranscode,
-  });
+  cleanup = HevcShaka.registerHevcTransmuxer(shaka);
 
   player = new shaka.Player();
+  // Use Shaka's built-in config to route HEVC through our transmuxer even
+  // when the browser supports HEVC natively (Safari, recent Chrome on macOS).
+  player.configure({ mediaSource: { forceTransmux: forceTranscode } });
   player.addEventListener('error', (e) => {
     const detail = e.detail || e;
     console.error('[demo] shaka error', detail);
