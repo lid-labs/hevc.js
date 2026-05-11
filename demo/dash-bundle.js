@@ -11650,7 +11650,7 @@ var HevcDash = (() => {
       if (this._width === 0 || this._height === 0) {
         throw new Error("prepareInit: missing dimensions in HEVC init segment");
       }
-      this._encoder = new H264Encoder({
+      const warmup = new H264Encoder({
         width: this._width,
         height: this._height,
         fps: this._fps,
@@ -11669,11 +11669,13 @@ var HevcDash = (() => {
         bitDepth: 8,
         poc: 0
       };
-      this._encoder.onChunk = () => {
+      warmup.onChunk = () => {
       };
-      this._encoder.encode(blackFrame, 0, true);
-      await this._encoder.flush();
-      const avcC = this._encoder.codecDescription;
+      warmup.encode(blackFrame, 0, true);
+      await warmup.flush();
+      const avcC = warmup.codecDescription;
+      const codec = warmup.codec;
+      warmup.close();
       if (!avcC) {
         throw new Error("prepareInit: encoder produced no avcC after warmup");
       }
@@ -11683,7 +11685,7 @@ var HevcDash = (() => {
         timescale: this._timescale,
         avcC
       });
-      this._initResult = { initSegment, codec: this._encoder.codec };
+      this._initResult = { initSegment, codec };
       return this._initResult;
     }
     async processMediaSegment(data) {
