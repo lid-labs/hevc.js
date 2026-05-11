@@ -11966,6 +11966,230 @@ var HevcShaka = (() => {
     }
     return null;
   }
+  var TranscodeWorkerClient = class {
+    constructor(config) {
+      this._ready = false;
+      this._initParsed = false;
+      this._initResult = null;
+      this._segmentId = 0;
+      this._pendingResolves = /* @__PURE__ */ new Map();
+      this._pendingPrepareInit = /* @__PURE__ */ new Map();
+      this._readyPromise = new Promise((resolve) => {
+        this._readyResolve = resolve;
+      });
+      this._initParsedPromise = new Promise((resolve, reject) => {
+        this._initParsedResolve = resolve;
+        this._initParsedReject = reject;
+      });
+      const { workerUrl: _, ...transcoderConfig } = config;
+      this._workerReady = loadWorker(config.workerUrl).then((worker) => {
+        worker.onmessage = (e) => this._onMessage(e.data);
+        worker.onerror = (e) => {
+          log.error("Worker error:", e.message);
+        };
+        worker.postMessage({ type: "init", config: transcoderConfig });
+        return worker;
+      });
+    }
+    get isInitialized() {
+      return this._ready;
+    }
+    get isInitParsed() {
+      return this._initParsed;
+    }
+    get initResult() {
+      return this._initResult;
+    }
+    /** Wait for the WASM decoder to be ready inside the worker */
+    async waitReady() {
+      await this._workerReady;
+      return this._readyPromise;
+    }
+    /** Send an init segment (ftyp + moov) to the worker for parsing */
+    async processInitSegment(data) {
+      const worker = await this._workerReady;
+      worker.postMessage(
+        { type: "initSegment", data: data.buffer },
+        [data.buffer]
+      );
+      return this._initParsedPromise;
+    }
+    /**
+     * Process an HEVC init segment and return a matching H.264 fMP4 init
+     * segment (warmup-encoder path inside the worker). Required by
+     * transmuxer plugins that must hand an init segment back to the host
+     * player before any media has been seen (Shaka 4.x's Transmuxer
+     * contract).
+     */
+    async prepareInit(data) {
+      const worker = await this._workerReady;
+      const id = this._segmentId++;
+      return new Promise((resolve, reject) => {
+        this._pendingPrepareInit.set(id, { resolve, reject });
+        worker.postMessage(
+          { type: "prepareInit", data: data.buffer, id },
+          [data.buffer]
+        );
+      });
+    }
+    /** Send a media segment to the worker for transcoding */
+    async processMediaSegment(data) {
+      const worker = await this._workerReady;
+      const id = this._segmentId++;
+      return new Promise((resolve, reject) => {
+        this._pendingResolves.set(id, { resolve, reject });
+        worker.postMessage(
+          { type: "mediaSegment", data: data.buffer, id },
+          [data.buffer]
+        );
+      });
+    }
+    /** Send a media segment for streaming transcoding — onChunk called for each partial result */
+    async processMediaSegmentStreaming(data, onChunk) {
+      const worker = await this._workerReady;
+      const id = this._segmentId++;
+      return new Promise((resolve, reject) => {
+        let chainPromise = Promise.resolve();
+        const handler = (e) => {
+          const msg = e.data;
+          if (msg.id !== id) return;
+          if (msg.type === "partialTranscoded") {
+            const init = msg.initSegment ? new Uint8Array(msg.initSegment) : null;
+            if (init && !this._initResult) {
+              this._initResult = {
+                initSegment: init,
+                codec: msg.codec || "avc1.640033"
+              };
+            }
+            const h264 = new Uint8Array(msg.h264);
+            chainPromise = chainPromise.then(() => onChunk(h264, init, msg.codec ?? null));
+          } else if (msg.type === "streamingDone") {
+            worker.removeEventListener("message", handler);
+            chainPromise.then(() => resolve()).catch(reject);
+          } else if (msg.type === "error") {
+            worker.removeEventListener("message", handler);
+            chainPromise.then(() => reject(new Error(msg.message))).catch(reject);
+          }
+        };
+        worker.addEventListener("message", handler);
+        worker.postMessage(
+          { type: "mediaSegmentStreaming", data: data.buffer, id },
+          [data.buffer]
+        );
+      });
+    }
+    /** Abort current transcoding, reset state for seek */
+    abort() {
+      for (const [, { reject }] of this._pendingResolves) {
+        reject(new Error("Aborted"));
+      }
+      this._pendingResolves.clear();
+      for (const [, { reject }] of this._pendingPrepareInit) {
+        reject(new Error("Aborted"));
+      }
+      this._pendingPrepareInit.clear();
+      this._segmentId = 0;
+      this._ready = false;
+      this._readyPromise = new Promise((resolve) => {
+        this._readyResolve = resolve;
+      });
+      this._initParsed = false;
+      this._initResult = null;
+      this._initParsedPromise = new Promise((resolve, reject) => {
+        this._initParsedResolve = resolve;
+        this._initParsedReject = reject;
+      });
+      this._workerReady.then((worker) => worker.postMessage({ type: "abort" }));
+    }
+    /** Destroy the worker */
+    destroy() {
+      this._pendingResolves.clear();
+      this._pendingPrepareInit.clear();
+      this._workerReady.then((worker) => {
+        worker.postMessage({ type: "destroy" });
+        worker.terminate();
+      });
+    }
+    _onMessage(msg) {
+      switch (msg.type) {
+        case "ready":
+          this._ready = true;
+          this._readyResolve();
+          break;
+        case "initParsed":
+          this._initParsed = true;
+          this._initParsedResolve();
+          break;
+        case "initPrepared": {
+          const id = msg.id;
+          const pending = this._pendingPrepareInit.get(id);
+          if (!pending) break;
+          this._pendingPrepareInit.delete(id);
+          const result = {
+            initSegment: new Uint8Array(msg.initSegment),
+            codec: msg.codec
+          };
+          if (!this._initResult) this._initResult = result;
+          pending.resolve(result);
+          break;
+        }
+        case "transcoded": {
+          const id = msg.id;
+          const perf = msg.perf;
+          if (perf) {
+            const totalMs = perf.demuxMs + perf.decodeMs + perf.encodeMs;
+            log.debug(`Segment #${id} transcoded in ${totalMs.toFixed(0)}ms (${perf.frames}f \u2014 demux:${perf.demuxMs.toFixed(0)}ms decode:${perf.decodeMs.toFixed(0)}ms encode:${perf.encodeMs.toFixed(0)}ms)`);
+          }
+          const pending = this._pendingResolves.get(id);
+          if (!pending) break;
+          this._pendingResolves.delete(id);
+          if (msg.initSegment && !this._initResult) {
+            this._initResult = {
+              initSegment: new Uint8Array(msg.initSegment),
+              codec: msg.codec || "avc1.640033"
+            };
+          }
+          const h264 = msg.h264 ? new Uint8Array(msg.h264) : null;
+          pending.resolve(h264);
+          break;
+        }
+        case "error": {
+          const id = msg.id;
+          const pending = this._pendingResolves.get(id);
+          if (pending) {
+            this._pendingResolves.delete(id);
+            pending.reject(new Error(msg.message));
+            break;
+          }
+          const prepareInitPending = this._pendingPrepareInit.get(id);
+          if (prepareInitPending) {
+            this._pendingPrepareInit.delete(id);
+            prepareInitPending.reject(new Error(msg.message));
+            break;
+          }
+          if (id === -1 && !this._initParsed) {
+            this._initParsedReject(new Error(msg.message));
+          } else {
+            log.error(msg.message);
+          }
+          break;
+        }
+        case "aborted":
+          this._ready = true;
+          this._readyResolve();
+          break;
+      }
+    }
+  };
+  async function loadWorker(workerUrl) {
+    const sameOrigin = typeof location === "undefined" || new URL(workerUrl, location.href).origin === location.origin;
+    if (sameOrigin) return new Worker(workerUrl);
+    const code = await (await fetch(workerUrl)).text();
+    const blobUrl = URL.createObjectURL(
+      new Blob([code], { type: "application/javascript" })
+    );
+    return new Worker(blobUrl);
+  }
 
   // packages/shaka-plugin/src/transmuxer.ts
   var HEVC_MIME_PATTERN = /^video\/mp4\s*;.*codecs="?(hev1|hvc1)/i;
@@ -12044,8 +12268,25 @@ var HevcShaka = (() => {
       const bytes = toUint8(data);
       const isInit = reference == null || isInitSegment(bytes);
       if (!this.transcoder_) {
-        this.transcoder_ = new SegmentTranscoder(this.transcoderConfig_);
-        this.initPromise_ = this.transcoder_.init();
+        const workerUrl = this.transcoderConfig_.workerUrl;
+        if (workerUrl) {
+          const worker = new TranscodeWorkerClient({
+            ...this.transcoderConfig_,
+            workerUrl
+          });
+          this.transcoder_ = worker;
+          this.initPromise_ = worker.waitReady();
+          console.log(
+            `[hevc.js/shaka] HEVC transcoding routed through Worker at ${workerUrl}`
+          );
+        } else {
+          const local = new SegmentTranscoder(this.transcoderConfig_);
+          this.transcoder_ = local;
+          this.initPromise_ = local.init();
+          console.log(
+            "[hevc.js/shaka] HEVC transcoding runs on main thread (no workerUrl provided)"
+          );
+        }
       }
       await this.initPromise_;
       if (isInit) {

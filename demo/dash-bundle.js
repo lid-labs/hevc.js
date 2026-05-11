@@ -11975,6 +11975,7 @@ var HevcDash = (() => {
       this._initResult = null;
       this._segmentId = 0;
       this._pendingResolves = /* @__PURE__ */ new Map();
+      this._pendingPrepareInit = /* @__PURE__ */ new Map();
       this._readyPromise = new Promise((resolve) => {
         this._readyResolve = resolve;
       });
@@ -12014,6 +12015,24 @@ var HevcDash = (() => {
         [data.buffer]
       );
       return this._initParsedPromise;
+    }
+    /**
+     * Process an HEVC init segment and return a matching H.264 fMP4 init
+     * segment (warmup-encoder path inside the worker). Required by
+     * transmuxer plugins that must hand an init segment back to the host
+     * player before any media has been seen (Shaka 4.x's Transmuxer
+     * contract).
+     */
+    async prepareInit(data) {
+      const worker = await this._workerReady;
+      const id = this._segmentId++;
+      return new Promise((resolve, reject) => {
+        this._pendingPrepareInit.set(id, { resolve, reject });
+        worker.postMessage(
+          { type: "prepareInit", data: data.buffer, id },
+          [data.buffer]
+        );
+      });
     }
     /** Send a media segment to the worker for transcoding */
     async processMediaSegment(data) {
@@ -12067,6 +12086,10 @@ var HevcDash = (() => {
         reject(new Error("Aborted"));
       }
       this._pendingResolves.clear();
+      for (const [, { reject }] of this._pendingPrepareInit) {
+        reject(new Error("Aborted"));
+      }
+      this._pendingPrepareInit.clear();
       this._segmentId = 0;
       this._ready = false;
       this._readyPromise = new Promise((resolve) => {
@@ -12083,6 +12106,7 @@ var HevcDash = (() => {
     /** Destroy the worker */
     destroy() {
       this._pendingResolves.clear();
+      this._pendingPrepareInit.clear();
       this._workerReady.then((worker) => {
         worker.postMessage({ type: "destroy" });
         worker.terminate();
@@ -12098,6 +12122,19 @@ var HevcDash = (() => {
           this._initParsed = true;
           this._initParsedResolve();
           break;
+        case "initPrepared": {
+          const id = msg.id;
+          const pending = this._pendingPrepareInit.get(id);
+          if (!pending) break;
+          this._pendingPrepareInit.delete(id);
+          const result = {
+            initSegment: new Uint8Array(msg.initSegment),
+            codec: msg.codec
+          };
+          if (!this._initResult) this._initResult = result;
+          pending.resolve(result);
+          break;
+        }
         case "transcoded": {
           const id = msg.id;
           const perf = msg.perf;
@@ -12124,7 +12161,15 @@ var HevcDash = (() => {
           if (pending) {
             this._pendingResolves.delete(id);
             pending.reject(new Error(msg.message));
-          } else if (id === -1 && !this._initParsed) {
+            break;
+          }
+          const prepareInitPending = this._pendingPrepareInit.get(id);
+          if (prepareInitPending) {
+            this._pendingPrepareInit.delete(id);
+            prepareInitPending.reject(new Error(msg.message));
+            break;
+          }
+          if (id === -1 && !this._initParsed) {
             this._initParsedReject(new Error(msg.message));
           } else {
             log.error(msg.message);

@@ -11988,6 +11988,22 @@
         }
         break;
       }
+      case "prepareInit": {
+        try {
+          if (!transcoder) throw new Error("Transcoder not initialized");
+          const result = await transcoder.prepareInit(new Uint8Array(msg.data));
+          const response = {
+            type: "initPrepared",
+            id: msg.id,
+            initSegment: result.initSegment.buffer,
+            codec: result.codec
+          };
+          self.postMessage(response, [result.initSegment.buffer]);
+        } catch (err) {
+          self.postMessage({ type: "error", id: msg.id, message: err.message });
+        }
+        break;
+      }
       case "mediaSegment": {
         try {
           if (!transcoder) throw new Error("Transcoder not initialized");
