@@ -53,6 +53,12 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # Build @hevcjs/core so vitest can resolve `@hevcjs/core` imports
+      # in plugin tests (the resolution happens before vi.mock kicks in).
+      # Locally this is unnecessary because dist/ persists between runs.
+      - name: Build @hevcjs/core
+        run: pnpm --filter @hevcjs/core build
+
       - name: Run JS unit tests
         run: pnpm test:unit
 
