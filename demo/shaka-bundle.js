@@ -11992,12 +11992,13 @@ var HevcShaka = (() => {
     return boxType === "ftyp";
   }
   var HevcTransmuxer = class {
-    constructor(mimeType) {
+    constructor(mimeType, config = {}) {
       this.transcoder_ = null;
       this.initPromise_ = null;
       this.pendingHevcInit_ = null;
       this.h264InitEmitted_ = false;
       this.originalMimeType_ = mimeType;
+      this.transcoderConfig_ = config;
     }
     destroy() {
       this.transcoder_?.destroy();
@@ -12043,7 +12044,7 @@ var HevcShaka = (() => {
       const bytes = toUint8(data);
       const isInit = reference == null || isInitSegment(bytes);
       if (!this.transcoder_) {
-        this.transcoder_ = new SegmentTranscoder();
+        this.transcoder_ = new SegmentTranscoder(this.transcoderConfig_);
         this.initPromise_ = this.transcoder_.init();
       }
       await this.initPromise_;
@@ -12076,7 +12077,7 @@ var HevcShaka = (() => {
     'video/mp4; codecs="hev1"',
     'video/mp4; codecs="hvc1"'
   ];
-  function registerHevcTransmuxer(shaka) {
+  function registerHevcTransmuxer(shaka, config = {}) {
     const engine = shaka?.transmuxer?.TransmuxerEngine;
     if (!engine || typeof engine.registerTransmuxer !== "function") {
       console.warn(
@@ -12089,7 +12090,7 @@ var HevcShaka = (() => {
     for (const mimeType of HEVC_MIME_TYPES) {
       engine.registerTransmuxer(
         mimeType,
-        () => new HevcTransmuxer(mimeType),
+        () => new HevcTransmuxer(mimeType, config),
         priority
       );
     }
