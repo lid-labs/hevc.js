@@ -9,8 +9,22 @@
  * Modeled after `lib/transmuxer/aac_transmuxer.js` in shaka-player.
  */
 
-import { SegmentTranscoder, hevcMimeToH264Codec } from "@hevcjs/core";
+import {
+  SegmentTranscoder,
+  TranscodeWorkerClient,
+  hevcMimeToH264Codec,
+} from "@hevcjs/core";
 import type { SegmentTranscoderConfig } from "@hevcjs/core";
+
+/**
+ * Config accepted by `HevcTransmuxer` (and forwarded by `registerHevcTransmuxer`).
+ * When `workerUrl` is set, transcoding runs inside a Web Worker; otherwise
+ * the HEVC decode + H.264 encode pipeline runs on the main thread.
+ */
+export interface HevcTransmuxerConfig extends SegmentTranscoderConfig {
+  /** URL to the transcode worker script. When set, transcoding runs off main thread. */
+  workerUrl?: string;
+}
 
 // Loose typing while we don't pull `shaka.extern.*` into the build.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -61,13 +75,13 @@ export function isInitSegment(bytes: Uint8Array): boolean {
 
 export class HevcTransmuxer {
   private readonly originalMimeType_: string;
-  private readonly transcoderConfig_: SegmentTranscoderConfig;
-  private transcoder_: SegmentTranscoder | null = null;
+  private readonly transcoderConfig_: HevcTransmuxerConfig;
+  private transcoder_: SegmentTranscoder | TranscodeWorkerClient | null = null;
   private initPromise_: Promise<void> | null = null;
   private pendingHevcInit_: Uint8Array | null = null;
   private h264InitEmitted_ = false;
 
-  constructor(mimeType: string, config: SegmentTranscoderConfig = {}) {
+  constructor(mimeType: string, config: HevcTransmuxerConfig = {}) {
     this.originalMimeType_ = mimeType;
     this.transcoderConfig_ = config;
   }
@@ -127,8 +141,25 @@ export class HevcTransmuxer {
     const isInit = reference == null || isInitSegment(bytes);
 
     if (!this.transcoder_) {
-      this.transcoder_ = new SegmentTranscoder(this.transcoderConfig_);
-      this.initPromise_ = this.transcoder_.init();
+      const workerUrl = this.transcoderConfig_.workerUrl;
+      if (workerUrl) {
+        const worker = new TranscodeWorkerClient({
+          ...this.transcoderConfig_,
+          workerUrl,
+        });
+        this.transcoder_ = worker;
+        this.initPromise_ = worker.waitReady();
+        console.log(
+          `[hevc.js/shaka] HEVC transcoding routed through Worker at ${workerUrl}`,
+        );
+      } else {
+        const local = new SegmentTranscoder(this.transcoderConfig_);
+        this.transcoder_ = local;
+        this.initPromise_ = local.init();
+        console.log(
+          "[hevc.js/shaka] HEVC transcoding runs on main thread (no workerUrl provided)",
+        );
+      }
     }
     await this.initPromise_;
 

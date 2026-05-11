@@ -1,7 +1,7 @@
 /**
  * Shaka Player HEVC Plugin — public entry point.
  *
- * Usage:
+ * Usage (main thread, no Worker):
  * ```ts
  * import shaka from 'shaka-player';
  * import { registerHevcTransmuxer } from '@hevcjs/shaka-plugin';
@@ -10,6 +10,14 @@
  * const player = new shaka.Player();
  * await player.attach(videoElement);
  * await player.load(manifestUrl);
+ * ```
+ *
+ * Usage (off-main-thread via Web Worker — recommended for 4K / smoothness):
+ * ```ts
+ * registerHevcTransmuxer(shaka, {
+ *   wasmUrl: '/hevc-decode.js',
+ *   workerUrl: '/transcode-worker.js',
+ * });
  * ```
  *
  * To force the transmuxer even on browsers with native HEVC support
@@ -21,25 +29,22 @@
  * ```
  */
 
-import type { SegmentTranscoderConfig } from "@hevcjs/core";
 import { HevcTransmuxer } from "./transmuxer.js";
+import type { HevcTransmuxerConfig } from "./transmuxer.js";
 
 export { HevcTransmuxer } from "./transmuxer.js";
-export type { TransmuxOutput } from "./transmuxer.js";
+export type { TransmuxOutput, HevcTransmuxerConfig } from "./transmuxer.js";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type ShakaNamespace = any;
 
 /**
- * Plugin configuration. Forwarded as-is to the underlying
- * `SegmentTranscoder`, so `wasmUrl` / `wasmBinaryUrl` let you point the
- * HEVC decoder at custom asset locations (CDN, sub-path, cross-origin).
- *
- * `workerUrl` is intentionally absent: the Shaka transmuxer currently
- * runs the transcode pipeline on the main thread. Adding a Worker is
- * tracked separately.
+ * Plugin configuration. Forwarded as-is to `HevcTransmuxer`. Supports the
+ * `SegmentTranscoderConfig` fields (`wasmUrl`, `wasmBinaryUrl`, `fps`,
+ * `bitrate`) plus an optional `workerUrl` that, when set, routes the
+ * HEVC decode + H.264 encode pipeline through a Web Worker.
  */
-export type HevcShakaPluginConfig = SegmentTranscoderConfig;
+export type HevcShakaPluginConfig = HevcTransmuxerConfig;
 
 const HEVC_MIME_TYPES = [
   'video/mp4; codecs="hev1"',
@@ -54,7 +59,7 @@ const HEVC_MIME_TYPES = [
  * our transmuxer over any default fallback.
  *
  * @param shaka the global `shaka` namespace (import or window.shaka)
- * @param config forwarded to `SegmentTranscoder` (wasmUrl, wasmBinaryUrl, fps, bitrate)
+ * @param config forwarded to `HevcTransmuxer` (wasmUrl, wasmBinaryUrl, fps, bitrate, workerUrl)
  * @returns A cleanup function that unregisters the transmuxer.
  */
 export function registerHevcTransmuxer(
