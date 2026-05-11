@@ -23,6 +23,7 @@ export class TranscodeWorkerClient {
   private _initResult: TranscodedInit | null = null;
   private _segmentId = 0;
   private _pendingResolves = new Map<number, { resolve: (data: Uint8Array | null) => void; reject: (err: Error) => void }>();
+  private _pendingPrepareInit = new Map<number, { resolve: (result: TranscodedInit) => void; reject: (err: Error) => void }>();
   private _readyPromise: Promise<void>;
   private _readyResolve!: () => void;
   private _initParsedPromise!: Promise<void>;
@@ -64,6 +65,25 @@ export class TranscodeWorkerClient {
       [data.buffer],
     );
     return this._initParsedPromise;
+  }
+
+  /**
+   * Process an HEVC init segment and return a matching H.264 fMP4 init
+   * segment (warmup-encoder path inside the worker). Required by
+   * transmuxer plugins that must hand an init segment back to the host
+   * player before any media has been seen (Shaka 4.x's Transmuxer
+   * contract).
+   */
+  async prepareInit(data: Uint8Array): Promise<TranscodedInit> {
+    const worker = await this._workerReady;
+    const id = this._segmentId++;
+    return new Promise<TranscodedInit>((resolve, reject) => {
+      this._pendingPrepareInit.set(id, { resolve, reject });
+      worker.postMessage(
+        { type: "prepareInit", data: data.buffer, id },
+        [data.buffer],
+      );
+    });
   }
 
   /** Send a media segment to the worker for transcoding */
@@ -128,6 +148,10 @@ export class TranscodeWorkerClient {
       reject(new Error("Aborted"));
     }
     this._pendingResolves.clear();
+    for (const [, { reject }] of this._pendingPrepareInit) {
+      reject(new Error("Aborted"));
+    }
+    this._pendingPrepareInit.clear();
     this._segmentId = 0;
 
     // Reset ready state — worker will destroy + re-create transcoder (async init)
@@ -149,6 +173,7 @@ export class TranscodeWorkerClient {
   /** Destroy the worker */
   destroy(): void {
     this._pendingResolves.clear();
+    this._pendingPrepareInit.clear();
     this._workerReady.then((worker) => {
       worker.postMessage({ type: "destroy" });
       worker.terminate();
@@ -166,6 +191,22 @@ export class TranscodeWorkerClient {
         this._initParsed = true;
         this._initParsedResolve();
         break;
+
+      case "initPrepared": {
+        const id = msg.id as number;
+        const pending = this._pendingPrepareInit.get(id);
+        if (!pending) break;
+        this._pendingPrepareInit.delete(id);
+        const result: TranscodedInit = {
+          initSegment: new Uint8Array(msg.initSegment as ArrayBuffer),
+          codec: msg.codec as string,
+        };
+        // Cache for the .initResult getter so downstream code that
+        // queries it after the warmup path still gets a value.
+        if (!this._initResult) this._initResult = result;
+        pending.resolve(result);
+        break;
+      }
 
       case "transcoded": {
         const id = msg.id as number;
@@ -197,7 +238,15 @@ export class TranscodeWorkerClient {
         if (pending) {
           this._pendingResolves.delete(id);
           pending.reject(new Error(msg.message as string));
-        } else if (id === -1 && !this._initParsed) {
+          break;
+        }
+        const prepareInitPending = this._pendingPrepareInit.get(id);
+        if (prepareInitPending) {
+          this._pendingPrepareInit.delete(id);
+          prepareInitPending.reject(new Error(msg.message as string));
+          break;
+        }
+        if (id === -1 && !this._initParsed) {
           // Error during processInitSegment in worker — reject the awaited promise
           // to unblock processNext (otherwise it awaits forever)
           this._initParsedReject(new Error(msg.message as string));

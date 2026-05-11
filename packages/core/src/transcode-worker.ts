@@ -9,10 +9,12 @@
  *     { type: "init", config }
  *     { type: "initSegment", data: ArrayBuffer }
  *     { type: "mediaSegment", data: ArrayBuffer, id: number }
+ *     { type: "prepareInit", data: ArrayBuffer, id: number }
  *
  *   Worker → Main:
  *     { type: "ready" }
  *     { type: "initParsed" }
+ *     { type: "initPrepared", id: number, initSegment: ArrayBuffer, codec: string }
  *     { type: "transcoded", id: number, h264: ArrayBuffer | null, initSegment?: ArrayBuffer, codec?: string }
  *     { type: "error", id: number, message: string }
  */
@@ -59,6 +61,23 @@ self.onmessage = async (e: MessageEvent) => {
         self.postMessage({ type: "initParsed" });
       } catch (err) {
         self.postMessage({ type: "error", id: -1, message: (err as Error).message });
+      }
+      break;
+    }
+
+    case "prepareInit": {
+      try {
+        if (!transcoder) throw new Error("Transcoder not initialized");
+        const result = await transcoder.prepareInit(new Uint8Array(msg.data));
+        const response: Record<string, unknown> = {
+          type: "initPrepared",
+          id: msg.id,
+          initSegment: result.initSegment.buffer,
+          codec: result.codec,
+        };
+        self.postMessage(response, [result.initSegment.buffer]);
+      } catch (err) {
+        self.postMessage({ type: "error", id: msg.id, message: (err as Error).message });
       }
       break;
     }
