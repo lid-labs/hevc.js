@@ -123,7 +123,7 @@ describe("HevcTransmuxer", () => {
   describe("transmux", () => {
     it("returns the H.264 init segment as a Uint8Array on the init call", async () => {
       const t = new HevcTransmuxer(HEVC_720);
-      const out = await t.transmux(FTYP_HEADER, {}, null, 0);
+      const out = await t.transmux(FTYP_HEADER, {}, null, 0, "video");
 
       expect(out).toBeInstanceOf(Uint8Array);
       expect(mockTranscoder.prepareInit).toHaveBeenCalledTimes(1);
@@ -135,9 +135,9 @@ describe("HevcTransmuxer", () => {
 
     it("returns transcoded media bytes for subsequent media segments", async () => {
       const t = new HevcTransmuxer(HEVC_720);
-      await t.transmux(FTYP_HEADER, {}, null, 0);
+      await t.transmux(FTYP_HEADER, {}, null, 0, "video");
 
-      const out = await t.transmux(MOOF_HEADER, {}, {}, 0);
+      const out = await t.transmux(MOOF_HEADER, {}, {}, 0, "video");
 
       expect(out).toBeInstanceOf(Uint8Array);
       expect(mockTranscoder.processMediaSegment).toHaveBeenCalledTimes(1);
@@ -149,13 +149,13 @@ describe("HevcTransmuxer", () => {
 
     it("does not re-prepare the init segment on later calls", async () => {
       const t = new HevcTransmuxer(HEVC_720);
-      await t.transmux(FTYP_HEADER, {}, null, 0);
-      await t.transmux(MOOF_HEADER, {}, {}, 0);
+      await t.transmux(FTYP_HEADER, {}, null, 0, "video");
+      await t.transmux(MOOF_HEADER, {}, {}, 0, "video");
 
       mockTranscoder.processMediaSegment.mockResolvedValueOnce(
         new Uint8Array([4, 5, 6]),
       );
-      const out = await t.transmux(MOOF_HEADER, {}, {}, 0);
+      const out = await t.transmux(MOOF_HEADER, {}, {}, 0, "video");
 
       expect(Array.from(out)).toEqual([4, 5, 6]);
       expect(mockTranscoder.prepareInit).toHaveBeenCalledTimes(1);
@@ -163,10 +163,10 @@ describe("HevcTransmuxer", () => {
 
     it("media segment with no decoded output yields a free-box stub", async () => {
       const t = new HevcTransmuxer(HEVC_720);
-      await t.transmux(FTYP_HEADER, {}, null, 0);
+      await t.transmux(FTYP_HEADER, {}, null, 0, "video");
       mockTranscoder.processMediaSegment.mockResolvedValueOnce(null);
 
-      const out = await t.transmux(MOOF_HEADER, {}, {}, 0);
+      const out = await t.transmux(MOOF_HEADER, {}, {}, 0, "video");
       expect(Array.from(out)).toEqual([
         0, 0, 0, 8, 0x66, 0x72, 0x65, 0x65,
       ]);
@@ -174,9 +174,9 @@ describe("HevcTransmuxer", () => {
 
     it("creates the underlying transcoder lazily and only once", async () => {
       const t = new HevcTransmuxer(HEVC_720);
-      await t.transmux(FTYP_HEADER, {}, {}, 0);
-      await t.transmux(MOOF_HEADER, {}, {}, 0);
-      await t.transmux(MOOF_HEADER, {}, {}, 0);
+      await t.transmux(FTYP_HEADER, {}, {}, 0, "video");
+      await t.transmux(MOOF_HEADER, {}, {}, 0, "video");
+      await t.transmux(MOOF_HEADER, {}, {}, 0, "video");
 
       expect(mockTranscoder.init).toHaveBeenCalledTimes(1);
     });
@@ -188,7 +188,7 @@ describe("HevcTransmuxer", () => {
       );
 
       const t = new HevcTransmuxer(HEVC_720);
-      const inFlight = t.transmux(FTYP_HEADER, {}, null, 0);
+      const inFlight = t.transmux(FTYP_HEADER, {}, null, 0, "video");
 
       // Give the microtask queue a turn — init() hasn't resolved yet.
       await Promise.resolve();
@@ -205,7 +205,7 @@ describe("HevcTransmuxer", () => {
         FTYP_HEADER.byteOffset,
         FTYP_HEADER.byteOffset + FTYP_HEADER.byteLength,
       );
-      const out = await t.transmux(buf, {}, null, 0);
+      const out = await t.transmux(buf, {}, null, 0, "video");
       expect(out).toBeInstanceOf(Uint8Array);
       expect(Array.from(out)).toEqual([0xa, 0xb, 0xc, 0xd]);
     });
@@ -214,7 +214,7 @@ describe("HevcTransmuxer", () => {
   describe("destroy", () => {
     it("delegates to transcoder.destroy when one was created", async () => {
       const t = new HevcTransmuxer(HEVC_720);
-      await t.transmux(FTYP_HEADER, {}, {}, 0);
+      await t.transmux(FTYP_HEADER, {}, {}, 0, "video");
       t.destroy();
       expect(mockTranscoder.destroy).toHaveBeenCalledTimes(1);
     });
@@ -227,11 +227,11 @@ describe("HevcTransmuxer", () => {
 
     it("resets internal state so a new transmux call recreates a transcoder", async () => {
       const t = new HevcTransmuxer(HEVC_720);
-      await t.transmux(FTYP_HEADER, {}, {}, 0);
+      await t.transmux(FTYP_HEADER, {}, {}, 0, "video");
       t.destroy();
 
       // After destroy, a new transmux call should re-init the transcoder
-      await t.transmux(FTYP_HEADER, {}, {}, 0);
+      await t.transmux(FTYP_HEADER, {}, {}, 0, "video");
       expect(mockTranscoder.init).toHaveBeenCalledTimes(2);
     });
   });
