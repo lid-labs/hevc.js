@@ -11602,12 +11602,14 @@ var HevcDash = (() => {
       this._initialized = true;
     }
     /**
-     * Process an HEVC init segment (ftyp + moov).
-     * Parses track info, then returns the H.264 init segment to use instead.
+     * Process an HEVC init segment (ftyp + moov) — parses track metadata and
+     * extracts VPS/SPS/PPS for the WASM decoder. The H.264 init segment is
+     * generated lazily on the first media segment, because the H.264 avcC
+     * descriptor only exists after the first encoded frame.
      *
-     * The H.264 init segment is generated lazily — on the first media segment —
-     * because we need the encoder's avcC descriptor which requires encoding at least
-     * one frame. Returns null here; use getH264InitSegment() after first media segment.
+     * If you need the H.264 init segment up-front (e.g. when feeding Shaka's
+     * `Transmuxer.transmux()` which expects a result for the init segment
+     * before any media is delivered), use `prepareInit()` instead.
      */
     async processInitSegment(data) {
       this._demuxer = new FMP4Demuxer();
@@ -11632,6 +11634,59 @@ var HevcDash = (() => {
           off += ps.byteLength;
         }
       }
+    }
+    /**
+     * Process an HEVC init segment AND immediately produce a matching H.264
+     * fMP4 init segment by encoding a single black warmup frame to obtain a
+     * valid avcC descriptor. Useful for callers that must hand an init
+     * segment back to the player before any media segment has been seen
+     * (e.g. Shaka's `Transmuxer.transmux()`).
+     *
+     * After this call, `initResult` is populated and `processMediaSegment()`
+     * will skip the lazy init-generation path on its first call.
+     */
+    async prepareInit(data) {
+      await this.processInitSegment(data);
+      if (this._width === 0 || this._height === 0) {
+        throw new Error("prepareInit: missing dimensions in HEVC init segment");
+      }
+      const warmup = new H264Encoder({
+        width: this._width,
+        height: this._height,
+        fps: this._fps,
+        bitrate: this._config.bitrate
+      });
+      const cw = this._width >> 1;
+      const ch = this._height >> 1;
+      const blackFrame = {
+        y: new Uint16Array(this._width * this._height),
+        cb: new Uint16Array(cw * ch).fill(128),
+        cr: new Uint16Array(cw * ch).fill(128),
+        width: this._width,
+        height: this._height,
+        chromaWidth: cw,
+        chromaHeight: ch,
+        bitDepth: 8,
+        poc: 0
+      };
+      warmup.onChunk = () => {
+      };
+      warmup.encode(blackFrame, 0, true);
+      await warmup.flush();
+      const avcC = warmup.codecDescription;
+      const codec = warmup.codec;
+      warmup.close();
+      if (!avcC) {
+        throw new Error("prepareInit: encoder produced no avcC after warmup");
+      }
+      const initSegment = this._muxer.generateInit({
+        width: this._width,
+        height: this._height,
+        timescale: this._timescale,
+        avcC
+      });
+      this._initResult = { initSegment, codec };
+      return this._initResult;
     }
     async processMediaSegment(data) {
       if (!this._decoder || !this._demuxer) {
@@ -11920,6 +11975,7 @@ var HevcDash = (() => {
       this._initResult = null;
       this._segmentId = 0;
       this._pendingResolves = /* @__PURE__ */ new Map();
+      this._pendingPrepareInit = /* @__PURE__ */ new Map();
       this._readyPromise = new Promise((resolve) => {
         this._readyResolve = resolve;
       });
@@ -11959,6 +12015,24 @@ var HevcDash = (() => {
         [data.buffer]
       );
       return this._initParsedPromise;
+    }
+    /**
+     * Process an HEVC init segment and return a matching H.264 fMP4 init
+     * segment (warmup-encoder path inside the worker). Required by
+     * transmuxer plugins that must hand an init segment back to the host
+     * player before any media has been seen (Shaka 4.x's Transmuxer
+     * contract).
+     */
+    async prepareInit(data) {
+      const worker = await this._workerReady;
+      const id = this._segmentId++;
+      return new Promise((resolve, reject) => {
+        this._pendingPrepareInit.set(id, { resolve, reject });
+        worker.postMessage(
+          { type: "prepareInit", data: data.buffer, id },
+          [data.buffer]
+        );
+      });
     }
     /** Send a media segment to the worker for transcoding */
     async processMediaSegment(data) {
@@ -12012,6 +12086,10 @@ var HevcDash = (() => {
         reject(new Error("Aborted"));
       }
       this._pendingResolves.clear();
+      for (const [, { reject }] of this._pendingPrepareInit) {
+        reject(new Error("Aborted"));
+      }
+      this._pendingPrepareInit.clear();
       this._segmentId = 0;
       this._ready = false;
       this._readyPromise = new Promise((resolve) => {
@@ -12028,6 +12106,7 @@ var HevcDash = (() => {
     /** Destroy the worker */
     destroy() {
       this._pendingResolves.clear();
+      this._pendingPrepareInit.clear();
       this._workerReady.then((worker) => {
         worker.postMessage({ type: "destroy" });
         worker.terminate();
@@ -12043,6 +12122,19 @@ var HevcDash = (() => {
           this._initParsed = true;
           this._initParsedResolve();
           break;
+        case "initPrepared": {
+          const id = msg.id;
+          const pending = this._pendingPrepareInit.get(id);
+          if (!pending) break;
+          this._pendingPrepareInit.delete(id);
+          const result = {
+            initSegment: new Uint8Array(msg.initSegment),
+            codec: msg.codec
+          };
+          if (!this._initResult) this._initResult = result;
+          pending.resolve(result);
+          break;
+        }
         case "transcoded": {
           const id = msg.id;
           const perf = msg.perf;
@@ -12069,7 +12161,15 @@ var HevcDash = (() => {
           if (pending) {
             this._pendingResolves.delete(id);
             pending.reject(new Error(msg.message));
-          } else if (id === -1 && !this._initParsed) {
+            break;
+          }
+          const prepareInitPending = this._pendingPrepareInit.get(id);
+          if (prepareInitPending) {
+            this._pendingPrepareInit.delete(id);
+            prepareInitPending.reject(new Error(msg.message));
+            break;
+          }
+          if (id === -1 && !this._initParsed) {
             this._initParsedReject(new Error(msg.message));
           } else {
             log.error(msg.message);

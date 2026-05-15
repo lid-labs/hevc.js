@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>hevc.js — Shaka Player HEVC Playback</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="demo.css">
+</head>
+<body>
+
+<nav class="demo-nav">
+  <a href="../" class="demo-nav-brand">hevc<span>.js</span></a>
+  <a href="./">Decoder</a>
+  <a href="dash.html">dash.js</a>
+  <a href="shaka.html" class="active">Shaka</a>
+</nav>
+
+<main class="demo-main">
+  <h1 class="demo-title">Shaka Player HEVC Playback</h1>
+  <p class="demo-subtitle">HEVC DASH streams played via Shaka Player + WASM transcoding (HEVC &rarr; H.264)</p>
+
+  <div class="demo-controls">
+    <input type="text" id="mpd-url" class="demo-input" placeholder="Enter HEVC MPD URL...">
+    <button class="demo-btn demo-btn-primary" onclick="loadMPD()">Load</button>
+  </div>
+  <div class="demo-presets">
+    <button class="demo-btn" onclick="loadMPD('streams/dash_abr/manifest.mpd')">ABR 480p/720p/1080p + audio (30s)</button>
+    <button class="demo-btn" onclick="loadMPD('streams/dash_720p/manifest.mpd')">720p (10s)</button>
+    <button class="demo-btn" onclick="loadMPD('streams/dash_1080p/manifest.mpd')">1080p (5s)</button>
+    <button class="demo-btn" onclick="loadMPD('streams/dash_4k/manifest.mpd')">4K (5s)</button>
+  </div>
+
+  <div class="demo-toggle">
+    <input type="checkbox" id="force-transcode" class="demo-toggle-switch">
+    <label for="force-transcode" class="demo-toggle-label">Force transcoding (bypass native HEVC detection)</label>
+  </div>
+
+  <video id="player" class="demo-video" controls></video>
+  <div id="status" class="demo-status">Loading...</div>
+  <textarea id="log" class="demo-log" readonly></textarea>
+
+  <div class="demo-code"><span class="cm">// Zero build — load everything from a CDN.</span>
+<span class="kw">import</span> { <span class="fn">registerHevcTransmuxer</span> } <span class="kw">from</span> <span class="str">'https://esm.sh/@hevcjs/shaka-plugin@0'</span>;
+
+<span class="fn">registerHevcTransmuxer</span>(shaka);
+
+<span class="kw">const</span> player = <span class="kw">new</span> shaka.<span class="fn">Player</span>();
+<span class="kw">await</span> player.<span class="fn">attach</span>(videoElement);
+<span class="kw">await</span> player.<span class="fn">load</span>(mpdUrl);</div>
+</main>
+
+<footer class="demo-footer">
+  <a href="https://hevcjs.dev">hevc.js</a> &middot; <a href="https://github.com/privaloops/hevc.js">GitHub</a> &middot; MIT License
+</footer>
+
+<!-- WASM decoder -->
+<script src="hevc-decode.js"></script>
+<!-- Shaka Player -->
+<script src="https://cdn.jsdelivr.net/npm/shaka-player@4.11.4/dist/shaka-player.compiled.js"></script>
+<!-- hevc.js/shaka bundle -->
+<script src="shaka-bundle.js"></script>
+
+<script>
+const logEl = document.getElementById('log');
+function log(...args) {
+  const line = args.map(a => {
+    if (a instanceof Error) return `${a.name}: ${a.message}`;
+    if (typeof a === 'object') return JSON.stringify(a);
+    return String(a);
+  }).join(' ');
+  logEl.value += line + '\n';
+  logEl.scrollTop = logEl.scrollHeight;
+}
+const _log = console.log, _warn = console.warn, _err = console.error;
+console.log = (...a) => { _log(...a); log('[log]', ...a); };
+console.warn = (...a) => { _warn(...a); log('[warn]', ...a); };
+console.error = (...a) => { _err(...a); log('[ERROR]', ...a); };
+
+let player = null;
+let cleanup = null;
+
+// Surface Shaka logs in the textarea below so the demo doubles as
+// a diagnostic tool. Only available on the debug build of Shaka — silently
+// skipped on the compiled build where setLevel is stripped.
+if (typeof shaka !== 'undefined' && shaka.log && shaka.log.setLevel) {
+  shaka.log.setLevel(shaka.log.Level.V1 || 4);
+}
+
+async function loadMPD(presetUrl) {
+  const url = presetUrl || document.getElementById('mpd-url').value.trim();
+  if (!url) return;
+  document.getElementById('mpd-url').value = url;
+
+  console.log('[demo] loadMPD', url);
+
+  if (cleanup) { cleanup(); cleanup = null; }
+  if (player) { await player.destroy(); player = null; }
+
+  const video = document.getElementById('player');
+
+  if (typeof shaka === 'undefined') {
+    document.getElementById('status').textContent = 'Shaka Player failed to load.';
+    return;
+  }
+
+  if (typeof VideoEncoder === 'undefined') {
+    document.getElementById('status').textContent =
+      'This browser does not support WebCodecs. HEVC transcoding is not available. Try Chrome or Edge 94+.';
+    return;
+  }
+  try {
+    const r = await VideoEncoder.isConfigSupported({ codec: 'avc1.42001f', width: 320, height: 240 });
+    if (!r.supported) {
+      document.getElementById('status').textContent =
+        'This browser cannot encode H.264 via WebCodecs. HEVC transcoding is not available. Try Chrome or Edge 94+.';
+      return;
+    }
+  } catch (_) { /* fall through */ }
+
+  const qp = new URLSearchParams(location.search);
+  const forceTranscode = document.getElementById('force-transcode').checked;
+  // Off-main-thread by default — point at the same transcode-worker.js
+  // bundle that's already used by the dash.js demo. Override with
+  // ?workerUrl=... ; pass ?workerUrl=off explicitly to keep transcoding
+  // on the main thread (useful for debugging).
+  const workerUrlParam = qp.get('workerUrl');
+  const workerUrl = workerUrlParam === 'off'
+    ? undefined
+    : (workerUrlParam || './transcode-worker.js');
+  console.log('[demo] forceTranscode =', forceTranscode);
+  console.log('[demo] workerUrl =', workerUrl || '(none — main thread)');
+  console.log('[demo] registerHevcTransmuxer');
+  cleanup = HevcShaka.registerHevcTransmuxer(shaka, {
+    wasmUrl: qp.get('wasmUrl') || undefined,
+    wasmBinaryUrl: qp.get('wasmBinaryUrl') || undefined,
+    workerUrl,
+  });
+
+  player = new shaka.Player();
+  // Use Shaka's built-in config to route HEVC through our transmuxer even
+  // when the browser supports HEVC natively (Safari, recent Chrome on macOS).
+  player.configure({ mediaSource: { forceTransmux: forceTranscode } });
+  player.addEventListener('error', (e) => {
+    const detail = e.detail || e;
+    console.error('[demo] shaka error', detail);
+    document.getElementById('status').textContent =
+      'Error: ' + (detail.message || JSON.stringify(detail));
+  });
+  player.addEventListener('loaded', () => {
+    console.log('[demo] shaka loaded');
+    document.getElementById('status').textContent = 'Playing via Shaka + hevc.js';
+  });
+
+  try {
+    console.log('[demo] player.attach()');
+    await player.attach(video);
+    console.log('[demo] player.load()', url);
+    await player.load(url);
+    // Shaka doesn't auto-play (unlike dash.js). Trigger playback explicitly.
+    // Browsers may block autoplay without user gesture; .catch swallows that.
+    video.play().catch((e) => console.warn('[demo] video.play() blocked', e?.message));
+    document.getElementById('status').textContent = 'Loaded — playback should start';
+  } catch (e) {
+    console.error('[demo] load error', e);
+    document.getElementById('status').textContent =
+      'Load error: ' + (e.message || JSON.stringify(e));
+  }
+}
+
+document.getElementById('status').textContent = 'Ready — choose a preset or enter an MPD URL';
+</script>
+<script data-goatcounter="https://privaloops.goatcounter.com/count"
+        async src="//gc.zgo.at/count.js"></script>
+</body>
+</html>

@@ -1,0 +1,73 @@
+{
+  "name": "@hevcjs/shaka-plugin",
+  "version": "0.1.0",
+  "description": "Shaka Player plugin for HEVC/H.265 playback — registers a Shaka Transmuxer that decodes HEVC streams via @hevcjs/core",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist/",
+    "README.md"
+  ],
+  "keywords": [
+    "hevc",
+    "h265",
+    "h.265",
+    "webassembly",
+    "wasm",
+    "codec",
+    "video",
+    "browser",
+    "streaming",
+    "shaka",
+    "shaka-player",
+    "shaka-plugin",
+    "transmuxer",
+    "dash",
+    "hls",
+    "mse",
+    "mediasource",
+    "ott",
+    "media-source-extensions"
+  ],
+  "author": "privaloops",
+  "license": "MIT",
+  "homepage": "https://hevcjs.dev",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/privaloops/hevc.js.git",
+    "directory": "packages/shaka-plugin"
+  },
+  "bugs": {
+    "url": "https://github.com/privaloops/hevc.js/issues"
+  },
+  "scripts": {
+    "build": "tsup && tsc -p tsconfig.build.json",
+    "dev": "tsup --watch",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@hevcjs/core": "workspace:*"
+  },
+  "peerDependencies": {
+    "shaka-player": ">=4.0.0"
+  },
+  "peerDependenciesMeta": {
+    "shaka-player": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "shaka-player": "^4.11.0",
+    "tsup": "^8.0.0",
+    "typescript": "^6.0.3",
+    "vitest": "^3.0.0"
+  }
+}

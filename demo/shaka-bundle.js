@@ -1,231 +1,43 @@
 "use strict";
-(() => {
+var HevcShaka = (() => {
+  var __defProp = Object.defineProperty;
+  var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+  var __getOwnPropNames = Object.getOwnPropertyNames;
+  var __hasOwnProp = Object.prototype.hasOwnProperty;
   var __typeError = (msg) => {
     throw TypeError(msg);
   };
+  var __export = (target, all) => {
+    for (var name in all)
+      __defProp(target, name, { get: all[name], enumerable: true });
+  };
+  var __copyProps = (to, from, except, desc) => {
+    if (from && typeof from === "object" || typeof from === "function") {
+      for (let key of __getOwnPropNames(from))
+        if (!__hasOwnProp.call(to, key) && key !== except)
+          __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+    }
+    return to;
+  };
+  var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
   var __accessCheck = (obj, member, msg) => member.has(obj) || __typeError("Cannot " + msg);
   var __privateGet = (obj, member, getter) => (__accessCheck(obj, member, "read from private field"), getter ? getter.call(obj) : member.get(obj));
   var __privateAdd = (obj, member, value) => member.has(obj) ? __typeError("Cannot add the same private member more than once") : member instanceof WeakSet ? member.add(obj) : member.set(obj, value);
   var __privateSet = (obj, member, value, setter) => (__accessCheck(obj, member, "write to private field"), setter ? setter.call(obj, value) : member.set(obj, value), value);
   var __privateMethod = (obj, member, method) => (__accessCheck(obj, member, "access private method"), method);
 
-  // packages/core/src/decoder.ts
-  var HEVCDecoder = class _HEVCDecoder {
-    constructor(module) {
-      this._m = module;
-      this._api = {
-        create: module.cwrap("hevc_decoder_create", "number", []),
-        destroy: module.cwrap("hevc_decoder_destroy", null, ["number"]),
-        decode: module.cwrap("hevc_decoder_decode", "number", ["number", "number", "number"]),
-        getFrameCount: module.cwrap("hevc_decoder_get_frame_count", "number", ["number"]),
-        getFrame: module.cwrap("hevc_decoder_get_frame", "number", ["number", "number", "number"]),
-        getInfo: module.cwrap("hevc_decoder_get_info", "number", ["number", "number"]),
-        feed: module.cwrap("hevc_decoder_feed", "number", ["number", "number", "number"]),
-        drain: module.cwrap("hevc_decoder_drain", "number", ["number", "number"]),
-        getDrainedFrame: module.cwrap("hevc_decoder_get_drained_frame", "number", ["number", "number", "number"]),
-        flush: module.cwrap("hevc_decoder_flush", "number", ["number"])
-      };
-      this._dec = this._api.create();
-      if (!this._dec) throw new Error("Failed to create HEVC decoder");
-    }
-    /**
-     * Create a new decoder instance. Loads the WASM module.
-     */
-    static async create(options) {
-      const factoryOpts = {};
-      if (options?.wasmBinaryUrl) {
-        factoryOpts.locateFile = () => options.wasmBinaryUrl;
-      }
-      const g = globalThis;
-      if (typeof g.HEVCDecoderModule === "function") {
-        const module2 = await g.HEVCDecoderModule(factoryOpts);
-        return new _HEVCDecoder(module2);
-      }
-      const wasmUrl = options?.wasmUrl ?? "./wasm/hevc-decode.js";
-      const mod = await import(
-        /* @vite-ignore */
-        wasmUrl
-      );
-      const fn = mod.default ?? mod;
-      const module = await fn(factoryOpts);
-      return new _HEVCDecoder(module);
-    }
-    /**
-     * Decode a complete HEVC bitstream.
-     * @param data Raw .265 bitstream bytes
-     */
-    decode(data) {
-      const m = this._m;
-      const ptr = m._malloc(data.length);
-      try {
-        m.HEAPU8.set(data, ptr);
-        const ret = this._api.decode(this._dec, ptr, data.length);
-        if (ret !== 0) throw new Error(`Decode failed (code ${ret})`);
-        const count = this._api.getFrameCount(this._dec);
-        const frames = [];
-        for (let i = 0; i < count; i++) {
-          const frame = this._extractFrame(i);
-          if (frame) frames.push(frame);
-        }
-        const info = this._extractInfo();
-        return { frames, info };
-      } finally {
-        m._free(ptr);
-      }
-    }
-    /** Number of decoded frames available */
-    get frameCount() {
-      return this._api.getFrameCount(this._dec);
-    }
-    /** Get stream info (available after decode) */
-    get info() {
-      return this._extractInfo();
-    }
-    _extractFrame(index) {
-      const m = this._m;
-      const framePtr = m._malloc(48);
-      try {
-        const ret = this._api.getFrame(this._dec, index, framePtr);
-        if (ret !== 0) return null;
-        return this._readFrameFromPtr(framePtr);
-      } finally {
-        m._free(framePtr);
-      }
-    }
-    _extractDrainedFrame(index) {
-      const m = this._m;
-      const framePtr = m._malloc(48);
-      try {
-        const ret = this._api.getDrainedFrame(this._dec, index, framePtr);
-        if (ret !== 0) return null;
-        return this._readFrameFromPtr(framePtr);
-      } finally {
-        m._free(framePtr);
-      }
-    }
-    _readFrameFromPtr(framePtr) {
-      const m = this._m;
-      const yPtr = m.getValue(framePtr, "*");
-      const cbPtr = m.getValue(framePtr + 4, "*");
-      const crPtr = m.getValue(framePtr + 8, "*");
-      const width = m.getValue(framePtr + 12, "i32");
-      const height = m.getValue(framePtr + 16, "i32");
-      const strideY = m.getValue(framePtr + 20, "i32");
-      const strideC = m.getValue(framePtr + 24, "i32");
-      const cw = m.getValue(framePtr + 28, "i32");
-      const ch = m.getValue(framePtr + 32, "i32");
-      const bd = m.getValue(framePtr + 36, "i32");
-      const poc = m.getValue(framePtr + 40, "i32");
-      const y = copyPlane(m, yPtr, width, height, strideY);
-      const cb = copyPlane(m, cbPtr, cw, ch, strideC);
-      const cr = copyPlane(m, crPtr, cw, ch, strideC);
-      return { y, cb, cr, width, height, chromaWidth: cw, chromaHeight: ch, bitDepth: bd, poc };
-    }
-    _extractInfo() {
-      const m = this._m;
-      const infoPtr = m._malloc(24);
-      try {
-        const ret = this._api.getInfo(this._dec, infoPtr);
-        if (ret !== 0) return null;
-        return {
-          width: m.getValue(infoPtr, "i32"),
-          height: m.getValue(infoPtr + 4, "i32"),
-          bitDepth: m.getValue(infoPtr + 8, "i32"),
-          chromaFormat: m.getValue(infoPtr + 12, "i32"),
-          profile: m.getValue(infoPtr + 16, "i32"),
-          level: m.getValue(infoPtr + 20, "i32")
-        };
-      } finally {
-        m._free(infoPtr);
-      }
-    }
-    // --- Incremental API (streaming) ---
-    /**
-     * Feed a chunk of data containing one or more complete NAL units.
-     * The decoder accumulates parameter sets and decodes pictures incrementally.
-     * Call drain() after each feed() to retrieve output-ready frames.
-     */
-    feed(data) {
-      const m = this._m;
-      const ptr = m._malloc(data.length);
-      try {
-        m.HEAPU8.set(data, ptr);
-        const ret = this._api.feed(this._dec, ptr, data.length);
-        if (ret !== 0) throw new Error(`Feed failed (code ${ret})`);
-      } finally {
-        m._free(ptr);
-      }
-    }
-    /**
-     * Drain output-ready frames from the decoder (§C.5.2 bumping process).
-     * Returns frames in display order, only when ready per DPB constraints.
-     * Frames are valid until the next feed() or destroy() call.
-     */
-    drain() {
-      const m = this._m;
-      const countPtr = m._malloc(4);
-      try {
-        const ret = this._api.drain(this._dec, countPtr);
-        if (ret !== 0) return [];
-        const count = m.getValue(countPtr, "i32");
-        const frames = [];
-        for (let i = 0; i < count; i++) {
-          const frame = this._extractDrainedFrame(i);
-          if (frame) frames.push(frame);
-        }
-        return frames;
-      } finally {
-        m._free(countPtr);
-      }
-    }
-    /**
-     * Flush all remaining frames from the DPB (call at end of stream).
-     * Returns all buffered frames in display order.
-     */
-    flush() {
-      const ret = this._api.flush(this._dec);
-      if (ret !== 0) return [];
-      const m = this._m;
-      const countPtr = m._malloc(4);
-      try {
-        const frames = [];
-        const framePtr = m._malloc(48);
-        try {
-          for (let i = 0; ; i++) {
-            const r = this._api.getDrainedFrame(this._dec, i, framePtr);
-            if (r !== 0) break;
-            frames.push(this._readFrameFromPtr(framePtr));
-          }
-        } finally {
-          m._free(framePtr);
-        }
-        return frames;
-      } finally {
-        m._free(countPtr);
-      }
-    }
-    /** Release decoder resources */
-    destroy() {
-      if (this._dec) {
-        this._api.destroy(this._dec);
-        this._dec = 0;
-      }
-    }
-  };
-  function copyPlane(m, ptr, width, height, stride) {
-    const out = new Uint16Array(width * height);
-    const base = ptr >> 1;
-    for (let y = 0; y < height; y++) {
-      out.set(m.HEAPU16.subarray(base + y * stride, base + y * stride + width), y * width);
-    }
-    return out;
-  }
+  // demo/shaka-entry.ts
+  var shaka_entry_exports = {};
+  __export(shaka_entry_exports, {
+    HevcTransmuxer: () => HevcTransmuxer,
+    registerHevcTransmuxer: () => registerHevcTransmuxer
+  });
 
   // node_modules/.pnpm/mp4box@2.3.0/node_modules/mp4box/dist/mp4box.all.js
-  var __defProp = Object.defineProperty;
-  var __export = (target, all) => {
+  var __defProp2 = Object.defineProperty;
+  var __export2 = (target, all) => {
     for (var name in all)
-      __defProp(target, name, { get: all[name], enumerable: true });
+      __defProp2(target, name, { get: all[name], enumerable: true });
   };
   var MAX_SIZE = Math.pow(2, 32);
   var MAX_UINT32 = Math.pow(2, 32) - 1;
@@ -8060,7 +7872,7 @@
     return file;
   }
   var descriptor_exports = {};
-  __export(descriptor_exports, {
+  __export2(descriptor_exports, {
     Descriptor: () => Descriptor,
     ES_Descriptor: () => ES_Descriptor,
     MPEG4DescriptorParser: () => MPEG4DescriptorParser
@@ -8211,7 +8023,7 @@
     }
   };
   var all_boxes_exports = {};
-  __export(all_boxes_exports, {
+  __export2(all_boxes_exports, {
     CoLLBox: () => CoLLBox,
     ItemContentIDPropertyBox: () => ItemContentIDPropertyBox,
     OpusSampleEntry: () => OpusSampleEntry,
@@ -11013,7 +10825,350 @@
   var BoxParser = registerBoxes(all_boxes_exports);
   registerDescriptors(descriptor_exports);
 
-  // packages/core/src/log.ts
+  // packages/core/dist/index.js
+  var HEVCDecoder = class _HEVCDecoder {
+    constructor(module) {
+      this._m = module;
+      this._api = {
+        create: module.cwrap("hevc_decoder_create", "number", []),
+        destroy: module.cwrap("hevc_decoder_destroy", null, ["number"]),
+        decode: module.cwrap("hevc_decoder_decode", "number", ["number", "number", "number"]),
+        getFrameCount: module.cwrap("hevc_decoder_get_frame_count", "number", ["number"]),
+        getFrame: module.cwrap("hevc_decoder_get_frame", "number", ["number", "number", "number"]),
+        getInfo: module.cwrap("hevc_decoder_get_info", "number", ["number", "number"]),
+        feed: module.cwrap("hevc_decoder_feed", "number", ["number", "number", "number"]),
+        drain: module.cwrap("hevc_decoder_drain", "number", ["number", "number"]),
+        getDrainedFrame: module.cwrap("hevc_decoder_get_drained_frame", "number", ["number", "number", "number"]),
+        flush: module.cwrap("hevc_decoder_flush", "number", ["number"])
+      };
+      this._dec = this._api.create();
+      if (!this._dec) throw new Error("Failed to create HEVC decoder");
+    }
+    /**
+     * Create a new decoder instance. Loads the WASM module.
+     */
+    static async create(options) {
+      const factoryOpts = {};
+      if (options?.wasmBinaryUrl) {
+        factoryOpts.locateFile = () => options.wasmBinaryUrl;
+      }
+      const g = globalThis;
+      if (typeof g.HEVCDecoderModule === "function") {
+        const module2 = await g.HEVCDecoderModule(factoryOpts);
+        return new _HEVCDecoder(module2);
+      }
+      const wasmUrl = options?.wasmUrl ?? "./wasm/hevc-decode.js";
+      const mod = await import(
+        /* @vite-ignore */
+        wasmUrl
+      );
+      const fn = mod.default ?? mod;
+      const module = await fn(factoryOpts);
+      return new _HEVCDecoder(module);
+    }
+    /**
+     * Decode a complete HEVC bitstream.
+     * @param data Raw .265 bitstream bytes
+     */
+    decode(data) {
+      const m = this._m;
+      const ptr = m._malloc(data.length);
+      try {
+        m.HEAPU8.set(data, ptr);
+        const ret = this._api.decode(this._dec, ptr, data.length);
+        if (ret !== 0) throw new Error(`Decode failed (code ${ret})`);
+        const count = this._api.getFrameCount(this._dec);
+        const frames = [];
+        for (let i = 0; i < count; i++) {
+          const frame = this._extractFrame(i);
+          if (frame) frames.push(frame);
+        }
+        const info = this._extractInfo();
+        return { frames, info };
+      } finally {
+        m._free(ptr);
+      }
+    }
+    /** Number of decoded frames available */
+    get frameCount() {
+      return this._api.getFrameCount(this._dec);
+    }
+    /** Get stream info (available after decode) */
+    get info() {
+      return this._extractInfo();
+    }
+    _extractFrame(index) {
+      const m = this._m;
+      const framePtr = m._malloc(48);
+      try {
+        const ret = this._api.getFrame(this._dec, index, framePtr);
+        if (ret !== 0) return null;
+        return this._readFrameFromPtr(framePtr);
+      } finally {
+        m._free(framePtr);
+      }
+    }
+    _extractDrainedFrame(index) {
+      const m = this._m;
+      const framePtr = m._malloc(48);
+      try {
+        const ret = this._api.getDrainedFrame(this._dec, index, framePtr);
+        if (ret !== 0) return null;
+        return this._readFrameFromPtr(framePtr);
+      } finally {
+        m._free(framePtr);
+      }
+    }
+    _readFrameFromPtr(framePtr) {
+      const m = this._m;
+      const yPtr = m.getValue(framePtr, "*");
+      const cbPtr = m.getValue(framePtr + 4, "*");
+      const crPtr = m.getValue(framePtr + 8, "*");
+      const width = m.getValue(framePtr + 12, "i32");
+      const height = m.getValue(framePtr + 16, "i32");
+      const strideY = m.getValue(framePtr + 20, "i32");
+      const strideC = m.getValue(framePtr + 24, "i32");
+      const cw = m.getValue(framePtr + 28, "i32");
+      const ch = m.getValue(framePtr + 32, "i32");
+      const bd = m.getValue(framePtr + 36, "i32");
+      const poc = m.getValue(framePtr + 40, "i32");
+      const y = copyPlane(m, yPtr, width, height, strideY);
+      const cb = copyPlane(m, cbPtr, cw, ch, strideC);
+      const cr = copyPlane(m, crPtr, cw, ch, strideC);
+      return { y, cb, cr, width, height, chromaWidth: cw, chromaHeight: ch, bitDepth: bd, poc };
+    }
+    _extractInfo() {
+      const m = this._m;
+      const infoPtr = m._malloc(24);
+      try {
+        const ret = this._api.getInfo(this._dec, infoPtr);
+        if (ret !== 0) return null;
+        return {
+          width: m.getValue(infoPtr, "i32"),
+          height: m.getValue(infoPtr + 4, "i32"),
+          bitDepth: m.getValue(infoPtr + 8, "i32"),
+          chromaFormat: m.getValue(infoPtr + 12, "i32"),
+          profile: m.getValue(infoPtr + 16, "i32"),
+          level: m.getValue(infoPtr + 20, "i32")
+        };
+      } finally {
+        m._free(infoPtr);
+      }
+    }
+    // --- Incremental API (streaming) ---
+    /**
+     * Feed a chunk of data containing one or more complete NAL units.
+     * The decoder accumulates parameter sets and decodes pictures incrementally.
+     * Call drain() after each feed() to retrieve output-ready frames.
+     */
+    feed(data) {
+      const m = this._m;
+      const ptr = m._malloc(data.length);
+      try {
+        m.HEAPU8.set(data, ptr);
+        const ret = this._api.feed(this._dec, ptr, data.length);
+        if (ret !== 0) throw new Error(`Feed failed (code ${ret})`);
+      } finally {
+        m._free(ptr);
+      }
+    }
+    /**
+     * Drain output-ready frames from the decoder (§C.5.2 bumping process).
+     * Returns frames in display order, only when ready per DPB constraints.
+     * Frames are valid until the next feed() or destroy() call.
+     */
+    drain() {
+      const m = this._m;
+      const countPtr = m._malloc(4);
+      try {
+        const ret = this._api.drain(this._dec, countPtr);
+        if (ret !== 0) return [];
+        const count = m.getValue(countPtr, "i32");
+        const frames = [];
+        for (let i = 0; i < count; i++) {
+          const frame = this._extractDrainedFrame(i);
+          if (frame) frames.push(frame);
+        }
+        return frames;
+      } finally {
+        m._free(countPtr);
+      }
+    }
+    /**
+     * Flush all remaining frames from the DPB (call at end of stream).
+     * Returns all buffered frames in display order.
+     */
+    flush() {
+      const ret = this._api.flush(this._dec);
+      if (ret !== 0) return [];
+      const m = this._m;
+      const countPtr = m._malloc(4);
+      try {
+        const frames = [];
+        const framePtr = m._malloc(48);
+        try {
+          for (let i = 0; ; i++) {
+            const r = this._api.getDrainedFrame(this._dec, i, framePtr);
+            if (r !== 0) break;
+            frames.push(this._readFrameFromPtr(framePtr));
+          }
+        } finally {
+          m._free(framePtr);
+        }
+        return frames;
+      } finally {
+        m._free(countPtr);
+      }
+    }
+    /** Release decoder resources */
+    destroy() {
+      if (this._dec) {
+        this._api.destroy(this._dec);
+        this._dec = 0;
+      }
+    }
+  };
+  function copyPlane(m, ptr, width, height, stride) {
+    const out = new Uint16Array(width * height);
+    const base = ptr >> 1;
+    for (let y = 0; y < height; y++) {
+      out.set(m.HEAPU16.subarray(base + y * stride, base + y * stride + width), y * width);
+    }
+    return out;
+  }
+  function pickH264Codec(w, h) {
+    const pixels = w * h;
+    if (pixels > 2073600) return "avc1.640033";
+    if (pixels > 921600) return "avc1.64002a";
+    return "avc1.640028";
+  }
+  var H264Encoder = class {
+    constructor(config) {
+      this._codecDescription = null;
+      this.onChunk = null;
+      this.onCodecDescription = null;
+      this._width = config.width;
+      this._height = config.height;
+      this._fps = config.fps ?? 25;
+      this._encoder = new VideoEncoder({
+        output: (chunk, metadata) => this._handleOutput(chunk, metadata),
+        error: (e) => {
+          throw new Error(`VideoEncoder error: ${e.message}`);
+        }
+      });
+      this._encoder.configure({
+        codec: pickH264Codec(this._width, this._height),
+        width: this._width,
+        height: this._height,
+        bitrate: config.bitrate ?? this._width * this._height * this._fps * 0.1,
+        // ~0.1 bpp
+        framerate: this._fps,
+        hardwareAcceleration: "no-preference",
+        latencyMode: "realtime",
+        avc: { format: "avc" }
+      });
+    }
+    /** Get the H.264 codec string used by this encoder */
+    get codec() {
+      return pickH264Codec(this._width, this._height);
+    }
+    /** Get the avcC codec description (available after first keyframe) */
+    get codecDescription() {
+      return this._codecDescription;
+    }
+    /**
+     * Encode a decoded HEVC frame.
+     * Converts Uint16Array YUV planes to I420 Uint8Array, creates VideoFrame, encodes.
+     */
+    encode(frame, timestampUs, keyFrame = false) {
+      const w = frame.width;
+      const h = frame.height;
+      const cw = frame.chromaWidth;
+      const ch = frame.chromaHeight;
+      const shift = frame.bitDepth > 8 ? frame.bitDepth - 8 : 0;
+      const ySize = w * h;
+      const cSize = cw * ch;
+      const i420 = new Uint8Array(ySize + cSize * 2);
+      for (let i = 0; i < ySize; i++) {
+        const v = frame.y[i] >> shift;
+        i420[i] = v > 255 ? 255 : v;
+      }
+      for (let i = 0; i < cSize; i++) {
+        const v = frame.cb[i] >> shift;
+        i420[ySize + i] = v > 255 ? 255 : v;
+      }
+      for (let i = 0; i < cSize; i++) {
+        const v = frame.cr[i] >> shift;
+        i420[ySize + cSize + i] = v > 255 ? 255 : v;
+      }
+      const videoFrame = new VideoFrame(i420, {
+        format: "I420",
+        codedWidth: w,
+        codedHeight: h,
+        timestamp: timestampUs,
+        duration: Math.round(1e6 / this._fps),
+        colorSpace: { primaries: "bt709", transfer: "bt709", matrix: "bt709" }
+      });
+      this._encoder.encode(videoFrame, { keyFrame });
+      videoFrame.close();
+    }
+    /** Flush the encoder — waits for all pending chunks to be output */
+    async flush() {
+      await this._encoder.flush();
+    }
+    /** Close the encoder and release resources */
+    close() {
+      this._encoder.close();
+    }
+    /** Check if VideoEncoder is supported in the current environment */
+    static isSupported() {
+      return typeof VideoEncoder !== "undefined";
+    }
+    /**
+     * Async capability probe — checks that VideoEncoder can actually encode H.264.
+     * Firefox exposes VideoEncoder but may not support H.264 encoding.
+     * Returns false if the API is missing or the config is not supported.
+     */
+    static async checkSupport() {
+      if (typeof VideoEncoder === "undefined") return false;
+      if (typeof VideoEncoder.isConfigSupported !== "function") return false;
+      try {
+        const result = await VideoEncoder.isConfigSupported({
+          codec: "avc1.640028",
+          width: 640,
+          height: 480,
+          bitrate: 1e6,
+          framerate: 25,
+          hardwareAcceleration: "prefer-software"
+        });
+        return result.supported === true;
+      } catch {
+        return false;
+      }
+    }
+    _handleOutput(chunk, metadata) {
+      if (metadata?.decoderConfig?.description && !this._codecDescription) {
+        const desc = metadata.decoderConfig.description;
+        if (desc instanceof ArrayBuffer) {
+          this._codecDescription = new Uint8Array(desc);
+        } else if (desc instanceof Uint8Array) {
+          this._codecDescription = new Uint8Array(desc);
+        } else if (ArrayBuffer.isView(desc)) {
+          this._codecDescription = new Uint8Array(desc.buffer);
+        }
+        this.onCodecDescription?.(this._codecDescription);
+      }
+      const data = new Uint8Array(chunk.byteLength);
+      chunk.copyTo(data);
+      const encoded = {
+        data,
+        timestamp: chunk.timestamp,
+        duration: chunk.duration ?? Math.round(1e6 / this._fps),
+        isKeyframe: chunk.type === "key"
+      };
+      this.onChunk?.(encoded);
+    }
+  };
   var LEVELS = {
     debug: 0,
     info: 1,
@@ -11036,8 +11191,6 @@
       if (LEVELS[currentLevel] <= LEVELS.error) console.error("[hevc.js]", ...args);
     }
   };
-
-  // packages/core/src/fmp4-demuxer.ts
   var FMP4Demuxer = class {
     constructor() {
       this._mp4box = createFile();
@@ -11172,145 +11325,6 @@
     }
     return nalUnits;
   }
-
-  // packages/core/src/h264-encoder.ts
-  function pickH264Codec(w, h) {
-    const pixels = w * h;
-    if (pixels > 2073600) return "avc1.640033";
-    if (pixels > 921600) return "avc1.64002a";
-    return "avc1.640028";
-  }
-  var H264Encoder = class {
-    constructor(config) {
-      this._codecDescription = null;
-      /** Callback invoked for each encoded chunk */
-      this.onChunk = null;
-      /** Callback invoked when codec description (avcC) is available */
-      this.onCodecDescription = null;
-      this._width = config.width;
-      this._height = config.height;
-      this._fps = config.fps ?? 25;
-      this._encoder = new VideoEncoder({
-        output: (chunk, metadata) => this._handleOutput(chunk, metadata),
-        error: (e) => {
-          throw new Error(`VideoEncoder error: ${e.message}`);
-        }
-      });
-      this._encoder.configure({
-        codec: pickH264Codec(this._width, this._height),
-        width: this._width,
-        height: this._height,
-        bitrate: config.bitrate ?? this._width * this._height * this._fps * 0.1,
-        // ~0.1 bpp
-        framerate: this._fps,
-        hardwareAcceleration: "no-preference",
-        latencyMode: "realtime",
-        avc: { format: "avc" }
-      });
-    }
-    /** Get the H.264 codec string used by this encoder */
-    get codec() {
-      return pickH264Codec(this._width, this._height);
-    }
-    /** Get the avcC codec description (available after first keyframe) */
-    get codecDescription() {
-      return this._codecDescription;
-    }
-    /**
-     * Encode a decoded HEVC frame.
-     * Converts Uint16Array YUV planes to I420 Uint8Array, creates VideoFrame, encodes.
-     */
-    encode(frame, timestampUs, keyFrame = false) {
-      const w = frame.width;
-      const h = frame.height;
-      const cw = frame.chromaWidth;
-      const ch = frame.chromaHeight;
-      const shift = frame.bitDepth > 8 ? frame.bitDepth - 8 : 0;
-      const ySize = w * h;
-      const cSize = cw * ch;
-      const i420 = new Uint8Array(ySize + cSize * 2);
-      for (let i = 0; i < ySize; i++) {
-        const v = frame.y[i] >> shift;
-        i420[i] = v > 255 ? 255 : v;
-      }
-      for (let i = 0; i < cSize; i++) {
-        const v = frame.cb[i] >> shift;
-        i420[ySize + i] = v > 255 ? 255 : v;
-      }
-      for (let i = 0; i < cSize; i++) {
-        const v = frame.cr[i] >> shift;
-        i420[ySize + cSize + i] = v > 255 ? 255 : v;
-      }
-      const videoFrame = new VideoFrame(i420, {
-        format: "I420",
-        codedWidth: w,
-        codedHeight: h,
-        timestamp: timestampUs,
-        duration: Math.round(1e6 / this._fps),
-        colorSpace: { primaries: "bt709", transfer: "bt709", matrix: "bt709" }
-      });
-      this._encoder.encode(videoFrame, { keyFrame });
-      videoFrame.close();
-    }
-    /** Flush the encoder — waits for all pending chunks to be output */
-    async flush() {
-      await this._encoder.flush();
-    }
-    /** Close the encoder and release resources */
-    close() {
-      this._encoder.close();
-    }
-    /** Check if VideoEncoder is supported in the current environment */
-    static isSupported() {
-      return typeof VideoEncoder !== "undefined";
-    }
-    /**
-     * Async capability probe — checks that VideoEncoder can actually encode H.264.
-     * Firefox exposes VideoEncoder but may not support H.264 encoding.
-     * Returns false if the API is missing or the config is not supported.
-     */
-    static async checkSupport() {
-      if (typeof VideoEncoder === "undefined") return false;
-      if (typeof VideoEncoder.isConfigSupported !== "function") return false;
-      try {
-        const result = await VideoEncoder.isConfigSupported({
-          codec: "avc1.640028",
-          width: 640,
-          height: 480,
-          bitrate: 1e6,
-          framerate: 25,
-          hardwareAcceleration: "prefer-software"
-        });
-        return result.supported === true;
-      } catch {
-        return false;
-      }
-    }
-    _handleOutput(chunk, metadata) {
-      if (metadata?.decoderConfig?.description && !this._codecDescription) {
-        const desc = metadata.decoderConfig.description;
-        if (desc instanceof ArrayBuffer) {
-          this._codecDescription = new Uint8Array(desc);
-        } else if (desc instanceof Uint8Array) {
-          this._codecDescription = new Uint8Array(desc);
-        } else if (ArrayBuffer.isView(desc)) {
-          this._codecDescription = new Uint8Array(desc.buffer);
-        }
-        this.onCodecDescription?.(this._codecDescription);
-      }
-      const data = new Uint8Array(chunk.byteLength);
-      chunk.copyTo(data);
-      const encoded = {
-        data,
-        timestamp: chunk.timestamp,
-        duration: chunk.duration ?? Math.round(1e6 / this._fps),
-        isKeyframe: chunk.type === "key"
-      };
-      this.onChunk?.(encoded);
-    }
-  };
-
-  // packages/core/src/fmp4-muxer.ts
   var FMP4Muxer = class {
     constructor() {
       this._sequenceNumber = 1;
@@ -11541,8 +11555,15 @@
     }
     return box("mdat", payload);
   }
-
-  // packages/core/src/segment-transcoder.ts
+  function hevcMimeToH264Codec(mime) {
+    if (typeof mime !== "string") return "avc1.640033";
+    const match = mime.match(/\.[LH](\d+)/);
+    if (!match) return "avc1.640033";
+    const level = parseInt(match[1], 10);
+    if (level >= 150) return "avc1.640033";
+    if (level >= 120) return "avc1.64002a";
+    return "avc1.640028";
+  }
   var SegmentTranscoder = class {
     constructor(config = {}) {
       this._decoder = null;
@@ -11558,13 +11579,6 @@
       this._height = 0;
       this._paramSetsFed = false;
       this._paramSetsBuffer = null;
-      /**
-       * Transcode an HEVC media segment to H.264.
-       * Returns the H.264 fMP4 segment (moof + mdat).
-       * On the first call, also generates the H.264 init segment if `prepareInit`
-       * was not called beforehand.
-       */
-      /** Perf stats from last processMediaSegment call */
       this.lastPerfStats = null;
       this._config = config;
       this._fps = config.fps ?? 25;
@@ -11952,152 +11966,383 @@
     }
     return null;
   }
-
-  // packages/core/src/transcode-worker.ts
-  var transcoder = null;
-  var lastConfig = null;
-  self.onmessage = async (e) => {
-    const msg = e.data;
-    switch (msg.type) {
-      case "init": {
-        try {
-          const config = msg.config;
-          const wasmUrl = config.wasmUrl || "./hevc-decode.js";
-          try {
-            self.importScripts(wasmUrl);
-            console.log("[hevc.js/worker] WASM glue loaded via importScripts");
-          } catch (err) {
-            console.warn("[hevc.js/worker] importScripts failed, will try import():", err.message);
-          }
-          lastConfig = config;
-          transcoder = new SegmentTranscoder(config);
-          await transcoder.init();
-          self.postMessage({ type: "ready" });
-        } catch (err) {
-          self.postMessage({ type: "error", id: -1, message: err.message });
-        }
-        break;
-      }
-      case "initSegment": {
-        try {
-          if (!transcoder) throw new Error("Transcoder not initialized");
-          await transcoder.processInitSegment(new Uint8Array(msg.data));
-          self.postMessage({ type: "initParsed" });
-        } catch (err) {
-          self.postMessage({ type: "error", id: -1, message: err.message });
-        }
-        break;
-      }
-      case "prepareInit": {
-        try {
-          if (!transcoder) throw new Error("Transcoder not initialized");
-          const result = await transcoder.prepareInit(new Uint8Array(msg.data));
-          const response = {
-            type: "initPrepared",
-            id: msg.id,
-            initSegment: result.initSegment.buffer,
-            codec: result.codec
-          };
-          self.postMessage(response, [result.initSegment.buffer]);
-        } catch (err) {
-          self.postMessage({ type: "error", id: msg.id, message: err.message });
-        }
-        break;
-      }
-      case "mediaSegment": {
-        try {
-          if (!transcoder) throw new Error("Transcoder not initialized");
-          const h264 = await transcoder.processMediaSegment(new Uint8Array(msg.data));
-          const response = {
-            type: "transcoded",
-            id: msg.id,
-            h264: h264 ? h264.buffer : null,
-            perf: transcoder.lastPerfStats ? { ...transcoder.lastPerfStats } : null
-          };
-          const initResult = transcoder.initResult;
-          if (initResult && msg.id === 0) {
-            response.initSegment = initResult.initSegment.buffer;
-            response.codec = initResult.codec;
-          }
-          const transfers = [];
-          if (response.h264) transfers.push(response.h264);
-          if (response.initSegment) transfers.push(response.initSegment);
-          self.postMessage(response, transfers);
-        } catch (err) {
-          self.postMessage({ type: "error", id: msg.id, message: err.message });
-        }
-        break;
-      }
-      case "mediaSegmentStreaming": {
-        try {
-          if (!transcoder) throw new Error("Transcoder not initialized");
-          await transcoder.processMediaSegmentStreaming(
-            new Uint8Array(msg.data),
-            (h264, init) => {
-              const transfers = [h264.buffer];
-              const resp = {
-                type: "partialTranscoded",
-                id: msg.id,
-                h264: h264.buffer,
-                isFirst: false
+  var TranscodeWorkerClient = class {
+    constructor(config) {
+      this._ready = false;
+      this._initParsed = false;
+      this._initResult = null;
+      this._segmentId = 0;
+      this._pendingResolves = /* @__PURE__ */ new Map();
+      this._pendingPrepareInit = /* @__PURE__ */ new Map();
+      this._readyPromise = new Promise((resolve) => {
+        this._readyResolve = resolve;
+      });
+      this._initParsedPromise = new Promise((resolve, reject) => {
+        this._initParsedResolve = resolve;
+        this._initParsedReject = reject;
+      });
+      const { workerUrl: _, ...transcoderConfig } = config;
+      this._workerReady = loadWorker(config.workerUrl).then((worker) => {
+        worker.onmessage = (e) => this._onMessage(e.data);
+        worker.onerror = (e) => {
+          log.error("Worker error:", e.message);
+        };
+        worker.postMessage({ type: "init", config: transcoderConfig });
+        return worker;
+      });
+    }
+    get isInitialized() {
+      return this._ready;
+    }
+    get isInitParsed() {
+      return this._initParsed;
+    }
+    get initResult() {
+      return this._initResult;
+    }
+    /** Wait for the WASM decoder to be ready inside the worker */
+    async waitReady() {
+      await this._workerReady;
+      return this._readyPromise;
+    }
+    /** Send an init segment (ftyp + moov) to the worker for parsing */
+    async processInitSegment(data) {
+      const worker = await this._workerReady;
+      worker.postMessage(
+        { type: "initSegment", data: data.buffer },
+        [data.buffer]
+      );
+      return this._initParsedPromise;
+    }
+    /**
+     * Process an HEVC init segment and return a matching H.264 fMP4 init
+     * segment (warmup-encoder path inside the worker). Required by
+     * transmuxer plugins that must hand an init segment back to the host
+     * player before any media has been seen (Shaka 4.x's Transmuxer
+     * contract).
+     */
+    async prepareInit(data) {
+      const worker = await this._workerReady;
+      const id = this._segmentId++;
+      return new Promise((resolve, reject) => {
+        this._pendingPrepareInit.set(id, { resolve, reject });
+        worker.postMessage(
+          { type: "prepareInit", data: data.buffer, id },
+          [data.buffer]
+        );
+      });
+    }
+    /** Send a media segment to the worker for transcoding */
+    async processMediaSegment(data) {
+      const worker = await this._workerReady;
+      const id = this._segmentId++;
+      return new Promise((resolve, reject) => {
+        this._pendingResolves.set(id, { resolve, reject });
+        worker.postMessage(
+          { type: "mediaSegment", data: data.buffer, id },
+          [data.buffer]
+        );
+      });
+    }
+    /** Send a media segment for streaming transcoding — onChunk called for each partial result */
+    async processMediaSegmentStreaming(data, onChunk) {
+      const worker = await this._workerReady;
+      const id = this._segmentId++;
+      return new Promise((resolve, reject) => {
+        let chainPromise = Promise.resolve();
+        const handler = (e) => {
+          const msg = e.data;
+          if (msg.id !== id) return;
+          if (msg.type === "partialTranscoded") {
+            const init = msg.initSegment ? new Uint8Array(msg.initSegment) : null;
+            if (init && !this._initResult) {
+              this._initResult = {
+                initSegment: init,
+                codec: msg.codec || "avc1.640033"
               };
-              if (init) {
-                const initCopy = new Uint8Array(init.initSegment);
-                resp.initSegment = initCopy.buffer;
-                resp.codec = init.codec;
-                resp.isFirst = true;
-                transfers.push(initCopy.buffer);
-              }
-              self.postMessage(resp, transfers);
             }
-          );
-          self.postMessage({ type: "streamingDone", id: msg.id });
-        } catch (err) {
-          self.postMessage({ type: "error", id: msg.id, message: err.message });
-        }
-        break;
+            const h264 = new Uint8Array(msg.h264);
+            chainPromise = chainPromise.then(() => onChunk(h264, init, msg.codec ?? null));
+          } else if (msg.type === "streamingDone") {
+            worker.removeEventListener("message", handler);
+            chainPromise.then(() => resolve()).catch(reject);
+          } else if (msg.type === "error") {
+            worker.removeEventListener("message", handler);
+            chainPromise.then(() => reject(new Error(msg.message))).catch(reject);
+          }
+        };
+        worker.addEventListener("message", handler);
+        worker.postMessage(
+          { type: "mediaSegmentStreaming", data: data.buffer, id },
+          [data.buffer]
+        );
+      });
+    }
+    /** Abort current transcoding, reset state for seek */
+    abort() {
+      for (const [, { reject }] of this._pendingResolves) {
+        reject(new Error("Aborted"));
       }
-      case "flush": {
-        try {
-          if (!transcoder) break;
-          const remaining = await transcoder.flush();
-          const response = {
-            type: "flushed",
-            h264: remaining ? remaining.buffer : null
+      this._pendingResolves.clear();
+      for (const [, { reject }] of this._pendingPrepareInit) {
+        reject(new Error("Aborted"));
+      }
+      this._pendingPrepareInit.clear();
+      this._segmentId = 0;
+      this._ready = false;
+      this._readyPromise = new Promise((resolve) => {
+        this._readyResolve = resolve;
+      });
+      this._initParsed = false;
+      this._initResult = null;
+      this._initParsedPromise = new Promise((resolve, reject) => {
+        this._initParsedResolve = resolve;
+        this._initParsedReject = reject;
+      });
+      this._workerReady.then((worker) => worker.postMessage({ type: "abort" }));
+    }
+    /** Destroy the worker */
+    destroy() {
+      this._pendingResolves.clear();
+      this._pendingPrepareInit.clear();
+      this._workerReady.then((worker) => {
+        worker.postMessage({ type: "destroy" });
+        worker.terminate();
+      });
+    }
+    _onMessage(msg) {
+      switch (msg.type) {
+        case "ready":
+          this._ready = true;
+          this._readyResolve();
+          break;
+        case "initParsed":
+          this._initParsed = true;
+          this._initParsedResolve();
+          break;
+        case "initPrepared": {
+          const id = msg.id;
+          const pending = this._pendingPrepareInit.get(id);
+          if (!pending) break;
+          this._pendingPrepareInit.delete(id);
+          const result = {
+            initSegment: new Uint8Array(msg.initSegment),
+            codec: msg.codec
           };
-          const transfers = remaining ? [remaining.buffer] : [];
-          self.postMessage(response, transfers);
-        } catch (err) {
-          self.postMessage({ type: "error", id: -1, message: err.message });
+          if (!this._initResult) this._initResult = result;
+          pending.resolve(result);
+          break;
         }
-        break;
-      }
-      case "abort": {
-        if (transcoder) {
-          transcoder.destroy();
-          transcoder = null;
+        case "transcoded": {
+          const id = msg.id;
+          const perf = msg.perf;
+          if (perf) {
+            const totalMs = perf.demuxMs + perf.decodeMs + perf.encodeMs;
+            log.debug(`Segment #${id} transcoded in ${totalMs.toFixed(0)}ms (${perf.frames}f \u2014 demux:${perf.demuxMs.toFixed(0)}ms decode:${perf.decodeMs.toFixed(0)}ms encode:${perf.encodeMs.toFixed(0)}ms)`);
+          }
+          const pending = this._pendingResolves.get(id);
+          if (!pending) break;
+          this._pendingResolves.delete(id);
+          if (msg.initSegment && !this._initResult) {
+            this._initResult = {
+              initSegment: new Uint8Array(msg.initSegment),
+              codec: msg.codec || "avc1.640033"
+            };
+          }
+          const h264 = msg.h264 ? new Uint8Array(msg.h264) : null;
+          pending.resolve(h264);
+          break;
         }
-        if (lastConfig) {
-          transcoder = new SegmentTranscoder(lastConfig);
-          transcoder.init().then(() => {
-            self.postMessage({ type: "aborted" });
-          }).catch((err) => {
-            self.postMessage({ type: "error", id: -1, message: err.message });
-          });
-        } else {
-          self.postMessage({ type: "aborted" });
+        case "error": {
+          const id = msg.id;
+          const pending = this._pendingResolves.get(id);
+          if (pending) {
+            this._pendingResolves.delete(id);
+            pending.reject(new Error(msg.message));
+            break;
+          }
+          const prepareInitPending = this._pendingPrepareInit.get(id);
+          if (prepareInitPending) {
+            this._pendingPrepareInit.delete(id);
+            prepareInitPending.reject(new Error(msg.message));
+            break;
+          }
+          if (id === -1 && !this._initParsed) {
+            this._initParsedReject(new Error(msg.message));
+          } else {
+            log.error(msg.message);
+          }
+          break;
         }
-        break;
-      }
-      case "destroy": {
-        if (transcoder) {
-          transcoder.destroy();
-          transcoder = null;
-        }
-        self.close();
-        break;
+        case "aborted":
+          this._ready = true;
+          this._readyResolve();
+          break;
       }
     }
   };
+  async function loadWorker(workerUrl) {
+    const sameOrigin = typeof location === "undefined" || new URL(workerUrl, location.href).origin === location.origin;
+    if (sameOrigin) return new Worker(workerUrl);
+    const code = await (await fetch(workerUrl)).text();
+    const blobUrl = URL.createObjectURL(
+      new Blob([code], { type: "application/javascript" })
+    );
+    return new Worker(blobUrl);
+  }
+
+  // packages/shaka-plugin/src/transmuxer.ts
+  var HEVC_MIME_PATTERN = /^video\/mp4\s*;.*codecs="?(hev1|hvc1)/i;
+  var FREE_BOX_8B = new Uint8Array([
+    0,
+    0,
+    0,
+    8,
+    // size = 8
+    102,
+    114,
+    101,
+    101
+    // 'free'
+  ]);
+  function isInitSegment(bytes) {
+    if (bytes.length < 8) return false;
+    const boxType = String.fromCharCode(
+      bytes[4],
+      bytes[5],
+      bytes[6],
+      bytes[7]
+    );
+    return boxType === "ftyp";
+  }
+  var HevcTransmuxer = class {
+    constructor(mimeType, config = {}) {
+      this.transcoder_ = null;
+      this.initPromise_ = null;
+      this.pendingHevcInit_ = null;
+      this.h264InitEmitted_ = false;
+      this.originalMimeType_ = mimeType;
+      this.transcoderConfig_ = config;
+    }
+    destroy() {
+      this.transcoder_?.destroy();
+      this.transcoder_ = null;
+      this.initPromise_ = null;
+      this.pendingHevcInit_ = null;
+      this.h264InitEmitted_ = false;
+    }
+    isSupported(mimeType, _contentType) {
+      return HEVC_MIME_PATTERN.test(mimeType);
+    }
+    /**
+     * Output mime advertised to Shaka before any frame has been encoded.
+     * Best-effort mapping based on the HEVC level declared in the input
+     * (see `@hevcjs/core/codec-mapping`). The actual encoded stream may
+     * use a slightly different profile/level if `H264Encoder` decides
+     * differently from the encoded resolution.
+     */
+    convertCodecs(_contentType, mimeType) {
+      if (!HEVC_MIME_PATTERN.test(mimeType)) return mimeType;
+      return `video/mp4; codecs="${hevcMimeToH264Codec(mimeType)}"`;
+    }
+    getOriginalMimeType() {
+      return this.originalMimeType_;
+    }
+    /**
+     * Convert one HEVC fMP4 segment into an MSE-ready H.264 fMP4 segment.
+     *
+     * Shaka calls this once per segment with `reference === null` for the
+     * init segment and a non-null `reference` for media segments.
+     *
+     *  - Init segment: warm up the H.264 encoder eagerly (encodes a single
+     *    black frame to obtain a valid avcC) and return a complete H.264
+     *    init segment that MSE can immediately ingest.
+     *  - Media segment: decode HEVC, re-encode to H.264, mux fMP4, return.
+     *
+     * Returns a raw `Uint8Array` rather than `{data, init}` so the same
+     * code path works on Shaka 4.x (which expects a `Uint8Array` directly)
+     * and on Shaka 5+ (which accepts either via an `ArrayBuffer.isView`
+     * check). Init/media segmentation is implicit in the call sequence.
+     */
+    async transmux(data, _stream, reference, _duration, _contentType) {
+      const bytes = toUint8(data);
+      const isInit = reference == null || isInitSegment(bytes);
+      if (!this.transcoder_) {
+        const workerUrl = this.transcoderConfig_.workerUrl;
+        if (workerUrl) {
+          const worker = new TranscodeWorkerClient({
+            ...this.transcoderConfig_,
+            workerUrl
+          });
+          this.transcoder_ = worker;
+          this.initPromise_ = worker.waitReady();
+          console.log(
+            `[hevc.js/shaka] HEVC transcoding routed through Worker at ${workerUrl}`
+          );
+        } else {
+          const local = new SegmentTranscoder(this.transcoderConfig_);
+          this.transcoder_ = local;
+          this.initPromise_ = local.init();
+          console.log(
+            "[hevc.js/shaka] HEVC transcoding runs on main thread (no workerUrl provided)"
+          );
+        }
+      }
+      await this.initPromise_;
+      if (isInit) {
+        const result = await this.transcoder_.prepareInit(bytes);
+        this.h264InitEmitted_ = true;
+        const copy = new Uint8Array(result.initSegment.byteLength);
+        copy.set(result.initSegment);
+        return copy;
+      }
+      const h264Media = await this.transcoder_.processMediaSegment(bytes);
+      if (!h264Media) {
+        return FREE_BOX_8B;
+      }
+      return h264Media;
+    }
+  };
+  function toUint8(data) {
+    if (data instanceof Uint8Array) return data;
+    if (data instanceof ArrayBuffer) return new Uint8Array(data);
+    return new Uint8Array(
+      data.buffer,
+      data.byteOffset,
+      data.byteLength
+    );
+  }
+
+  // packages/shaka-plugin/src/index.ts
+  var HEVC_MIME_TYPES = [
+    'video/mp4; codecs="hev1"',
+    'video/mp4; codecs="hvc1"'
+  ];
+  function registerHevcTransmuxer(shaka, config = {}) {
+    const engine = shaka?.transmuxer?.TransmuxerEngine;
+    if (!engine || typeof engine.registerTransmuxer !== "function") {
+      console.warn(
+        "[hevc.js/shaka] shaka.transmuxer.TransmuxerEngine.registerTransmuxer not found. Make sure shaka-player >= 4.0 is loaded before calling registerHevcTransmuxer()."
+      );
+      return () => {
+      };
+    }
+    const priority = engine.PluginPriority?.APPLICATION ?? engine.PluginPriority?.PREFERRED ?? 4;
+    for (const mimeType of HEVC_MIME_TYPES) {
+      engine.registerTransmuxer(
+        mimeType,
+        () => new HevcTransmuxer(mimeType, config),
+        priority
+      );
+    }
+    return () => {
+      if (typeof engine.unregisterTransmuxer === "function") {
+        for (const mimeType of HEVC_MIME_TYPES) {
+          engine.unregisterTransmuxer(mimeType, priority);
+        }
+      }
+    };
+  }
+  return __toCommonJS(shaka_entry_exports);
 })();
-//# sourceMappingURL=transcode-worker.js.map
+//# sourceMappingURL=shaka-bundle.js.map
