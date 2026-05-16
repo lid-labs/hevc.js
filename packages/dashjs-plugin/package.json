@@ -1,6 +1,6 @@
 {
   "name": "@hevcjs/dashjs-plugin",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "dash.js plugin for HEVC/H.265 playback — transparently intercepts MSE to decode HEVC streams via @hevcjs/core",
   "type": "module",
   "main": "./dist/index.js",
