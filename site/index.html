@@ -118,8 +118,9 @@
   <nav class="fixed top-0 left-0 right-0 z-50 flex items-center gap-6 px-6 py-3 bg-ink/80 backdrop-blur-md border-b border-white/5">
     <a href="./" class="font-bold text-white text-sm tracking-tight">hevc<span class="text-accent">.js</span></a>
     <div class="flex gap-4 ml-auto">
-      <a href="../demo/" class="text-silver/60 text-xs hover:text-white transition-colors">Decoder</a>
-      <a href="../demo/dash.html" class="text-silver/60 text-xs hover:text-white transition-colors">dash.js demo</a>
+      <a href="../demo/" class="text-silver/60 text-xs hover:text-white transition-colors">Core decoder</a>
+      <a href="../demo/dash.html" class="text-silver/60 text-xs hover:text-white transition-colors">dash.js</a>
+      <a href="../demo/shaka.html" class="text-silver/60 text-xs hover:text-white transition-colors">Shaka</a>
       <a href="./docs/dashjs-plugin.html" class="text-silver/60 text-xs hover:text-white transition-colors">Docs</a>
       <a href="https://github.com/privaloops/hevc.js" target="_blank" rel="noopener noreferrer" class="text-silver/60 text-xs hover:text-white transition-colors">GitHub</a>
     </div>
@@ -156,7 +157,7 @@
         </a>
         <a href="#playground"
            class="inline-flex items-center gap-2 px-6 py-3 bg-accent/15 text-accent-light font-semibold rounded-lg border border-accent/25 hover:bg-accent/25 transition-colors">
-          Try the playground
+          See it in action
         </a>
       </nav>
     </div>
@@ -257,46 +258,31 @@
       </div>
     </section>
 
-    <!-- Playground -->
-    <section id="playground" class="px-6 py-20" aria-label="HEVC decoding playground">
+    <!-- Live player -->
+    <section id="playground" class="px-6 py-20" aria-label="HEVC playback demo">
       <div class="max-w-5xl mx-auto">
-        <h2 class="text-3xl md:text-4xl font-bold text-white text-center mb-4">Playground</h2>
-        <p class="text-silver text-center max-w-2xl mx-auto mb-12">
-          Drop an HEVC file and watch it decode in real time, frame by frame.
+        <h2 class="text-3xl md:text-4xl font-bold text-white text-center mb-4">See it play</h2>
+        <p class="text-silver text-center max-w-2xl mx-auto mb-8">
+          A real HEVC/H.265 DASH stream, decoded in WebAssembly and transcoded to H.264 in your browser as it plays.
         </p>
 
-        <div id="playground-area" class="code-block rounded-xl p-8 max-w-3xl mx-auto text-center">
-          <div id="drop-zone" class="border-2 border-dashed border-accent/25 rounded-lg p-12 hover:border-accent/50 transition-colors cursor-pointer" role="button" tabindex="0" aria-label="Drop an HEVC file here or click to select">
-            <div class="text-6xl mb-4 opacity-50" aria-hidden="true">▶</div>
-            <p class="text-silver text-lg mb-2">Drop an <span class="text-white font-mono">.h265</span> or <span class="text-white font-mono">.hevc</span> file</p>
-            <p class="text-silver/50 text-sm">or <button id="use-sample" class="text-accent hover:text-accent-light underline">use a sample clip</button></p>
-          </div>
-
-          <!-- Decode results (hidden by default) -->
-          <div id="decode-results" class="hidden mt-6">
-            <canvas id="frame-canvas" class="mx-auto rounded-lg bg-black max-w-full" aria-label="Decoded HEVC video frame"></canvas>
-            <div class="flex items-center gap-4 mt-4 justify-center">
-              <button id="prev-frame" class="px-3 py-1 bg-ash rounded text-silver hover:text-white text-sm" aria-label="Previous frame">&larr; Prev</button>
-              <span id="frame-counter" class="text-sm text-silver font-mono">Frame 1/1</span>
-              <button id="next-frame" class="px-3 py-1 bg-ash rounded text-silver hover:text-white text-sm" aria-label="Next frame">Next &rarr;</button>
-            </div>
-            <div class="grid grid-cols-3 gap-4 mt-6 text-center">
-              <div>
-                <div id="stat-frames" class="text-2xl font-bold text-white">—</div>
-                <div class="text-xs text-silver">frames</div>
-              </div>
-              <div>
-                <div id="stat-time" class="text-2xl font-bold text-white">—</div>
-                <div class="text-xs text-silver">decode time</div>
-              </div>
-              <div>
-                <div id="stat-fps" class="text-2xl font-bold text-white">—</div>
-                <div class="text-xs text-silver">fps</div>
-              </div>
-            </div>
+        <div class="flex justify-center mb-8">
+          <div id="codec-status" class="inline-flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-medium font-mono bg-accent/10 border-accent/25 text-accent-light">
+            <span class="w-2 h-2 rounded-full" style="background:currentColor" aria-hidden="true"></span>
+            <span id="codec-status-text">Detecting browser HEVC support&hellip;</span>
           </div>
         </div>
-        <p class="text-xs text-silver/40 text-center mt-4">Decoding runs entirely in your browser. No data is uploaded.</p>
+
+        <div class="code-block rounded-xl p-6 max-w-3xl mx-auto">
+          <video id="player" class="rounded-lg bg-black" style="width:100%;aspect-ratio:16/9" controls muted playsinline aria-label="HEVC video player"></video>
+          <p id="status" class="text-sm text-accent text-center mt-4" style="min-height:1.25rem">Loading&hellip;</p>
+        </div>
+
+        <p class="text-xs text-silver/50 text-center mt-4">
+          Transcoding runs entirely in your browser — no data is uploaded. For 720p / 1080p / 4K test streams and the Shaka Player build, see the
+          <a href="../demo/dash.html" class="text-accent hover:text-accent-light">dash.js</a> and
+          <a href="../demo/shaka.html" class="text-accent hover:text-accent-light">Shaka</a> demos.
+        </p>
       </div>
     </section>
 
@@ -447,203 +433,104 @@
     </div>
   </footer>
 
+<!-- WASM decoder + dash.js + hevc.js plugin — served from ../demo (same origin in prod) -->
+<script src="../demo/hevc-decode.js"></script>
+<script src="https://cdn.dashjs.org/v4.7.4/dash.all.min.js"></script>
+<script src="../demo/dash-bundle.js"></script>
+
 <script>
-(function() {
-  const dropZone = document.getElementById('drop-zone');
-  const useSample = document.getElementById('use-sample');
-  const results = document.getElementById('decode-results');
-  const canvas = document.getElementById('frame-canvas');
-  const ctx = canvas.getContext('2d');
-  const frameCounter = document.getElementById('frame-counter');
-  const prevBtn = document.getElementById('prev-frame');
-  const nextBtn = document.getElementById('next-frame');
-  const statFrames = document.getElementById('stat-frames');
-  const statTime = document.getElementById('stat-time');
-  const statFps = document.getElementById('stat-fps');
-
-  let frames = [];
-  let currentFrame = 0;
-  let decoder = null;
-
-  // Load WASM module
-  async function loadDecoder() {
-    if (decoder) return decoder;
-    const script = document.createElement('script');
-    script.src = 'wasm/hevc-decode.js';
-    document.head.appendChild(script);
-    await new Promise(r => script.onload = r);
-    const Module = await HEVCDecoderModule();
-    const api = {
-      create: Module.cwrap('hevc_decoder_create', 'number', []),
-      destroy: Module.cwrap('hevc_decoder_destroy', null, ['number']),
-      decode: Module.cwrap('hevc_decoder_decode', 'number', ['number', 'number', 'number']),
-      getFrameCount: Module.cwrap('hevc_decoder_get_frame_count', 'number', ['number']),
-      getFrame: Module.cwrap('hevc_decoder_get_frame', 'number', ['number', 'number', 'number']),
-    };
-    decoder = { Module, api };
-    return decoder;
-  }
-
-  // Decode a bitstream and extract all frames
-  async function decodeBitstream(data) {
-    dropZone.innerHTML = '<div class="text-accent text-lg">Loading WASM decoder...</div>';
-
-    const { Module, api } = await loadDecoder();
-    const dec = api.create();
-
-    dropZone.innerHTML = '<div class="text-accent text-lg">Decoding...</div>';
-    await new Promise(r => setTimeout(r, 50)); // let UI update
-
-    const ptr = Module._malloc(data.length);
-    Module.HEAPU8.set(data, ptr);
-
-    const t0 = performance.now();
-    const ret = api.decode(dec, ptr, data.length);
-    const elapsed = performance.now() - t0;
-
-    Module._free(ptr);
-
-    if (ret !== 0) {
-      dropZone.innerHTML = '<div class="text-red-400 text-lg">Decode failed (error ' + ret + ')</div>';
-      api.destroy(dec);
-      return;
-    }
-
-    const count = api.getFrameCount(dec);
-    frames = [];
-
-    const framePtr = Module._malloc(48);
-    for (let i = 0; i < count; i++) {
-      if (api.getFrame(dec, i, framePtr) !== 0) continue;
-
-      const yPtr    = Module.getValue(framePtr, '*');
-      const cbPtr   = Module.getValue(framePtr + 4, '*');
-      const crPtr   = Module.getValue(framePtr + 8, '*');
-      const w       = Module.getValue(framePtr + 12, 'i32');
-      const h       = Module.getValue(framePtr + 16, 'i32');
-      const strideY = Module.getValue(framePtr + 20, 'i32');
-      const strideC = Module.getValue(framePtr + 24, 'i32');
-      const cw      = Module.getValue(framePtr + 28, 'i32');
-      const ch      = Module.getValue(framePtr + 32, 'i32');
-      const bd      = Module.getValue(framePtr + 36, 'i32');
-      const shift   = bd > 8 ? bd - 8 : 0;
-
-      // Convert YUV to RGBA on canvas
-      const rgba = new Uint8ClampedArray(w * h * 4);
-      const yOff = yPtr >> 1;
-      const cbOff = cbPtr >> 1;
-      const crOff = crPtr >> 1;
-
-      for (let row = 0; row < h; row++) {
-        for (let col = 0; col < w; col++) {
-          const Y  = Module.HEAPU16[yOff + row * strideY + col] >> shift;
-          const Cb = Module.HEAPU16[cbOff + (row >> 1) * strideC + (col >> 1)] >> shift;
-          const Cr = Module.HEAPU16[crOff + (row >> 1) * strideC + (col >> 1)] >> shift;
-
-          // BT.709 YCbCr to RGB
-          const r = Y + 1.5748 * (Cr - 128);
-          const g = Y - 0.1873 * (Cb - 128) - 0.4681 * (Cr - 128);
-          const b = Y + 1.8556 * (Cb - 128);
-
-          const idx = (row * w + col) * 4;
-          rgba[idx]     = r < 0 ? 0 : r > 255 ? 255 : r;
-          rgba[idx + 1] = g < 0 ? 0 : g > 255 ? 255 : g;
-          rgba[idx + 2] = b < 0 ? 0 : b > 255 ? 255 : b;
-          rgba[idx + 3] = 255;
-        }
+// Copied from packages/dashjs-plugin/src/plugin.ts — isTypeSupported can lie
+// (Firefox Win without HEVC extension), so we verify with a real SourceBuffer.
+async function hasNativeHevcSupport() {
+  try {
+    if (typeof MediaSource === 'undefined') return false;
+    if (!MediaSource.isTypeSupported('video/mp4; codecs="hev1.1.6.L93.B0"')) return false;
+    return await new Promise((resolve) => {
+      const ms = new MediaSource();
+      const url = URL.createObjectURL(ms);
+      const video = document.createElement('video');
+      const timeout = setTimeout(() => { cleanup(); resolve(false); }, 1000);
+      function cleanup() {
+        clearTimeout(timeout);
+        video.removeAttribute('src');
+        video.load();
+        URL.revokeObjectURL(url);
       }
-      frames.push({ rgba, w, h });
-    }
-    Module._free(framePtr);
-    api.destroy(dec);
+      ms.addEventListener('sourceopen', () => {
+        try {
+          const sb = ms.addSourceBuffer('video/mp4; codecs="hev1.1.6.L93.B0"');
+          ms.removeSourceBuffer(sb);
+          cleanup(); resolve(true);
+        } catch { cleanup(); resolve(false); }
+      });
+      video.src = url;
+    });
+  } catch { return false; }
+}
 
-    // Show results
-    currentFrame = 0;
-    statFrames.textContent = count;
-    statTime.textContent = (elapsed / 1000).toFixed(2) + 's';
-    statFps.textContent = (count / (elapsed / 1000)).toFixed(0);
+async function canEncodeH264() {
+  if (typeof VideoEncoder === 'undefined') return false;
+  try {
+    const r = await VideoEncoder.isConfigSupported({ codec: 'avc1.42001f', width: 320, height: 240 });
+    return !!r.supported;
+  } catch (_) { return false; }
+}
 
-    dropZone.classList.add('hidden');
-    results.classList.remove('hidden');
-    showFrame(0);
+async function detectHevcSupport() {
+  const el = document.getElementById('codec-status');
+  const txt = document.getElementById('codec-status-text');
+  const base = 'inline-flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-medium font-mono ';
+  if (await hasNativeHevcSupport()) {
+    el.className = base + 'bg-smoke border-ash text-green-400';
+    txt.textContent = 'Native HEVC supported by your browser (hardware decode). hevc.js defers to the browser.';
+  } else if (await canEncodeH264()) {
+    el.className = base + 'bg-accent/10 border-accent/25 text-accent-light';
+    txt.textContent = 'No native HEVC in this browser — hevc.js decodes in software (WebAssembly + WebCodecs).';
+  } else {
+    el.className = base + 'bg-smoke border-ash text-red-400';
+    txt.textContent = 'HEVC playback unavailable: WebCodecs H.264 encoder missing. Try Chrome or Edge 94+.';
   }
+}
 
-  function showFrame(idx) {
-    if (idx < 0 || idx >= frames.length) return;
-    currentFrame = idx;
-    const f = frames[idx];
-    canvas.width = f.w;
-    canvas.height = f.h;
-    // Scale canvas display for large frames
-    canvas.style.maxWidth = '100%';
-    canvas.style.height = 'auto';
-    const imgData = new ImageData(f.rgba, f.w, f.h);
-    ctx.putImageData(imgData, 0, 0);
-    frameCounter.textContent = 'Frame ' + (idx + 1) + '/' + frames.length;
+let player = null;
+let cleanup = null;
+async function loadStream() {
+  const url = '../demo/streams/dash_abr/manifest.mpd';
+  if (cleanup) { cleanup(); cleanup = null; }
+  if (player) { player.reset(); player = null; }
+  const video = document.getElementById('player');
+  player = dashjs.MediaPlayer().create();
+  cleanup = await HevcDash.attachHevcSupport(player, {
+    workerUrl: '../demo/transcode-worker.js',
+  });
+  player.on(dashjs.MediaPlayer.events.PLAYBACK_STARTED, () => {
+    document.getElementById('status').textContent = 'Playing via dash.js + hevc.js';
+  });
+  player.on(dashjs.MediaPlayer.events.ERROR, (e) => {
+    document.getElementById('status').textContent = 'Error: ' + (e.error && e.error.message ? e.error.message : JSON.stringify(e.error));
+  });
+  player.initialize(video, url, true);
+  document.getElementById('status').textContent = 'Loading HEVC stream…';
+}
+
+// Don't load/transcode on page load — only when the player scrolls into view.
+window.addEventListener('DOMContentLoaded', () => {
+  detectHevcSupport();
+  const section = document.getElementById('playground');
+  if (!('IntersectionObserver' in window) || !section) {
+    loadStream();
+    return;
   }
-
-  // Navigation
-  prevBtn.addEventListener('click', () => showFrame(currentFrame - 1));
-  nextBtn.addEventListener('click', () => showFrame(currentFrame + 1));
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'ArrowLeft') showFrame(currentFrame - 1);
-    if (e.key === 'ArrowRight') showFrame(currentFrame + 1);
-  });
-
-  // Drag & drop
-  dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('border-accent'); });
-  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('border-accent'));
-  dropZone.addEventListener('drop', (e) => {
-    e.preventDefault();
-    dropZone.classList.remove('border-accent');
-    const file = e.dataTransfer.files[0];
-    if (!file) return;
-    if (file.size > 2 * 1024 * 1024) {
-      dropZone.innerHTML = '<div class="text-red-400 text-lg">File too large (max 2MB)</div><p class="text-silver/50 text-sm mt-2">The playground is for quick tests. For larger files, use the <a href="https://www.npmjs.com/package/@hevcjs/core" class="text-accent hover:text-accent-light underline">npm package</a> directly.</p>';
-      return;
+  let started = false;
+  const io = new IntersectionObserver((entries) => {
+    if (!started && entries.some((e) => e.isIntersecting)) {
+      started = true;
+      io.disconnect();
+      loadStream();
     }
-    file.arrayBuffer().then(buf => decodeBitstream(new Uint8Array(buf)));
-  });
-
-  // Click to select file
-  dropZone.addEventListener('click', (e) => {
-    if (e.target === useSample || e.target.closest('#use-sample')) return;
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = '.265,.h265,.hevc,.bin';
-    input.onchange = () => {
-      if (input.files[0]) {
-        if (input.files[0].size > 2 * 1024 * 1024) {
-          dropZone.innerHTML = '<div class="text-red-400 text-lg">File too large (max 2MB)</div><p class="text-silver/50 text-sm mt-2">The playground is for quick tests. For larger files, use the <a href="https://www.npmjs.com/package/@hevcjs/core" class="text-accent hover:text-accent-light underline">npm package</a> directly.</p>';
-          return;
-        }
-        input.files[0].arrayBuffer().then(buf => decodeBitstream(new Uint8Array(buf)));
-      }
-    };
-    input.click();
-  });
-
-  // Keyboard support for drop zone
-  dropZone.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault();
-      dropZone.click();
-    }
-  });
-
-  // Sample clip
-  useSample.addEventListener('click', async (e) => {
-    e.stopPropagation();
-    dropZone.innerHTML = '<div class="text-accent text-lg">Downloading sample (110KB)...</div>';
-    try {
-      const resp = await fetch('samples/bbb1080p.265');
-      const data = new Uint8Array(await resp.arrayBuffer());
-      decodeBitstream(data);
-    } catch (err) {
-      dropZone.innerHTML = '<div class="text-red-400">Failed to load sample: ' + err.message + '</div>';
-    }
-  });
-})();
+  }, { rootMargin: '200px' });
+  io.observe(section);
+});
 </script>
 <script data-goatcounter="https://privaloops.goatcounter.com/count"
         async src="//gc.zgo.at/count.js"></script>
