@@ -435,7 +435,7 @@
 
 <!-- WASM decoder + dash.js + hevc.js plugin — served from ../demo (same origin in prod) -->
 <script src="../demo/hevc-decode.js"></script>
-<script src="https://cdn.dashjs.org/v4.7.4/dash.all.min.js"></script>
+<script src="https://cdn.dashjs.org/v4.7.4/dash.all.min.js" integrity="sha384-fl7i8WZxcPlF9b1503+Gm+izr/2hpilydj0i/DlQTIafROZ1NP4rAWjyl6p3s1ev" crossorigin="anonymous"></script>
 <script src="../demo/dash-bundle.js"></script>
 
 <script>
@@ -449,8 +449,8 @@ async function hasNativeHevcSupport() {
       const ms = new MediaSource();
       const url = URL.createObjectURL(ms);
       const video = document.createElement('video');
-      const timeout = setTimeout(() => { cleanup(); resolve(false); }, 1000);
-      function cleanup() {
+      const timeout = setTimeout(() => { teardownProbe(); resolve(false); }, 1000);
+      function teardownProbe() {
         clearTimeout(timeout);
         video.removeAttribute('src');
         video.load();
@@ -460,8 +460,8 @@ async function hasNativeHevcSupport() {
         try {
           const sb = ms.addSourceBuffer('video/mp4; codecs="hev1.1.6.L93.B0"');
           ms.removeSourceBuffer(sb);
-          cleanup(); resolve(true);
-        } catch { cleanup(); resolve(false); }
+          teardownProbe(); resolve(true);
+        } catch { teardownProbe(); resolve(false); }
       });
       video.src = url;
     });
@@ -473,7 +473,7 @@ async function canEncodeH264() {
   try {
     const r = await VideoEncoder.isConfigSupported({ codec: 'avc1.42001f', width: 320, height: 240 });
     return !!r.supported;
-  } catch (_) { return false; }
+  } catch { return false; }
 }
 
 async function detectHevcSupport() {
@@ -493,14 +493,11 @@ async function detectHevcSupport() {
 }
 
 let player = null;
-let cleanup = null;
 async function loadStream() {
   const url = '../demo/streams/dash_abr/manifest.mpd';
-  if (cleanup) { cleanup(); cleanup = null; }
-  if (player) { player.reset(); player = null; }
   const video = document.getElementById('player');
   player = dashjs.MediaPlayer().create();
-  cleanup = await HevcDash.attachHevcSupport(player, {
+  await HevcDash.attachHevcSupport(player, {
     workerUrl: '../demo/transcode-worker.js',
   });
   player.on(dashjs.MediaPlayer.events.PLAYBACK_STARTED, () => {
