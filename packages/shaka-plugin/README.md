@@ -1,8 +1,6 @@
 # @hevcjs/shaka-plugin
 
-> **Status: experimental skeleton.** Package layout, registration, and Shaka Transmuxer interface are in place. The actual HEVC → H.264 conversion is a TODO that will plug into [`@hevcjs/core`](../core).
-
-HEVC/H.265 playback plugin for [Shaka Player](https://github.com/shaka-project/shaka-player). Registers a custom Shaka `Transmuxer` that ingests HEVC fMP4 segments and (eventually) emits H.264 fMP4 that any browser can play via MSE.
+HEVC/H.265 playback plugin for [Shaka Player](https://github.com/shaka-project/shaka-player). Registers a custom Shaka `Transmuxer` that ingests HEVC fMP4 segments and emits H.264 fMP4 that any browser can play via MSE.
 
 Tracks issue [#101](https://github.com/privaloops/hevc.js/issues/101).
 
@@ -12,7 +10,7 @@ Tracks issue [#101](https://github.com/privaloops/hevc.js/issues/101).
 npm install @hevcjs/shaka-plugin shaka-player
 ```
 
-## Usage (target API)
+## Usage
 
 ```js
 import shaka from 'shaka-player';
