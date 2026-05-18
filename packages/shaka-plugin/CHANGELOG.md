@@ -1,5 +1,13 @@
 # @hevcjs/shaka-plugin
 
+## 0.2.1
+
+### Patch Changes
+
+- [#120](https://github.com/privaloops/hevc.js/pull/120) [`dd576f4`](https://github.com/privaloops/hevc.js/commit/dd576f4f0b2465ec7cf7fb63b5047bc98de81233) Thanks [@privaloops](https://github.com/privaloops)! - Fix outdated README that still described the package as an experimental
+  skeleton with HEVC → H.264 conversion as a TODO. The transmuxer has been
+  fully functional since 0.2.0; the README now reflects the shipped behavior.
+
 ## 0.2.0
 
 ### Minor Changes
