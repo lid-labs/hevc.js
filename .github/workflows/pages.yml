@@ -62,6 +62,9 @@ jobs:
           sed -i 's|\.\./demo/|./demo/|g' _site/index.html
           # docs/ pages are one level deeper: ../../demo/ becomes ../demo/
           find _site/docs -name '*.html' -exec sed -i 's|\.\./\.\./demo/|\.\./demo/|g' {} +
+          # demo/ pages reference site/ as a sibling locally, but site/ is the
+          # root on GH Pages: ../site/ -> ../ (so ../site/docs/x -> ../docs/x)
+          find _site/demo -name '*.html' -exec sed -i 's|\.\./site/|\.\./|g' {} +
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0

@@ -4,13 +4,14 @@
 [![Tests](https://github.com/privaloops/hevc.js/actions/workflows/test.yml/badge.svg)](https://github.com/privaloops/hevc.js/actions/workflows/test.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![npm downloads core](https://img.shields.io/npm/dw/@hevcjs/core?label=core)](https://www.npmjs.com/package/@hevcjs/core)
-[![npm downloads plugin](https://img.shields.io/npm/dw/@hevcjs/dashjs-plugin?label=dashjs-plugin)](https://www.npmjs.com/package/@hevcjs/dashjs-plugin)
+[![npm downloads dashjs-plugin](https://img.shields.io/npm/dw/@hevcjs/dashjs-plugin?label=dashjs-plugin)](https://www.npmjs.com/package/@hevcjs/dashjs-plugin)
+[![npm downloads shaka-plugin](https://img.shields.io/npm/dw/@hevcjs/shaka-plugin?label=shaka-plugin)](https://www.npmjs.com/package/@hevcjs/shaka-plugin)
 
 ##### English | [简体中文](./README.zh_CN.md)
 
 **Play HEVC/H.265 video in browsers without native support. No plugin. No install. No server changes.**
 
-A from-scratch HEVC decoder written in C++17, compiled to WebAssembly, with a drop-in plugin for dash.js. Transcodes HEVC to H.264 in real-time, client-side, via WebCodecs inside a Web Worker. Works on Chrome, Edge, and Firefox where WebCodecs H.264 encoding is available.
+A from-scratch HEVC decoder written in C++17, compiled to WebAssembly, with drop-in plugins for dash.js and Shaka Player. Transcodes HEVC to H.264 in real-time, client-side, via WebCodecs inside a Web Worker. Works on Chrome, Edge, and Firefox where WebCodecs H.264 encoding is available.
 
 1080p @ 60fps. 236KB WASM. Zero dependencies. No special server headers required.
 
@@ -23,7 +24,8 @@ Built in 8 days by one developer, assisted by AI — [read the story](https://ww
 ### Installation
 
 ```bash
-npm install @hevcjs/dashjs-plugin
+npm install @hevcjs/dashjs-plugin   # dash.js
+npm install @hevcjs/shaka-plugin    # Shaka Player
 ```
 
 ### Setup
@@ -54,6 +56,21 @@ const player = dashjs.MediaPlayer().create();
 attachHevcSupport(player, { workerUrl: './transcode-worker.js' });
 player.initialize(videoElement, 'https://example.com/manifest.mpd', true);
 ```
+
+### Shaka Player
+
+```js
+import shaka from 'shaka-player';
+import { registerHevcTransmuxer } from '@hevcjs/shaka-plugin';
+
+registerHevcTransmuxer(shaka, { workerUrl: './transcode-worker.js' });
+
+const player = new shaka.Player();
+await player.attach(videoElement);
+await player.load('https://example.com/manifest.mpd');
+```
+
+`registerHevcTransmuxer` registers a Shaka `Transmuxer` for `hev1`/`hvc1`, so Shaka handles MIME routing natively. To force transcoding even where HEVC is supported natively, use Shaka's built-in `player.configure({ mediaSource: { forceTransmux: true } })`.
 
 ### How the transcoding works
 
@@ -237,7 +254,8 @@ hevc.js/
 │
 ├── packages/
 │   ├── core/               @hevcjs/core — WASM decoder + transcoding pipeline
-│   └── dashjs-plugin/      @hevcjs/dashjs-plugin — dash.js plugin
+│   ├── dashjs-plugin/      @hevcjs/dashjs-plugin — dash.js plugin
+│   └── shaka-plugin/       @hevcjs/shaka-plugin — Shaka Player plugin
 │
 ├── demo/                   Browser demos (DASH)
 └── tests/                  Unit tests + 128 oracle tests (pixel-perfect vs ffmpeg)
@@ -251,6 +269,9 @@ hevc.js/
 |---|---|
 | [Decoder](https://hevcjs.dev/demo/) | Raw WASM decoder — drop a .265 file, frame-by-frame playback |
 | [dash.js](https://hevcjs.dev/demo/dash.html) | HEVC DASH streams via dash.js + WASM transcoding |
+| [Shaka](https://hevcjs.dev/demo/shaka.html) | HEVC DASH streams via Shaka Player + WASM transcoding |
+
+**Docs:** [dash.js plugin](https://hevcjs.dev/docs/dashjs-plugin.html) · [Shaka plugin](https://hevcjs.dev/docs/shaka-plugin.html)
 
 Each demo includes a **"Force transcoding"** toggle to bypass native HEVC detection — useful for testing the WASM pipeline on browsers that already support HEVC.
 
