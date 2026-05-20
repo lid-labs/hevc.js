@@ -11644,6 +11644,12 @@ var HevcShaka = (() => {
      * will skip the lazy init-generation path on its first call.
      */
     async prepareInit(data) {
+      if (this._encoder) {
+        this._encoder.close();
+        this._encoder = null;
+      }
+      this._paramSetsFed = false;
+      this._initResult = null;
       await this.processInitSegment(data);
       if (this._width === 0 || this._height === 0) {
         throw new Error("prepareInit: missing dimensions in HEVC init segment");
@@ -12221,6 +12227,15 @@ var HevcShaka = (() => {
       this.initPromise_ = null;
       this.pendingHevcInit_ = null;
       this.h264InitEmitted_ = false;
+      // Cache for the last HEVC init segment we processed and the H.264 init we
+      // produced for it. Shaka can call transmux() with the same init bytes
+      // multiple times during a session (variant probing, transmuxer re-checks);
+      // we must not tear down the live encoder on those redundant calls or
+      // playback stalls while the encoder rebuilds. A real representation change
+      // arrives with different bytes and goes through the normal `prepareInit`
+      // path.
+      this.lastHevcInitBytes_ = null;
+      this.cachedH264Init_ = null;
       this.originalMimeType_ = mimeType;
       this.transcoderConfig_ = config;
     }
@@ -12230,6 +12245,8 @@ var HevcShaka = (() => {
       this.initPromise_ = null;
       this.pendingHevcInit_ = null;
       this.h264InitEmitted_ = false;
+      this.lastHevcInitBytes_ = null;
+      this.cachedH264Init_ = null;
     }
     isSupported(mimeType, _contentType) {
       return HEVC_MIME_PATTERN.test(mimeType);
@@ -12290,10 +12307,21 @@ var HevcShaka = (() => {
       }
       await this.initPromise_;
       if (isInit) {
+        if (this.cachedH264Init_ && bytesEqual(bytes, this.lastHevcInitBytes_)) {
+          const copy2 = new Uint8Array(this.cachedH264Init_.byteLength);
+          copy2.set(this.cachedH264Init_);
+          return copy2;
+        }
+        const initBytesSnapshot = new Uint8Array(bytes.byteLength);
+        initBytesSnapshot.set(bytes);
         const result = await this.transcoder_.prepareInit(bytes);
         this.h264InitEmitted_ = true;
-        const copy = new Uint8Array(result.initSegment.byteLength);
-        copy.set(result.initSegment);
+        const h264InitCopy = new Uint8Array(result.initSegment.byteLength);
+        h264InitCopy.set(result.initSegment);
+        this.lastHevcInitBytes_ = initBytesSnapshot;
+        this.cachedH264Init_ = h264InitCopy;
+        const copy = new Uint8Array(h264InitCopy.byteLength);
+        copy.set(h264InitCopy);
         return copy;
       }
       const h264Media = await this.transcoder_.processMediaSegment(bytes);
@@ -12303,6 +12331,13 @@ var HevcShaka = (() => {
       return h264Media;
     }
   };
+  function bytesEqual(a, b) {
+    if (!b || a.byteLength !== b.byteLength) return false;
+    for (let i = 0; i < a.byteLength; i++) {
+      if (a[i] !== b[i]) return false;
+    }
+    return true;
+  }
   function toUint8(data) {
     if (data instanceof Uint8Array) return data;
     if (data instanceof ArrayBuffer) return new Uint8Array(data);

@@ -80,6 +80,15 @@ export class HevcTransmuxer {
   private initPromise_: Promise<void> | null = null;
   private pendingHevcInit_: Uint8Array | null = null;
   private h264InitEmitted_ = false;
+  // Cache for the last HEVC init segment we processed and the H.264 init we
+  // produced for it. Shaka can call transmux() with the same init bytes
+  // multiple times during a session (variant probing, transmuxer re-checks);
+  // we must not tear down the live encoder on those redundant calls or
+  // playback stalls while the encoder rebuilds. A real representation change
+  // arrives with different bytes and goes through the normal `prepareInit`
+  // path.
+  private lastHevcInitBytes_: Uint8Array | null = null;
+  private cachedH264Init_: Uint8Array | null = null;
 
   constructor(mimeType: string, config: HevcTransmuxerConfig = {}) {
     this.originalMimeType_ = mimeType;
@@ -92,6 +101,8 @@ export class HevcTransmuxer {
     this.initPromise_ = null;
     this.pendingHevcInit_ = null;
     this.h264InitEmitted_ = false;
+    this.lastHevcInitBytes_ = null;
+    this.cachedH264Init_ = null;
   }
 
   isSupported(mimeType: string, _contentType?: string): boolean {
@@ -164,12 +175,39 @@ export class HevcTransmuxer {
     await this.initPromise_;
 
     if (isInit) {
+      // Short-circuit when Shaka resends the exact same init bytes (variant
+      // probe, transmuxer re-check). Going through prepareInit again would
+      // close the live H.264 encoder and the next media segment would stall
+      // while a new one warms up — the visible "stutter every segment"
+      // symptom that motivated this cache. Real ABR switches arrive with
+      // different bytes and fall through to the full prepareInit path.
+      if (this.cachedH264Init_ && bytesEqual(bytes, this.lastHevcInitBytes_)) {
+        const copy = new Uint8Array(this.cachedH264Init_.byteLength);
+        copy.set(this.cachedH264Init_);
+        return copy;
+      }
+
+      // Snapshot the input bytes *before* prepareInit. The worker variant
+      // transfers `bytes.buffer` to the worker, which detaches it on the
+      // main thread — so reading from `bytes` after the await would throw
+      // "TypedArray.set on a detached ArrayBuffer".
+      const initBytesSnapshot = new Uint8Array(bytes.byteLength);
+      initBytesSnapshot.set(bytes);
+
       const result = await this.transcoder_!.prepareInit(bytes);
       this.h264InitEmitted_ = true;
-      // Defensive copy: avoids any risk of the underlying ArrayBuffer being
-      // detached or mutated between this return and the eventual MSE append.
-      const copy = new Uint8Array(result.initSegment.byteLength);
-      copy.set(result.initSegment);
+
+      // Snapshot the output immediately. Then commit both snapshots to the
+      // cache fields atomically.
+      const h264InitCopy = new Uint8Array(result.initSegment.byteLength);
+      h264InitCopy.set(result.initSegment);
+      this.lastHevcInitBytes_ = initBytesSnapshot;
+      this.cachedH264Init_ = h264InitCopy;
+
+      // Defensive copy for the return value — never hand MSE a view into
+      // our cache.
+      const copy = new Uint8Array(h264InitCopy.byteLength);
+      copy.set(h264InitCopy);
       return copy;
     }
 
@@ -182,6 +220,14 @@ export class HevcTransmuxer {
     }
     return h264Media;
   }
+}
+
+function bytesEqual(a: Uint8Array, b: Uint8Array | null): boolean {
+  if (!b || a.byteLength !== b.byteLength) return false;
+  for (let i = 0; i < a.byteLength; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
 }
 
 function toUint8(data: BufferSource): Uint8Array {
