@@ -199,6 +199,37 @@ describe("HevcTransmuxer", () => {
       expect(mockTranscoder.prepareInit).toHaveBeenCalledTimes(1);
     });
 
+    it("caches the H.264 init when Shaka resends the exact same HEVC init bytes", async () => {
+      const t = new HevcTransmuxer(HEVC_720);
+
+      const first = await t.transmux(FTYP_HEADER, {}, null, 0);
+      const second = await t.transmux(FTYP_HEADER, {}, null, 0);
+
+      expect(mockTranscoder.prepareInit).toHaveBeenCalledTimes(1);
+      expect(Array.from(first)).toEqual([0xa, 0xb, 0xc, 0xd]);
+      expect(Array.from(second)).toEqual([0xa, 0xb, 0xc, 0xd]);
+      // Defensive copy: cache must hand out a fresh buffer each time.
+      expect(second).not.toBe(first);
+    });
+
+    it("calls prepareInit again when the HEVC init bytes change (ABR switch)", async () => {
+      // Distinct init bytes for two different representations.
+      const initA = new Uint8Array([0, 0, 0, 32, 0x66, 0x74, 0x79, 0x70, 0xAA]);
+      const initB = new Uint8Array([0, 0, 0, 32, 0x66, 0x74, 0x79, 0x70, 0xBB]);
+
+      mockTranscoder.prepareInit
+        .mockResolvedValueOnce({ initSegment: new Uint8Array([1]), codec: "avc1.640028" })
+        .mockResolvedValueOnce({ initSegment: new Uint8Array([2]), codec: "avc1.640028" });
+
+      const t = new HevcTransmuxer(HEVC_720);
+      const a = await t.transmux(initA, {}, null, 0);
+      const b = await t.transmux(initB, {}, null, 0);
+
+      expect(mockTranscoder.prepareInit).toHaveBeenCalledTimes(2);
+      expect(Array.from(a)).toEqual([1]);
+      expect(Array.from(b)).toEqual([2]);
+    });
+
     it("accepts ArrayBuffer input as well as Uint8Array", async () => {
       const t = new HevcTransmuxer(HEVC_720);
       const buf = FTYP_HEADER.buffer.slice(

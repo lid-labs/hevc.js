@@ -125,6 +125,19 @@ export class SegmentTranscoder {
    * will skip the lazy init-generation path on its first call.
    */
   async prepareInit(data: Uint8Array): Promise<TranscodedInit> {
+    // Reset live state so a re-call (e.g. Shaka ABR adaptation reaching us
+    // with a new HEVC init segment) starts clean. Without this, the encoder
+    // configured for the previous resolution keeps running while `_width` is
+    // overwritten by the new init — `processMediaSegment`'s dim-change check
+    // then sees `frameW === _width` and never recreates the encoder, so new
+    // frames are encoded at the previous dims and MSE renders garbage.
+    if (this._encoder) {
+      this._encoder.close();
+      this._encoder = null;
+    }
+    this._paramSetsFed = false;
+    this._initResult = null;
+
     await this.processInitSegment(data);
     if (this._width === 0 || this._height === 0) {
       throw new Error("prepareInit: missing dimensions in HEVC init segment");

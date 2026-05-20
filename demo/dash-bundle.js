@@ -11646,6 +11646,12 @@ var HevcDash = (() => {
      * will skip the lazy init-generation path on its first call.
      */
     async prepareInit(data) {
+      if (this._encoder) {
+        this._encoder.close();
+        this._encoder = null;
+      }
+      this._paramSetsFed = false;
+      this._initResult = null;
       await this.processInitSegment(data);
       if (this._width === 0 || this._height === 0) {
         throw new Error("prepareInit: missing dimensions in HEVC init segment");
