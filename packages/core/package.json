@@ -1,6 +1,6 @@
 {
   "name": "@hevcjs/core",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "HEVC/H.265 video decoder for the browser using WebAssembly — decode HEVC streams directly in JavaScript with MSE support",
   "type": "module",
   "main": "./dist/index.js",
