@@ -65,7 +65,7 @@
     }
   },
   "devDependencies": {
-    "shaka-player": "^4.11.0",
+    "shaka-player": "^5.1.5",
     "tsup": "^8.0.0",
     "typescript": "^6.0.3",
     "vitest": "^3.0.0"
