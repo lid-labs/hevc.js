@@ -1,6 +1,6 @@
 {
   "name": "@hevcjs/shaka-plugin",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "Shaka Player plugin for HEVC/H.265 playback — registers a Shaka Transmuxer that decodes HEVC streams via @hevcjs/core",
   "type": "module",
   "main": "./dist/index.js",
