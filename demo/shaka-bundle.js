@@ -30,7 +30,8 @@ var HevcShaka = (() => {
   var shaka_entry_exports = {};
   __export(shaka_entry_exports, {
     HevcTransmuxer: () => HevcTransmuxer,
-    registerHevcTransmuxer: () => registerHevcTransmuxer
+    registerHevcTransmuxer: () => registerHevcTransmuxer,
+    subscribeSegmentStat: () => subscribeSegmentStat
   });
 
   // node_modules/.pnpm/mp4box@2.3.0/node_modules/mp4box/dist/mp4box.all.js
@@ -11564,6 +11565,22 @@ var HevcShaka = (() => {
     if (level >= 120) return "avc1.64002a";
     return "avc1.640028";
   }
+  var listeners = /* @__PURE__ */ new Set();
+  function publishSegmentStat(stat) {
+    for (const l of listeners) {
+      try {
+        l(stat);
+      } catch (err) {
+        console.error("[hevc.js/perf-bus] listener threw:", err);
+      }
+    }
+  }
+  function subscribeSegmentStat(l) {
+    listeners.add(l);
+    return () => {
+      listeners.delete(l);
+    };
+  }
   var SegmentTranscoder = class {
     constructor(config = {}) {
       this._decoder = null;
@@ -11787,12 +11804,31 @@ var HevcShaka = (() => {
       const muxBaseTime = sortedPts.length > 0 ? sortedPts[0] : segmentBaseTime;
       const mediaSegment = this._muxer.muxSegment(muxerSamples, muxBaseTime);
       const tEncodeEnd = performance.now();
+      const demuxMs = tDemuxEnd - tDemux0;
+      const decodeMs = tDecodeEnd - tDemuxEnd;
+      const encodeMs = tEncodeEnd - tDecodeEnd;
+      const segDurTicks = samples.reduce((sum, s) => sum + s.duration, 0);
+      const segDurMs = segDurTicks / this._timescale * 1e3;
       this.lastPerfStats = {
-        demuxMs: tDemuxEnd - tDemux0,
-        decodeMs: tDecodeEnd - tDemuxEnd,
-        encodeMs: tEncodeEnd - tDecodeEnd,
-        frames: frames.length
+        demuxMs,
+        decodeMs,
+        encodeMs,
+        frames: frames.length,
+        segDurMs,
+        width: frameW,
+        height: frameH
       };
+      const totalMs = demuxMs + decodeMs + encodeMs;
+      if (totalMs > 0) {
+        publishSegmentStat({
+          totalMs,
+          segDurMs,
+          speedX: segDurMs / totalMs,
+          frames: frames.length,
+          width: frameW,
+          height: frameH
+        });
+      }
       return mediaSegment;
     }
     /**
@@ -11804,8 +11840,10 @@ var HevcShaka = (() => {
         throw new Error("Transcoder not initialized. Call init() and processInitSegment() first.");
       }
       const BATCH_SIZE = 30;
+      const tDemux0 = performance.now();
       const samples = this._demuxer.parseSegment(data);
       if (samples.length === 0) return;
+      const tDemuxEnd = performance.now();
       const segmentBaseTime = extractTfdt(data) ?? samples[0].dts;
       if (!this._fpsAutoDetected && !this._config.fps && samples[0].duration > 0) {
         this._fps = this._timescale / samples[0].duration;
@@ -11831,6 +11869,7 @@ var HevcShaka = (() => {
         this._decoder.feed(nalBuffer);
       }
       const frames = this._decoder.drain();
+      const tDecodeEnd = performance.now();
       if (frames.length === 0) return;
       const frameW = frames[0].width;
       const frameH = frames[0].height;
@@ -11850,6 +11889,7 @@ var HevcShaka = (() => {
         this._height = frameH;
       }
       let initEmitted = false;
+      const tEncode0 = performance.now();
       for (let batchStart = 0; batchStart < frames.length; batchStart += BATCH_SIZE) {
         const batchEnd = Math.min(batchStart + BATCH_SIZE, frames.length);
         const batchChunks = [];
@@ -11887,6 +11927,32 @@ var HevcShaka = (() => {
         const mediaSegment = this._muxer.muxSegment(muxerSamples, batchBaseTime);
         await onChunk(mediaSegment, !initEmitted ? this._initResult : null);
         initEmitted = true;
+      }
+      const tEncodeEnd = performance.now();
+      const demuxMs = tDemuxEnd - tDemux0;
+      const decodeMs = tDecodeEnd - tDemuxEnd;
+      const encodeMs = tEncodeEnd - tEncode0;
+      const segDurTicks = samples.reduce((sum, s) => sum + s.duration, 0);
+      const segDurMs = segDurTicks / this._timescale * 1e3;
+      this.lastPerfStats = {
+        demuxMs,
+        decodeMs,
+        encodeMs,
+        frames: frames.length,
+        segDurMs,
+        width: frameW,
+        height: frameH
+      };
+      const totalMs = demuxMs + decodeMs + encodeMs;
+      if (totalMs > 0) {
+        publishSegmentStat({
+          totalMs,
+          segDurMs,
+          speedX: segDurMs / totalMs,
+          frames: frames.length,
+          width: frameW,
+          height: frameH
+        });
       }
     }
     /**
@@ -11980,6 +12046,7 @@ var HevcShaka = (() => {
       this._segmentId = 0;
       this._pendingResolves = /* @__PURE__ */ new Map();
       this._pendingPrepareInit = /* @__PURE__ */ new Map();
+      this._lastPerfStats = null;
       this._readyPromise = new Promise((resolve) => {
         this._readyResolve = resolve;
       });
@@ -12005,6 +12072,9 @@ var HevcShaka = (() => {
     }
     get initResult() {
       return this._initResult;
+    }
+    get lastPerfStats() {
+      return this._lastPerfStats;
     }
     /** Wait for the WASM decoder to be ready inside the worker */
     async waitReady() {
@@ -12071,6 +12141,21 @@ var HevcShaka = (() => {
             chainPromise = chainPromise.then(() => onChunk(h264, init, msg.codec ?? null));
           } else if (msg.type === "streamingDone") {
             worker.removeEventListener("message", handler);
+            const perf = msg.perf;
+            if (perf) {
+              this._lastPerfStats = perf;
+              const totalMs = perf.demuxMs + perf.decodeMs + perf.encodeMs;
+              if (totalMs > 0) {
+                publishSegmentStat({
+                  totalMs,
+                  segDurMs: perf.segDurMs,
+                  speedX: perf.segDurMs / totalMs,
+                  frames: perf.frames,
+                  width: perf.width,
+                  height: perf.height
+                });
+              }
+            }
             chainPromise.then(() => resolve()).catch(reject);
           } else if (msg.type === "error") {
             worker.removeEventListener("message", handler);
@@ -12143,8 +12228,19 @@ var HevcShaka = (() => {
           const id = msg.id;
           const perf = msg.perf;
           if (perf) {
+            this._lastPerfStats = perf;
             const totalMs = perf.demuxMs + perf.decodeMs + perf.encodeMs;
             log.debug(`Segment #${id} transcoded in ${totalMs.toFixed(0)}ms (${perf.frames}f \u2014 demux:${perf.demuxMs.toFixed(0)}ms decode:${perf.decodeMs.toFixed(0)}ms encode:${perf.encodeMs.toFixed(0)}ms)`);
+            if (totalMs > 0) {
+              publishSegmentStat({
+                totalMs,
+                segDurMs: perf.segDurMs,
+                speedX: perf.segDurMs / totalMs,
+                frames: perf.frames,
+                width: perf.width,
+                height: perf.height
+              });
+            }
           }
           const pending = this._pendingResolves.get(id);
           if (!pending) break;
@@ -12195,6 +12291,145 @@ var HevcShaka = (() => {
       new Blob([code], { type: "application/javascript" })
     );
     return new Worker(blobUrl);
+  }
+  var DEFAULTS = {
+    targetSpeedX: 1.3,
+    raiseAfter: 6,
+    lowerAfter: 1,
+    measureWindow: 2
+  };
+  var ComputeAwareDecider = class {
+    constructor(config = {}) {
+      this.window = [];
+      this.consecutiveLow = 0;
+      this.consecutiveHigh = 0;
+      this.capIndex_ = null;
+      this.ladderSize_ = 0;
+      this.prevCapIndex_ = null;
+      this.prevWindow_ = [];
+      this.prevConsecutiveLow_ = 0;
+      this.prevConsecutiveHigh_ = 0;
+      this.hasRevertablePoint_ = false;
+      this.cfg = {
+        targetSpeedX: config.targetSpeedX ?? DEFAULTS.targetSpeedX,
+        raiseAfter: config.raiseAfter ?? DEFAULTS.raiseAfter,
+        lowerAfter: config.lowerAfter ?? DEFAULTS.lowerAfter,
+        measureWindow: config.measureWindow ?? DEFAULTS.measureWindow
+      };
+      if (this.cfg.targetSpeedX <= 1) {
+        throw new Error("targetSpeedX must be > 1.0 (need headroom over real-time to raise)");
+      }
+      if (this.cfg.measureWindow < 1) throw new Error("measureWindow must be >= 1");
+      if (this.cfg.raiseAfter < 1 || this.cfg.lowerAfter < 1) {
+        throw new Error("raiseAfter / lowerAfter must be >= 1");
+      }
+    }
+    /** Set or update the number of available variants. Must be called at least once before observe(). */
+    setLadderSize(n) {
+      if (n < 1) throw new Error("ladderSize must be >= 1");
+      this.ladderSize_ = n;
+      if (this.capIndex_ != null && this.capIndex_ >= n) {
+        this.capIndex_ = n - 1;
+      }
+    }
+    get currentCap() {
+      return this.capIndex_;
+    }
+    get ladderSize() {
+      return this.ladderSize_;
+    }
+    /**
+     * Feed one speedX measurement plus the player's currently-active variant
+     * index (used as the starting point on first activation, per the
+     * "subtractive only on first activation" rule).
+     *
+     * Returns the decision: a `capIndex` plus the reason. The adapter applies
+     * the cap to the player only when `reason` is "lower" or "raise".
+     */
+    observe(speedX, currentVariantIdx) {
+      if (this.ladderSize_ === 0) {
+        return { capIndex: this.capIndex_, avgSpeedX: speedX, reason: "init" };
+      }
+      this.window.push(speedX);
+      if (this.window.length > this.cfg.measureWindow) this.window.shift();
+      if (this.window.length < this.cfg.measureWindow) {
+        return { capIndex: this.capIndex_, avgSpeedX: avg(this.window), reason: "init" };
+      }
+      const avgSpeed = avg(this.window);
+      if (avgSpeed < 1) {
+        this.consecutiveLow++;
+        this.consecutiveHigh = 0;
+        if (this.consecutiveLow >= this.cfg.lowerAfter) {
+          const base = this.capIndex_ ?? clamp(currentVariantIdx, 0, this.ladderSize_ - 1);
+          if (base > 0) {
+            this.snapshotForRevert();
+            this.capIndex_ = base - 1;
+            this.resetAfterChange();
+            return { capIndex: this.capIndex_, avgSpeedX: avgSpeed, reason: "lower" };
+          }
+          this.consecutiveLow = 0;
+        }
+      } else if (avgSpeed > this.cfg.targetSpeedX) {
+        this.consecutiveHigh++;
+        this.consecutiveLow = 0;
+        if (this.consecutiveHigh >= this.cfg.raiseAfter) {
+          if (this.capIndex_ != null && this.capIndex_ < this.ladderSize_ - 1) {
+            this.snapshotForRevert();
+            this.capIndex_ = this.capIndex_ + 1;
+            this.resetAfterChange();
+            return { capIndex: this.capIndex_, avgSpeedX: avgSpeed, reason: "raise" };
+          }
+          this.consecutiveHigh = 0;
+        }
+      } else {
+        this.consecutiveLow = 0;
+        this.consecutiveHigh = 0;
+      }
+      return { capIndex: this.capIndex_, avgSpeedX: avgSpeed, reason: "hold" };
+    }
+    /**
+     * Roll back the most recent "lower" or "raise" decision. Adapters call
+     * this when applying the cap to the host player throws — so the decider
+     * state stays in sync with what's actually configured on the player.
+     * Safe to call when no decision has happened yet (no-op).
+     */
+    revertLastDecision() {
+      if (!this.hasRevertablePoint_) return;
+      this.capIndex_ = this.prevCapIndex_;
+      this.window = [...this.prevWindow_];
+      this.consecutiveLow = this.prevConsecutiveLow_;
+      this.consecutiveHigh = this.prevConsecutiveHigh_;
+      this.hasRevertablePoint_ = false;
+    }
+    /** Test/debug — reset everything except the configured thresholds. */
+    reset() {
+      this.window = [];
+      this.consecutiveLow = 0;
+      this.consecutiveHigh = 0;
+      this.capIndex_ = null;
+      this.hasRevertablePoint_ = false;
+    }
+    snapshotForRevert() {
+      this.prevCapIndex_ = this.capIndex_;
+      this.prevWindow_ = [...this.window];
+      this.prevConsecutiveLow_ = this.consecutiveLow;
+      this.prevConsecutiveHigh_ = this.consecutiveHigh;
+      this.hasRevertablePoint_ = true;
+    }
+    resetAfterChange() {
+      this.window = [];
+      this.consecutiveLow = 0;
+      this.consecutiveHigh = 0;
+    }
+  };
+  function avg(arr) {
+    if (arr.length === 0) return 0;
+    let sum = 0;
+    for (const v of arr) sum += v;
+    return sum / arr.length;
+  }
+  function clamp(n, lo, hi) {
+    return Math.max(lo, Math.min(hi, n));
   }
 
   // packages/shaka-plugin/src/transmuxer.ts
@@ -12348,6 +12583,76 @@ var HevcShaka = (() => {
     );
   }
 
+  // packages/shaka-plugin/src/compute-aware.ts
+  function attachShakaComputeAware(player, options = {}) {
+    const { onObservation, ...deciderConfig } = options;
+    const decider = new ComputeAwareDecider(deciderConfig);
+    const unsubscribe = subscribeSegmentStat((stat) => {
+      const ladder = readLadder(player);
+      if (ladder.length === 0) return;
+      decider.setLadderSize(ladder.length);
+      const currentIdx = findCurrentIndex(player, ladder);
+      const decision = decider.observe(stat.speedX, currentIdx);
+      if (onObservation) {
+        try {
+          onObservation(stat, decision.avgSpeedX, decision.capIndex, decision.reason);
+        } catch {
+        }
+      }
+      if (decision.reason === "lower" || decision.reason === "raise") {
+        try {
+          applyCap(player, ladder, decision.capIndex);
+        } catch (err) {
+          decider.revertLastDecision();
+          console.warn("[hevc.js/shaka] applyCap failed, reverted decider:", err);
+        }
+      }
+    });
+    return unsubscribe;
+  }
+  function readLadder(player) {
+    const variants = player.getVariantTracks?.() ?? [];
+    const seen = /* @__PURE__ */ new Map();
+    for (const v of variants) {
+      const hasVideo = v.height != null || v.videoBandwidth != null || v.videoCodec != null && v.videoCodec !== "";
+      if (!hasVideo) continue;
+      const bw = v.videoBandwidth ?? v.bandwidth ?? 0;
+      const key = v.height != null ? `h:${v.height}` : `b:${bw}`;
+      if (seen.has(key)) continue;
+      seen.set(key, {
+        height: v.height ?? void 0,
+        bandwidth: bw
+      });
+    }
+    const ladder = Array.from(seen.values());
+    ladder.sort((a, b) => {
+      if (a.height != null && b.height != null) return a.height - b.height;
+      return a.bandwidth - b.bandwidth;
+    });
+    return ladder;
+  }
+  function findCurrentIndex(player, ladder) {
+    const variants = player.getVariantTracks?.() ?? [];
+    const active = variants.find((t) => t.active);
+    if (!active) return ladder.length - 1;
+    if (active.height != null) {
+      const idx2 = ladder.findIndex((v) => v.height === active.height);
+      if (idx2 >= 0) return idx2;
+    }
+    const bw = active.videoBandwidth ?? active.bandwidth ?? 0;
+    const idx = ladder.findIndex((v) => v.bandwidth === bw);
+    return idx >= 0 ? idx : ladder.length - 1;
+  }
+  function applyCap(player, ladder, capIndex) {
+    const cap = ladder[capIndex];
+    if (!cap || typeof player.configure !== "function") return;
+    const restrictions = {
+      maxBandwidth: cap.bandwidth
+    };
+    if (cap.height != null) restrictions.maxHeight = cap.height;
+    player.configure({ abr: { restrictions } });
+  }
+
   // packages/shaka-plugin/src/index.ts
   var HEVC_MIME_TYPES = [
     'video/mp4; codecs="hev1"',
@@ -12359,24 +12664,50 @@ var HevcShaka = (() => {
       console.warn(
         "[hevc.js/shaka] shaka.transmuxer.TransmuxerEngine.registerTransmuxer not found. Make sure shaka-player >= 4.0 is loaded before calling registerHevcTransmuxer()."
       );
-      return () => {
-      };
+      return makeHandle(() => {
+      }, void 0);
     }
     const priority = engine.PluginPriority?.APPLICATION ?? engine.PluginPriority?.PREFERRED ?? 4;
+    const { adaptiveCompute, ...transmuxerConfig } = config;
     for (const mimeType of HEVC_MIME_TYPES) {
       engine.registerTransmuxer(
         mimeType,
-        () => new HevcTransmuxer(mimeType, config),
+        () => new HevcTransmuxer(mimeType, transmuxerConfig),
         priority
       );
     }
-    return () => {
+    const unregister = () => {
       if (typeof engine.unregisterTransmuxer === "function") {
         for (const mimeType of HEVC_MIME_TYPES) {
           engine.unregisterTransmuxer(mimeType, priority);
         }
       }
     };
+    return makeHandle(unregister, adaptiveCompute);
+  }
+  function makeHandle(unregister, adaptive) {
+    let activeDetach = null;
+    const tearDown = () => {
+      activeDetach?.();
+      activeDetach = null;
+      unregister();
+    };
+    const fn = (() => tearDown());
+    fn.unregister = tearDown;
+    fn.attachComputeAware = (player, runtimeOpts) => {
+      if (adaptive === false) return () => {
+      };
+      activeDetach?.();
+      const registerOpts = typeof adaptive === "object" ? adaptive : {};
+      const opts = { ...registerOpts, ...runtimeOpts ?? {} };
+      const detach = attachShakaComputeAware(player, opts);
+      activeDetach = detach;
+      return () => {
+        detach();
+        if (activeDetach === detach) activeDetach = null;
+      };
+    };
+    return fn;
   }
   return __toCommonJS(shaka_entry_exports);
 })();

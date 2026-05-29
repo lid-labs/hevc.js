@@ -91,6 +91,9 @@ self.onmessage = async (e: MessageEvent) => {
           type: "transcoded",
           id: msg.id,
           h264: h264 ? h264.buffer : null,
+          // `lastPerfStats` shape extended to include segDurMs/width/height
+          // for compute-aware ABR. Spread to ship the whole envelope so the
+          // worker client can forward to the perf-bus unchanged.
           perf: transcoder.lastPerfStats ? { ...transcoder.lastPerfStats } : null,
         };
 
@@ -137,7 +140,13 @@ self.onmessage = async (e: MessageEvent) => {
             self.postMessage(resp, transfers);
           },
         );
-        self.postMessage({ type: "streamingDone", id: msg.id });
+        // Forward the final perf envelope so the main-thread client can
+        // publish it on the perf-bus (same shape as the non-streaming path).
+        self.postMessage({
+          type: "streamingDone",
+          id: msg.id,
+          perf: transcoder.lastPerfStats ? { ...transcoder.lastPerfStats } : null,
+        });
       } catch (err) {
         self.postMessage({ type: "error", id: msg.id, message: (err as Error).message });
       }

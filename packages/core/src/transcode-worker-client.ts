@@ -6,7 +6,18 @@
  */
 
 import { log } from "./log.js";
+import { publishSegmentStat } from "./perf-bus.js";
 import type { SegmentTranscoderConfig, TranscodedInit } from "./segment-transcoder.js";
+
+type PerfEnvelope = {
+  demuxMs: number;
+  decodeMs: number;
+  encodeMs: number;
+  frames: number;
+  segDurMs: number;
+  width: number;
+  height: number;
+};
 
 export interface TranscodeWorkerClientConfig extends SegmentTranscoderConfig {
   /** URL to the worker script (transcode-worker.js). */
@@ -29,6 +40,10 @@ export class TranscodeWorkerClient {
   private _initParsedPromise!: Promise<void>;
   private _initParsedResolve!: () => void;
   private _initParsedReject!: (err: Error) => void;
+  // Mirror of SegmentTranscoder.lastPerfStats, refreshed on each
+  // `transcoded` / `streamingDone` message. Surfaces perf to consumers
+  // (compute-aware ABR) when transcoding runs off-thread.
+  private _lastPerfStats: PerfEnvelope | null = null;
 
   constructor(config: TranscodeWorkerClientConfig) {
     this._readyPromise = new Promise<void>((resolve) => { this._readyResolve = resolve; });
@@ -48,6 +63,7 @@ export class TranscodeWorkerClient {
   get isInitialized(): boolean { return this._ready; }
   get isInitParsed(): boolean { return this._initParsed; }
   get initResult(): TranscodedInit | null { return this._initResult; }
+  get lastPerfStats(): PerfEnvelope | null { return this._lastPerfStats; }
 
   /** Wait for the WASM decoder to be ready inside the worker */
   async waitReady(): Promise<void> {
@@ -126,6 +142,21 @@ export class TranscodeWorkerClient {
           chainPromise = chainPromise.then(() => onChunk(h264, init, msg.codec ?? null));
         } else if (msg.type === "streamingDone") {
           worker.removeEventListener("message", handler);
+          const perf = msg.perf as PerfEnvelope | null;
+          if (perf) {
+            this._lastPerfStats = perf;
+            const totalMs = perf.demuxMs + perf.decodeMs + perf.encodeMs;
+            if (totalMs > 0) {
+              publishSegmentStat({
+                totalMs,
+                segDurMs: perf.segDurMs,
+                speedX: perf.segDurMs / totalMs,
+                frames: perf.frames,
+                width: perf.width,
+                height: perf.height,
+              });
+            }
+          }
           // Wait for all queued onChunk calls to finish before resolving
           chainPromise.then(() => resolve()).catch(reject);
         } else if (msg.type === "error") {
@@ -210,10 +241,21 @@ export class TranscodeWorkerClient {
 
       case "transcoded": {
         const id = msg.id as number;
-        const perf = msg.perf as { demuxMs: number; decodeMs: number; encodeMs: number; frames: number } | null;
+        const perf = msg.perf as PerfEnvelope | null;
         if (perf) {
+          this._lastPerfStats = perf;
           const totalMs = perf.demuxMs + perf.decodeMs + perf.encodeMs;
           log.debug(`Segment #${id} transcoded in ${totalMs.toFixed(0)}ms (${perf.frames}f — demux:${perf.demuxMs.toFixed(0)}ms decode:${perf.decodeMs.toFixed(0)}ms encode:${perf.encodeMs.toFixed(0)}ms)`);
+          if (totalMs > 0) {
+            publishSegmentStat({
+              totalMs,
+              segDurMs: perf.segDurMs,
+              speedX: perf.segDurMs / totalMs,
+              frames: perf.frames,
+              width: perf.width,
+              height: perf.height,
+            });
+          }
         }
         const pending = this._pendingResolves.get(id);
         if (!pending) break;

@@ -11542,6 +11542,18 @@
     return box("mdat", payload);
   }
 
+  // packages/core/src/perf-bus.ts
+  var listeners = /* @__PURE__ */ new Set();
+  function publishSegmentStat(stat) {
+    for (const l of listeners) {
+      try {
+        l(stat);
+      } catch (err) {
+        console.error("[hevc.js/perf-bus] listener threw:", err);
+      }
+    }
+  }
+
   // packages/core/src/segment-transcoder.ts
   var SegmentTranscoder = class {
     constructor(config = {}) {
@@ -11564,7 +11576,12 @@
        * On the first call, also generates the H.264 init segment if `prepareInit`
        * was not called beforehand.
        */
-      /** Perf stats from last processMediaSegment call */
+      /**
+       * Perf stats from the last successful media segment.
+       * - `*Ms` fields are wall-clock; `segDurMs` is the segment's intrinsic
+       *   media-time duration. `speedX = segDurMs / (demuxMs+decodeMs+encodeMs)`
+       *   is what the compute-aware ABR decider reacts to.
+       */
       this.lastPerfStats = null;
       this._config = config;
       this._fps = config.fps ?? 25;
@@ -11773,12 +11790,31 @@
       const muxBaseTime = sortedPts.length > 0 ? sortedPts[0] : segmentBaseTime;
       const mediaSegment = this._muxer.muxSegment(muxerSamples, muxBaseTime);
       const tEncodeEnd = performance.now();
+      const demuxMs = tDemuxEnd - tDemux0;
+      const decodeMs = tDecodeEnd - tDemuxEnd;
+      const encodeMs = tEncodeEnd - tDecodeEnd;
+      const segDurTicks = samples.reduce((sum, s) => sum + s.duration, 0);
+      const segDurMs = segDurTicks / this._timescale * 1e3;
       this.lastPerfStats = {
-        demuxMs: tDemuxEnd - tDemux0,
-        decodeMs: tDecodeEnd - tDemuxEnd,
-        encodeMs: tEncodeEnd - tDecodeEnd,
-        frames: frames.length
+        demuxMs,
+        decodeMs,
+        encodeMs,
+        frames: frames.length,
+        segDurMs,
+        width: frameW,
+        height: frameH
       };
+      const totalMs = demuxMs + decodeMs + encodeMs;
+      if (totalMs > 0) {
+        publishSegmentStat({
+          totalMs,
+          segDurMs,
+          speedX: segDurMs / totalMs,
+          frames: frames.length,
+          width: frameW,
+          height: frameH
+        });
+      }
       return mediaSegment;
     }
     /**
@@ -11790,8 +11826,10 @@
         throw new Error("Transcoder not initialized. Call init() and processInitSegment() first.");
       }
       const BATCH_SIZE = 30;
+      const tDemux0 = performance.now();
       const samples = this._demuxer.parseSegment(data);
       if (samples.length === 0) return;
+      const tDemuxEnd = performance.now();
       const segmentBaseTime = extractTfdt(data) ?? samples[0].dts;
       if (!this._fpsAutoDetected && !this._config.fps && samples[0].duration > 0) {
         this._fps = this._timescale / samples[0].duration;
@@ -11817,6 +11855,7 @@
         this._decoder.feed(nalBuffer);
       }
       const frames = this._decoder.drain();
+      const tDecodeEnd = performance.now();
       if (frames.length === 0) return;
       const frameW = frames[0].width;
       const frameH = frames[0].height;
@@ -11836,6 +11875,7 @@
         this._height = frameH;
       }
       let initEmitted = false;
+      const tEncode0 = performance.now();
       for (let batchStart = 0; batchStart < frames.length; batchStart += BATCH_SIZE) {
         const batchEnd = Math.min(batchStart + BATCH_SIZE, frames.length);
         const batchChunks = [];
@@ -11873,6 +11913,32 @@
         const mediaSegment = this._muxer.muxSegment(muxerSamples, batchBaseTime);
         await onChunk(mediaSegment, !initEmitted ? this._initResult : null);
         initEmitted = true;
+      }
+      const tEncodeEnd = performance.now();
+      const demuxMs = tDemuxEnd - tDemux0;
+      const decodeMs = tDecodeEnd - tDemuxEnd;
+      const encodeMs = tEncodeEnd - tEncode0;
+      const segDurTicks = samples.reduce((sum, s) => sum + s.duration, 0);
+      const segDurMs = segDurTicks / this._timescale * 1e3;
+      this.lastPerfStats = {
+        demuxMs,
+        decodeMs,
+        encodeMs,
+        frames: frames.length,
+        segDurMs,
+        width: frameW,
+        height: frameH
+      };
+      const totalMs = demuxMs + decodeMs + encodeMs;
+      if (totalMs > 0) {
+        publishSegmentStat({
+          totalMs,
+          segDurMs,
+          speedX: segDurMs / totalMs,
+          frames: frames.length,
+          width: frameW,
+          height: frameH
+        });
       }
     }
     /**
@@ -12018,6 +12084,9 @@
             type: "transcoded",
             id: msg.id,
             h264: h264 ? h264.buffer : null,
+            // `lastPerfStats` shape extended to include segDurMs/width/height
+            // for compute-aware ABR. Spread to ship the whole envelope so the
+            // worker client can forward to the perf-bus unchanged.
             perf: transcoder.lastPerfStats ? { ...transcoder.lastPerfStats } : null
           };
           const initResult = transcoder.initResult;
@@ -12057,7 +12126,11 @@
               self.postMessage(resp, transfers);
             }
           );
-          self.postMessage({ type: "streamingDone", id: msg.id });
+          self.postMessage({
+            type: "streamingDone",
+            id: msg.id,
+            perf: transcoder.lastPerfStats ? { ...transcoder.lastPerfStats } : null
+          });
         } catch (err) {
           self.postMessage({ type: "error", id: msg.id, message: err.message });
         }

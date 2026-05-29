@@ -70,6 +70,25 @@ await transcoder.processInitSegment(initSegmentBytes);
 const h264Segment = await transcoder.processMediaSegment(hevcSegmentBytes);
 ```
 
+### Compute-aware ABR primitives
+
+`@hevcjs/core` publishes a `SegmentPerfStat` on every successful segment transcode. Both `@hevcjs/shaka-plugin` and `@hevcjs/dashjs-plugin` consume this bus to cap variants when the device can't keep up. You can subscribe directly if you're integrating with a different player or building custom telemetry:
+
+```js
+import { subscribeSegmentStat, ComputeAwareDecider } from '@hevcjs/core';
+
+const detach = subscribeSegmentStat(stat => {
+  // stat: { totalMs, segDurMs, speedX, frames, width, height }
+  console.log(`speedX=${stat.speedX} on ${stat.width}x${stat.height}`);
+});
+
+// Or use the player-agnostic decider directly
+const decider = new ComputeAwareDecider({ measureWindow: 2, lowerAfter: 1 });
+decider.setLadderSize(4);
+const decision = decider.observe(stat.speedX, currentVariantIdx);
+// decision: { capIndex, avgSpeedX, reason: 'init' | 'hold' | 'lower' | 'raise' }
+```
+
 ## How it works
 
 1. **Demux** — mp4box.js extracts raw HEVC NAL units from fMP4 segments
