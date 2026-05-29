@@ -13,7 +13,7 @@
 
 A from-scratch HEVC decoder written in C++17, compiled to WebAssembly, with drop-in plugins for dash.js and Shaka Player. Transcodes HEVC to H.264 in real-time, client-side, via WebCodecs inside a Web Worker. Works on Chrome, Edge, and Firefox where WebCodecs H.264 encoding is available.
 
-1080p @ 60fps. 236KB WASM. Zero dependencies. No special server headers required.
+1080p @ 60fps. 236KB WASM. Zero dependencies. No special server headers required. Compute-aware quality control caps the player's ABR ceiling when the device can't transcode at real-time, so the buffer never starves — on by default, no manual tuning.
 
 Built in 8 days by one developer, assisted by AI — [read the story](https://www.developpement.ai/blog/hevcjs-decodeur-h265-navigateur-wasm).
 
@@ -63,14 +63,17 @@ player.initialize(videoElement, 'https://example.com/manifest.mpd', true);
 import shaka from 'shaka-player';
 import { registerHevcTransmuxer } from '@hevcjs/shaka-plugin';
 
-registerHevcTransmuxer(shaka, { workerUrl: './transcode-worker.js' });
+const handle = registerHevcTransmuxer(shaka, { workerUrl: './transcode-worker.js' });
 
 const player = new shaka.Player();
 await player.attach(videoElement);
+handle.attachComputeAware(player);          // wire compute-aware ABR (on by default)
 await player.load('https://example.com/manifest.mpd');
 ```
 
 `registerHevcTransmuxer` registers a Shaka `Transmuxer` for `hev1`/`hvc1`, so Shaka handles MIME routing natively. To force transcoding even where HEVC is supported natively, use Shaka's built-in `player.configure({ mediaSource: { forceTransmux: true } })`.
+
+`handle.attachComputeAware(player)` is what enables compute-aware quality control (see below). It's a separate call because Shaka's player instance doesn't exist at register time. Pass `adaptiveCompute: false` in the register config to opt out.
 
 ### How the transcoding works
 
@@ -85,6 +88,40 @@ await player.load('https://example.com/manifest.mpd');
 3. **Transparent to the player** — The proxy reports `updating`, fires `updatestart`/`updateend` events, and returns real `buffered` ranges. The player's buffer management, ABR logic, and seek handling work unmodified.
 
 **Tradeoff**: the software fallback introduces 2-3s of startup latency on the first segment (vs instant playback with native hardware decode). Once buffered, playback is smooth. When native HEVC is available, hevc.js detects it and does nothing.
+
+### Compute-aware quality control
+
+WASM-based HEVC transcoding is significantly more expensive than native decode. On low-end CPUs at 1080p, transcoding a 2s segment can take 6s — the buffer drains at -4s per segment and playback freezes. Bandwidth-based ABR (Shaka, dash.js) doesn't see this: the network is fine, so it keeps the top variant.
+
+The plugins fix this by piping per-segment transcode `speedX` (`segDurMs / wallClockMs`) onto a small in-process bus that both plugins consume. A player-agnostic decider observes the rolling speed, applies hysteresis, and asks the host player to narrow its variant ceiling via the player's own public ABR settings:
+
+- **Shaka** → `player.configure({ abr: { restrictions: { maxHeight, maxBandwidth } } })`
+- **dash.js** → `player.updateSettings({ streaming: { abr: { maxBitrate: { video } } } })`
+
+The host ABR is never replaced — we only narrow the menu it picks from. Once headroom returns (sustained `speedX > 1.3×`), the ceiling lifts back up.
+
+**On by default.** Pass `adaptiveCompute: false` to opt out:
+
+```js
+// Tune (defaults: measureWindow 2, lowerAfter 1, raiseAfter 6, targetSpeedX 1.3)
+registerHevcTransmuxer(shaka, { adaptiveCompute: { targetSpeedX: 1.5 } });
+// or
+attachHevcSupport(player, { adaptiveCompute: false });
+```
+
+Telemetry hook for diagnostics — fires on every segment, not just cap changes:
+
+```js
+attachHevcSupport(player, {
+  adaptiveCompute: {
+    onObservation: (stat, avg, capIdx, reason) => {
+      console.log(`speedX=${stat.speedX} avg=${avg} cap=${capIdx} (${reason})`);
+    },
+  },
+});
+```
+
+`subscribeSegmentStat` is also exported from both plugins if you want the raw perf bus.
 
 ### Browser compatibility
 

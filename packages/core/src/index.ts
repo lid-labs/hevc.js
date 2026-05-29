@@ -26,3 +26,14 @@ export type { SegmentTranscoderConfig, TranscodedInit } from "./segment-transcod
 export { TranscodeWorkerClient } from "./transcode-worker-client.js";
 export type { TranscodeWorkerClientConfig } from "./transcode-worker-client.js";
 export { hevcMimeToH264Codec } from "./codec-mapping.js";
+export {
+  publishSegmentStat,
+  subscribeSegmentStat,
+  _resetSegmentStatBus,
+} from "./perf-bus.js";
+export type { SegmentPerfStat } from "./perf-bus.js";
+export { ComputeAwareDecider } from "./compute-aware-decision.js";
+export type {
+  ComputeAwareConfig,
+  ComputeAwareDecision,
+} from "./compute-aware-decision.js";

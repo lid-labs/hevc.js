@@ -4,6 +4,13 @@ import { HevcTransmuxer, registerHevcTransmuxer } from "./index.js";
 vi.mock("@hevcjs/core", () => ({
   SegmentTranscoder: vi.fn(),
   hevcMimeToH264Codec: vi.fn(() => "avc1.640028"),
+  // compute-aware imports — stubbed so the index module loads under the mock.
+  // Real wiring is exercised by compute-aware.test.ts which doesn't mock core.
+  ComputeAwareDecider: vi.fn().mockImplementation(() => ({
+    setLadderSize: vi.fn(),
+    observe: vi.fn(() => ({ capIndex: null, avgSpeedX: 1, reason: "hold" })),
+  })),
+  subscribeSegmentStat: vi.fn(() => () => {}),
 }));
 
 interface MockShaka {
@@ -174,5 +181,144 @@ describe("registerHevcTransmuxer", () => {
       wasmUrl: "/custom-hevc-decode.js",
       wasmBinaryUrl: "/custom-hevc-decode.wasm",
     });
+  });
+
+  it("returns a handle that is callable AND exposes unregister/attachComputeAware", () => {
+    const shaka = buildShakaMock();
+    const handle = registerHevcTransmuxer(shaka);
+    expect(typeof handle).toBe("function");
+    expect(typeof handle.unregister).toBe("function");
+    expect(typeof handle.attachComputeAware).toBe("function");
+  });
+
+  it("attachComputeAware actively wires by default (no adaptiveCompute flag)", async () => {
+    const shaka = buildShakaMock();
+    const { subscribeSegmentStat } = await import("@hevcjs/core");
+    const subscribeMock = subscribeSegmentStat as unknown as ReturnType<typeof vi.fn>;
+    subscribeMock.mockClear();
+
+    const handle = registerHevcTransmuxer(shaka); // no config -> default on
+    const cleanup = handle.attachComputeAware({});
+
+    expect(typeof cleanup).toBe("function");
+    expect(subscribeMock).toHaveBeenCalled();
+    // No "missing flag" warn — defaults are on, nothing surprising.
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it("attachComputeAware merges register-time and attach-time options", async () => {
+    const shaka = buildShakaMock();
+    // Use the actual @hevcjs/core ComputeAwareDecider semantics — the mock
+    // at the top of this file returns capIndex: null / reason: "hold" for
+    // every observe(), which is enough to confirm the merge wiring.
+    const { subscribeSegmentStat } = await import("@hevcjs/core");
+    const subscribeMock = subscribeSegmentStat as unknown as ReturnType<typeof vi.fn>;
+
+    let publishedToBus: ((stat: unknown) => void) | null = null;
+    subscribeMock.mockImplementation((cb: (stat: unknown) => void) => {
+      publishedToBus = cb;
+      return () => { publishedToBus = null; };
+    });
+
+    const registerOnObs = vi.fn();
+    const attachOnObs = vi.fn();
+    const handle = registerHevcTransmuxer(shaka, {
+      adaptiveCompute: { onObservation: registerOnObs, measureWindow: 99 },
+    });
+    // Player needs at least one video variant or readLadder bails early.
+    const playerMock = {
+      getVariantTracks: () => [
+        { active: true, height: 1080, videoBandwidth: 5_000_000 },
+      ],
+    };
+    handle.attachComputeAware(playerMock, { onObservation: attachOnObs });
+
+    // Fire a stat: attach-time onObservation must win over register-time.
+    publishedToBus!({
+      totalMs: 1000,
+      segDurMs: 1000,
+      speedX: 1,
+      frames: 25,
+      width: 1920,
+      height: 1080,
+    });
+    // The mock decider's observe returns hold; the adapter still invokes
+    // onObservation on every stat. Attach-time callback wins.
+    expect(attachOnObs).toHaveBeenCalled();
+    expect(registerOnObs).not.toHaveBeenCalled();
+  });
+
+  it("attachComputeAware is a silent no-op when adaptiveCompute: false", async () => {
+    const shaka = buildShakaMock();
+    const { subscribeSegmentStat } = await import("@hevcjs/core");
+    const subscribeMock = subscribeSegmentStat as unknown as ReturnType<typeof vi.fn>;
+    subscribeMock.mockClear();
+
+    const handle = registerHevcTransmuxer(shaka, { adaptiveCompute: false });
+    const cleanup = handle.attachComputeAware({});
+
+    expect(typeof cleanup).toBe("function");
+    expect(() => cleanup()).not.toThrow();
+    // Explicit opt-out: no subscription happens, and no warn (the user
+    // asked for this, no surprise).
+    expect(subscribeMock).not.toHaveBeenCalled();
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it("handle() tears down both the transmuxer AND the active compute-aware listener", async () => {
+    const shaka = buildShakaMock();
+    const { subscribeSegmentStat } = await import("@hevcjs/core");
+    const subscribeMock = subscribeSegmentStat as unknown as ReturnType<typeof vi.fn>;
+    const detachSpy = vi.fn();
+    subscribeMock.mockReturnValue(detachSpy);
+
+    const handle = registerHevcTransmuxer(shaka, { adaptiveCompute: true });
+    handle.attachComputeAware({}); // attaches via mocked subscribe
+
+    handle(); // tearDown both
+    expect(detachSpy).toHaveBeenCalled();
+    // Transmuxer also unregistered
+    expect(
+      shaka.transmuxer!.TransmuxerEngine!.unregisterTransmuxer,
+    ).toHaveBeenCalled();
+  });
+
+  it("does NOT forward adaptiveCompute to the HevcTransmuxer factory", async () => {
+    const shaka = buildShakaMock();
+    registerHevcTransmuxer(shaka, { adaptiveCompute: true });
+
+    const firstCall =
+      shaka.transmuxer!.TransmuxerEngine!.registerTransmuxer.mock.calls[0]!;
+    const factory = firstCall[1] as () => HevcTransmuxer;
+    const instance = factory();
+
+    const { SegmentTranscoder } = await import("@hevcjs/core");
+    const SegmentTranscoderMock = SegmentTranscoder as unknown as ReturnType<
+      typeof vi.fn
+    >;
+    SegmentTranscoderMock.mockClear();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (SegmentTranscoderMock as any).mockImplementation(() => ({
+      init: vi.fn().mockResolvedValue(undefined),
+      prepareInit: vi.fn().mockResolvedValue({
+        initSegment: new Uint8Array(),
+        codec: "avc1.640028",
+      }),
+      processMediaSegment: vi.fn(),
+      destroy: vi.fn(),
+    }));
+
+    await instance.transmux(
+      new Uint8Array([0, 0, 0, 8, 0x66, 0x74, 0x79, 0x70]),
+      null,
+      null,
+      0,
+      "video",
+    );
+
+    // adaptiveCompute is consumed by the handle layer; the transmuxer
+    // should receive an empty (or transcoder-only) config.
+    const callArg = SegmentTranscoderMock.mock.calls[0]![0];
+    expect(callArg).not.toHaveProperty("adaptiveCompute");
   });
 });

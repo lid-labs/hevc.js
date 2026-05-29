@@ -84,11 +84,37 @@ const cleanup = await attachHevcSupport(player, {
   fps: 25,                                    // Target framerate (optional, default: 25)
   bitrate: 4_000_000,                         // H.264 encode bitrate (optional)
   forceTranscode: false,                      // Bypass native HEVC detection (optional)
+  adaptiveCompute: true,                      // Compute-aware ABR (default true; pass false to opt out)
 });
 
-// Remove patches when done
+// Remove patches when done (also detaches the compute-aware listener)
 cleanup();
 ```
+
+## Compute-aware ABR
+
+The plugin watches per-segment transcode `speedX` (`segDurMs / wallClockMs`). When the device can't keep up, it asks dash.js to narrow its variant ceiling via `player.updateSettings({ streaming: { abr: { maxBitrate: { video } } } })` — dash.js's own bandwidth-based ABR keeps picking freely from what's left. **On by default.**
+
+```js
+// Tune (defaults: measureWindow 2, lowerAfter 1, raiseAfter 6, targetSpeedX 1.3)
+await attachHevcSupport(player, {
+  adaptiveCompute: { targetSpeedX: 1.5, lowerAfter: 2 },
+});
+
+// Telemetry hook — fires per segment, not just on cap changes
+await attachHevcSupport(player, {
+  adaptiveCompute: {
+    onObservation: (stat, avgSpeedX, capIndex, reason) => {
+      console.log(`speedX=${stat.speedX.toFixed(2)} cap=${capIndex} (${reason})`);
+    },
+  },
+});
+
+// Opt out
+await attachHevcSupport(player, { adaptiveCompute: false });
+```
+
+`subscribeSegmentStat` and `SegmentPerfStat` are also re-exported from `@hevcjs/dashjs-plugin` for custom telemetry on the raw perf bus.
 
 ## Requirements
 

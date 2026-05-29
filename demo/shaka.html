@@ -44,6 +44,12 @@
 
   <video id="player" class="demo-video" controls></video>
   <div id="status" class="demo-status">Loading...</div>
+  <div id="compute-overlay" class="demo-status" style="font-family:monospace;font-size:13px;">
+    <span id="cmp-quality">quality: —</span> ·
+    <span id="cmp-speed">speedX: —</span> ·
+    <span id="cmp-cap">cap: —</span> ·
+    <span id="cmp-reason">reason: —</span>
+  </div>
   <textarea id="log" class="demo-log" readonly></textarea>
 
   <div class="demo-code"><span class="cm">// Zero build — load everything from a CDN.</span>
@@ -85,6 +91,22 @@ console.error = (...a) => { _err(...a); log('[ERROR]', ...a); };
 
 let player = null;
 let cleanup = null;
+let computeDetach = null;
+let busDetach = null;
+let busHits = 0;
+
+// DIAGNOSTIC: raw subscription to the perf-bus, completely bypasses
+// the compute-aware adapter. If this fires but the overlay doesn't,
+// the bug is in the adapter; if it doesn't fire, the transmuxer isn't
+// being invoked at all (Shaka not routing HEVC through us).
+busDetach = HevcShaka.subscribeSegmentStat((stat) => {
+  busHits++;
+  console.log('[demo/perf-bus]', '#' + busHits,
+    stat.width + 'x' + stat.height,
+    'speedX=' + stat.speedX.toFixed(2),
+    'totalMs=' + stat.totalMs.toFixed(0),
+    'frames=' + stat.frames);
+});
 
 // Surface Shaka logs in the textarea below so the demo doubles as
 // a diagnostic tool. Only available on the debug build of Shaka — silently
@@ -137,10 +159,13 @@ async function loadMPD(presetUrl) {
   console.log('[demo] forceTranscode =', forceTranscode);
   console.log('[demo] workerUrl =', workerUrl || '(none — main thread)');
   console.log('[demo] registerHevcTransmuxer');
+  // adaptiveCompute is ON by default — pass ?adaptiveCompute=off to opt out.
+  const adaptiveCompute = qp.get('adaptiveCompute') === 'off' ? false : undefined;
   cleanup = HevcShaka.registerHevcTransmuxer(shaka, {
     wasmUrl: qp.get('wasmUrl') || undefined,
     wasmBinaryUrl: qp.get('wasmBinaryUrl') || undefined,
     workerUrl,
+    adaptiveCompute,
   });
 
   player = new shaka.Player();
@@ -157,6 +182,39 @@ async function loadMPD(presetUrl) {
     console.log('[demo] shaka loaded');
     document.getElementById('status').textContent = 'Playing via Shaka + hevc.js';
   });
+
+  // Compute-aware feedback loop + live overlay. attachComputeAware needs
+  // the player instance, so we wire it here after `new shaka.Player()`
+  // and before .load(). Caps go through player.configure({ abr: ... }).
+  if (computeDetach) { computeDetach(); computeDetach = null; }
+  // onObservation fires for every segment — updates speedX + cap + reason.
+  if (adaptiveCompute !== false) {
+    computeDetach = cleanup.attachComputeAware(player, {
+      onObservation: (stat, avg, cap, reason) => {
+        document.getElementById('cmp-speed').textContent =
+          'speedX: ' + stat.speedX.toFixed(2) + ' (avg ' + avg.toFixed(2) + ')';
+        document.getElementById('cmp-cap').textContent =
+          'cap: ' + (cap == null ? 'none' : 'idx ' + cap);
+        document.getElementById('cmp-reason').textContent = 'reason: ' + reason;
+      },
+    });
+  }
+  // Active variant — refreshed when Shaka decides to switch variant
+  // (whether due to its own ABR or our cap).
+  function refreshActive() {
+    if (!player) return;
+    const tracks = (player.getVariantTracks?.() || []);
+    const active = tracks.find(t => t.active);
+    if (active) {
+      document.getElementById('cmp-quality').textContent =
+        'quality: ' + (active.height ? active.height + 'p' : '?') +
+        ' · ' + Math.round((active.videoBandwidth || active.bandwidth || 0) / 1000) + ' kbps';
+    }
+  }
+  player.addEventListener('adaptation', refreshActive);
+  player.addEventListener('variantchanged', refreshActive);
+  // Show active variant once tracks are known.
+  player.addEventListener('loaded', refreshActive);
 
   try {
     console.log('[demo] player.attach()');

@@ -15,6 +15,7 @@ import { log } from "./log.js";
 import { H264Encoder } from "./h264-encoder.js";
 import type { EncodedChunk } from "./h264-encoder.js";
 import { FMP4Muxer } from "./fmp4-muxer.js";
+import { publishSegmentStat } from "./perf-bus.js";
 import type { HEVCFrame } from "./types.js";
 import type { DecoderOptions } from "./types.js";
 
@@ -198,8 +199,21 @@ export class SegmentTranscoder {
    * On the first call, also generates the H.264 init segment if `prepareInit`
    * was not called beforehand.
    */
-  /** Perf stats from last processMediaSegment call */
-  lastPerfStats: { demuxMs: number; decodeMs: number; encodeMs: number; frames: number } | null = null;
+  /**
+   * Perf stats from the last successful media segment.
+   * - `*Ms` fields are wall-clock; `segDurMs` is the segment's intrinsic
+   *   media-time duration. `speedX = segDurMs / (demuxMs+decodeMs+encodeMs)`
+   *   is what the compute-aware ABR decider reacts to.
+   */
+  lastPerfStats: {
+    demuxMs: number;
+    decodeMs: number;
+    encodeMs: number;
+    frames: number;
+    segDurMs: number;
+    width: number;
+    height: number;
+  } | null = null;
 
   async processMediaSegment(data: Uint8Array): Promise<Uint8Array | null> {
     if (!this._decoder || !this._demuxer) {
@@ -334,12 +348,37 @@ export class SegmentTranscoder {
     const mediaSegment = this._muxer.muxSegment(muxerSamples, muxBaseTime);
 
     const tEncodeEnd = performance.now();
+    const demuxMs = tDemuxEnd - tDemux0;
+    const decodeMs = tDecodeEnd - tDemuxEnd;
+    const encodeMs = tEncodeEnd - tDecodeEnd;
+    // Intrinsic segment duration in media time — sum of sample durations
+    // (robust to VFR and to truncated last segments, unlike `n * fps`).
+    const segDurTicks = samples.reduce((sum, s) => sum + s.duration, 0);
+    const segDurMs = (segDurTicks / this._timescale) * 1000;
     this.lastPerfStats = {
-      demuxMs: tDemuxEnd - tDemux0,
-      decodeMs: tDecodeEnd - tDemuxEnd,
-      encodeMs: tEncodeEnd - tDecodeEnd,
+      demuxMs,
+      decodeMs,
+      encodeMs,
       frames: frames.length,
+      segDurMs,
+      width: frameW,
+      height: frameH,
     };
+
+    const totalMs = demuxMs + decodeMs + encodeMs;
+    // Skip publication when totalMs is degenerate. A zero-time segment
+    // produces an Infinity speedX that would pile up `consecutiveHigh`
+    // and spuriously raise the cap on the consumer side.
+    if (totalMs > 0) {
+      publishSegmentStat({
+        totalMs,
+        segDurMs,
+        speedX: segDurMs / totalMs,
+        frames: frames.length,
+        width: frameW,
+        height: frameH,
+      });
+    }
 
     return mediaSegment;
   }
@@ -358,8 +397,10 @@ export class SegmentTranscoder {
 
     const BATCH_SIZE = 30;
 
+    const tDemux0 = performance.now();
     const samples = this._demuxer.parseSegment(data);
     if (samples.length === 0) return;
+    const tDemuxEnd = performance.now();
 
     const segmentBaseTime = extractTfdt(data) ?? samples[0]!.dts;
 
@@ -391,6 +432,7 @@ export class SegmentTranscoder {
 
     // Drain frames in display order
     const frames = this._decoder.drain();
+    const tDecodeEnd = performance.now();
     if (frames.length === 0) return;
 
     const frameW = frames[0]!.width;
@@ -411,6 +453,7 @@ export class SegmentTranscoder {
 
     // Encode in batches, using PTS-sorted timestamps
     let initEmitted = false;
+    const tEncode0 = performance.now();
 
     for (let batchStart = 0; batchStart < frames.length; batchStart += BATCH_SIZE) {
       const batchEnd = Math.min(batchStart + BATCH_SIZE, frames.length);
@@ -460,6 +503,35 @@ export class SegmentTranscoder {
       const mediaSegment = this._muxer.muxSegment(muxerSamples, batchBaseTime);
       await onChunk(mediaSegment, !initEmitted ? this._initResult : null);
       initEmitted = true;
+    }
+
+    // Publish one perf event per segment (not per batch) so compute-aware
+    // ABR sees the same shape from streaming and non-streaming paths.
+    const tEncodeEnd = performance.now();
+    const demuxMs = tDemuxEnd - tDemux0;
+    const decodeMs = tDecodeEnd - tDemuxEnd;
+    const encodeMs = tEncodeEnd - tEncode0;
+    const segDurTicks = samples.reduce((sum, s) => sum + s.duration, 0);
+    const segDurMs = (segDurTicks / this._timescale) * 1000;
+    this.lastPerfStats = {
+      demuxMs,
+      decodeMs,
+      encodeMs,
+      frames: frames.length,
+      segDurMs,
+      width: frameW,
+      height: frameH,
+    };
+    const totalMs = demuxMs + decodeMs + encodeMs;
+    if (totalMs > 0) {
+      publishSegmentStat({
+        totalMs,
+        segDurMs,
+        speedX: segDurMs / totalMs,
+        frames: frames.length,
+        width: frameW,
+        height: frameH,
+      });
     }
   }
 

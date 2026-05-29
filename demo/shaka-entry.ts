@@ -8,9 +8,13 @@
 import {
   HevcTransmuxer,
   registerHevcTransmuxer,
+  subscribeSegmentStat,
 } from "../packages/shaka-plugin/src/index.js";
-import type { HevcShakaPluginConfig } from "../packages/shaka-plugin/src/index.js";
+import type {
+  HevcShakaPluginConfig,
+  SegmentPerfStat,
+} from "../packages/shaka-plugin/src/index.js";
 
 // Re-export for the demo HTML
-export { HevcTransmuxer, registerHevcTransmuxer };
-export type { HevcShakaPluginConfig };
+export { HevcTransmuxer, registerHevcTransmuxer, subscribeSegmentStat };
+export type { HevcShakaPluginConfig, SegmentPerfStat };
