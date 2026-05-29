@@ -37,6 +37,7 @@
     "build:js": "pnpm -r build",
     "build": "pnpm build:wasm && pnpm build:js",
     "dev": "pnpm -r --parallel dev",
+    "dev:lan": "bash scripts/dev-lan.sh",
     "test": "cd build && ctest --output-on-failure",
     "test:native": "cmake -B build -DCMAKE_BUILD_TYPE=Debug && cmake --build build && cd build && ctest --output-on-failure",
     "test:unit": "pnpm -r --if-present test",
