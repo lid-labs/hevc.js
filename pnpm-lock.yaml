@@ -66,8 +66,8 @@ importers:
         version: link:../core
     devDependencies:
       shaka-player:
-        specifier: ^4.11.0
-        version: 4.16.30
+        specifier: ^5.1.8
+        version: 5.1.8
       tsup:
         specifier: ^8.0.0
         version: 8.5.1(postcss@8.5.14)(typescript@6.0.3)
@@ -2656,8 +2656,9 @@ packages:
     resolution: {integrity: sha512-pgRc4hJ4/sNjWCSS9AmnS40x3bNMDTknHgL5UaMBTMyJnU90EgWh1Rz+MC9eFu4BuN/UwZjKQuY/1v3rM7HMfg==}
     engines: {node: '>= 0.4'}
 
-  shaka-player@4.16.30:
-    resolution: {integrity: sha512-AXXhJOdE6udbFQdkmaDfBhu4JcZsQzzqavR/LtjvXiygDlcYA2j0RC+jNs/qeFQFRAVI9kalOLtqU1RRljauJA==}
+  shaka-player@5.1.8:
+    resolution: {integrity: sha512-nYD+9Z/DJzYkwQ/GhBDtKE4ew/rClUE8oeAzCVsMNOwdC816jBz4FxPFy4XpOoKuEZ7Z3Ltday/m55+MJ5puTw==}
+    engines: {node: '>=18'}
 
   shebang-command@2.0.0:
     resolution: {integrity: sha512-kHxr2zZpYtdmrN1qDjrrX/Z1rR1kG8Dx+gkpK1G4eXmvXswmcE1hTWBWYUzlraYw1/yZp6YuDY77YtvbN0dmDA==}
@@ -5771,7 +5772,7 @@ snapshots:
       gopd: 1.2.0
       has-property-descriptors: 1.0.2
 
-  shaka-player@4.16.30: {}
+  shaka-player@5.1.8: {}
 
   shebang-command@2.0.0:
     dependencies:
