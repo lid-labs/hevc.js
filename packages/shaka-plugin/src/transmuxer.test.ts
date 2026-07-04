@@ -13,7 +13,7 @@ interface MockTranscoder {
 let mockTranscoder: MockTranscoder;
 
 vi.mock("@hevcjs/core", () => ({
-  SegmentTranscoder: vi.fn().mockImplementation(() => mockTranscoder),
+  SegmentTranscoder: vi.fn().mockImplementation(function () { return mockTranscoder; }),
   hevcMimeToH264Codec: vi.fn((mime: string) => {
     if (mime.includes("L120")) return "avc1.64002a";
     if (mime.includes("L150") || mime.includes("L153")) return "avc1.640033";
