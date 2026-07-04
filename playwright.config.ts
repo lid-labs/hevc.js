@@ -53,7 +53,9 @@ export default defineConfig({
   // Local demo server (only when LOCAL_DEMO=1)
   ...(LOCAL_DEMO && {
     webServer: {
-      command: `python3 -m http.server ${LOCAL_PORT}`,
+      // CORS handler — needed by the cross-origin asset loading test
+      // (page on localhost, worker/wasm fetched from 127.0.0.1).
+      command: `python3 ../tests/cors-server.py ${LOCAL_PORT}`,
       cwd: './demo',
       port: LOCAL_PORT,
       reuseExistingServer: true,

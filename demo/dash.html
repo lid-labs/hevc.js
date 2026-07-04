@@ -12,9 +12,14 @@
 <body>
 
 <nav class="demo-nav">
-  <a href="../" class="demo-nav-brand">hevc<span>.js</span></a>
-  <a href="./">Decoder</a>
-  <a href="dash.html" class="active">dash.js</a>
+  <a href="../site/" class="demo-nav-brand">hevc<span>.js</span></a>
+  <div class="demo-nav-links">
+    <a href="./">Core decoder</a>
+    <a href="dash.html" class="active">dash.js</a>
+    <a href="shaka.html">Shaka</a>
+    <a href="../site/docs/dashjs-plugin.html">Docs</a>
+    <a href="https://github.com/privaloops/hevc.js" target="_blank" rel="noopener">GitHub</a>
+  </div>
 </nav>
 
 <main class="demo-main">
@@ -39,14 +44,23 @@
 
   <video id="player" class="demo-video" controls></video>
   <div id="status" class="demo-status">Loading...</div>
+  <div id="compute-overlay" class="demo-status" style="font-family:monospace;font-size:13px;">
+    <span id="cmp-quality">quality: —</span> ·
+    <span id="cmp-speed">speedX: —</span> ·
+    <span id="cmp-cap">cap: —</span> ·
+    <span id="cmp-reason">reason: —</span>
+  </div>
   <textarea id="log" class="demo-log" readonly></textarea>
 
-  <div class="demo-code"><span class="cm">// npm install @hevcjs/dashjs-plugin dashjs</span>
-<span class="kw">import</span> dashjs <span class="kw">from</span> <span class="str">'dashjs'</span>;
-<span class="kw">import</span> { <span class="fn">attachHevcSupport</span> } <span class="kw">from</span> <span class="str">'@hevcjs/dashjs-plugin'</span>;
+  <div class="demo-code"><span class="cm">// Zero build — load everything from a CDN.</span>
+<span class="kw">import</span> { <span class="fn">attachHevcSupport</span> } <span class="kw">from</span> <span class="str">'https://esm.sh/@hevcjs/dashjs-plugin@1'</span>;
 
 <span class="kw">const</span> player = dashjs.<span class="fn">MediaPlayer</span>().<span class="fn">create</span>();
-<span class="kw">await</span> <span class="fn">attachHevcSupport</span>(player);
+<span class="kw">await</span> <span class="fn">attachHevcSupport</span>(player, {
+  wasmUrl:       <span class="str">'https://unpkg.com/@hevcjs/core@1/dist/wasm/hevc-decode.js'</span>,
+  wasmBinaryUrl: <span class="str">'https://unpkg.com/@hevcjs/core@1/dist/wasm/hevc-decode.wasm'</span>,
+  workerUrl:     <span class="str">'https://unpkg.com/@hevcjs/core@1/dist/transcode-worker.js'</span>,
+});
 player.<span class="fn">initialize</span>(videoElement, mpdUrl, <span class="kw">true</span>);</div>
 </main>
 
@@ -79,11 +93,27 @@ console.error = (...a) => { _err(...a); log('[ERROR]', ...a); };
 
 let player = null;
 let cleanup = null;
+let busDetach = null;
+let busHits = 0;
+
+// DIAGNOSTIC: raw subscription to the perf-bus, completely bypasses
+// the compute-aware adapter. Mirrors the shaka.html probe so both demos
+// give the same visibility into the transcode pipeline.
+busDetach = HevcDash.subscribeSegmentStat((stat) => {
+  busHits++;
+  console.log('[demo/perf-bus]', '#' + busHits,
+    stat.width + 'x' + stat.height,
+    'speedX=' + stat.speedX.toFixed(2),
+    'totalMs=' + stat.totalMs.toFixed(0),
+    'frames=' + stat.frames);
+});
 
 async function loadMPD(presetUrl) {
   const url = presetUrl || document.getElementById('mpd-url').value.trim();
   if (!url) return;
   document.getElementById('mpd-url').value = url;
+
+  console.log('[demo] loadMPD', url);
 
   if (cleanup) { cleanup(); cleanup = null; }
   if (player) { player.reset(); player = null; }
@@ -92,10 +122,45 @@ async function loadMPD(presetUrl) {
   player = dashjs.MediaPlayer().create();
 
   const forceTranscode = document.getElementById('force-transcode').checked;
+  const qp = new URLSearchParams(location.search);
+  // adaptiveCompute is ON by default — pass ?adaptiveCompute=off to opt out.
+  const adaptiveOff = qp.get('adaptiveCompute') === 'off';
+  const workerUrl = qp.get('workerUrl') || './transcode-worker.js';
+  console.log('[demo] forceTranscode =', forceTranscode);
+  console.log('[demo] workerUrl =', workerUrl);
+  console.log('[demo] adaptiveCompute =', adaptiveOff ? 'off' : 'on (default)');
+  console.log('[demo] attachHevcSupport');
   cleanup = await HevcDash.attachHevcSupport(player, {
-    workerUrl: './transcode-worker.js',
+    workerUrl,
+    wasmUrl: qp.get('wasmUrl') || undefined,
+    wasmBinaryUrl: qp.get('wasmBinaryUrl') || undefined,
     forceTranscode,
+    adaptiveCompute: adaptiveOff
+      ? false
+      : {
+          onObservation: (stat, avg, cap, reason) => {
+            document.getElementById('cmp-speed').textContent =
+              'speedX: ' + stat.speedX.toFixed(2) + ' (avg ' + avg.toFixed(2) + ')';
+            document.getElementById('cmp-cap').textContent =
+              'cap: ' + (cap == null ? 'none' : 'idx ' + cap);
+            document.getElementById('cmp-reason').textContent = 'reason: ' + reason;
+          },
+        },
   });
+
+  // Active variant (refreshed when dash.js switches quality).
+  function refreshActive() {
+    const idx = player.getQualityFor?.('video');
+    const list = player.getBitrateInfoListFor?.('video') || [];
+    const active = list[idx];
+    if (active) {
+      document.getElementById('cmp-quality').textContent =
+        'quality: ' + (active.height ? active.height + 'p' : '?') +
+        ' · ' + Math.round((active.bitrate || 0) / 1000) + ' kbps';
+    }
+  }
+  player.on(dashjs.MediaPlayer.events.QUALITY_CHANGE_RENDERED, refreshActive);
+  player.on(dashjs.MediaPlayer.events.STREAM_INITIALIZED, refreshActive);
 
   player.on(dashjs.MediaPlayer.events.PLAYBACK_STARTED, () => {
     document.getElementById('status').textContent = 'Playing via dash.js + hevc.js';

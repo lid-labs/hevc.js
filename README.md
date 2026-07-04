@@ -4,13 +4,16 @@
 [![Tests](https://github.com/privaloops/hevc.js/actions/workflows/test.yml/badge.svg)](https://github.com/privaloops/hevc.js/actions/workflows/test.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![npm downloads core](https://img.shields.io/npm/dw/@hevcjs/core?label=core)](https://www.npmjs.com/package/@hevcjs/core)
-[![npm downloads plugin](https://img.shields.io/npm/dw/@hevcjs/dashjs-plugin?label=dashjs-plugin)](https://www.npmjs.com/package/@hevcjs/dashjs-plugin)
+[![npm downloads dashjs-plugin](https://img.shields.io/npm/dw/@hevcjs/dashjs-plugin?label=dashjs-plugin)](https://www.npmjs.com/package/@hevcjs/dashjs-plugin)
+[![npm downloads shaka-plugin](https://img.shields.io/npm/dw/@hevcjs/shaka-plugin?label=shaka-plugin)](https://www.npmjs.com/package/@hevcjs/shaka-plugin)
+
+##### English | [简体中文](./README.zh_CN.md)
 
 **Play HEVC/H.265 video in browsers without native support. No plugin. No install. No server changes.**
 
-A from-scratch HEVC decoder written in C++17, compiled to WebAssembly, with a drop-in plugin for dash.js. Transcodes HEVC to H.264 in real-time, client-side, via WebCodecs inside a Web Worker. Works on Chrome, Edge, and Firefox where WebCodecs H.264 encoding is available.
+A from-scratch HEVC decoder written in C++17, compiled to WebAssembly, with drop-in plugins for dash.js and Shaka Player. Transcodes HEVC to H.264 in real-time, client-side, via WebCodecs inside a Web Worker. Works on Chrome, Edge, and Firefox where WebCodecs H.264 encoding is available.
 
-1080p @ 60fps. 236KB WASM. Zero dependencies. No special server headers required.
+1080p @ 60fps. 236KB WASM. Zero dependencies. No special server headers required. Compute-aware quality control caps the player's ABR ceiling when the device can't transcode at real-time, so the buffer never starves — on by default, no manual tuning.
 
 Built in 8 days by one developer, assisted by AI — [read the story](https://www.developpement.ai/blog/hevcjs-decodeur-h265-navigateur-wasm).
 
@@ -21,7 +24,8 @@ Built in 8 days by one developer, assisted by AI — [read the story](https://ww
 ### Installation
 
 ```bash
-npm install @hevcjs/dashjs-plugin
+npm install @hevcjs/dashjs-plugin   # dash.js
+npm install @hevcjs/shaka-plugin    # Shaka Player
 ```
 
 ### Setup
@@ -53,6 +57,24 @@ attachHevcSupport(player, { workerUrl: './transcode-worker.js' });
 player.initialize(videoElement, 'https://example.com/manifest.mpd', true);
 ```
 
+### Shaka Player
+
+```js
+import shaka from 'shaka-player';
+import { registerHevcTransmuxer } from '@hevcjs/shaka-plugin';
+
+const handle = registerHevcTransmuxer(shaka, { workerUrl: './transcode-worker.js' });
+
+const player = new shaka.Player();
+await player.attach(videoElement);
+handle.attachComputeAware(player);          // wire compute-aware ABR (on by default)
+await player.load('https://example.com/manifest.mpd');
+```
+
+`registerHevcTransmuxer` registers a Shaka `Transmuxer` for `hev1`/`hvc1`, so Shaka handles MIME routing natively. To force transcoding even where HEVC is supported natively, use Shaka's built-in `player.configure({ mediaSource: { forceTransmux: true } })`.
+
+`handle.attachComputeAware(player)` is what enables compute-aware quality control (see below). It's a separate call because Shaka's player instance doesn't exist at register time. Pass `adaptiveCompute: false` in the register config to opt out.
+
 ### How the transcoding works
 
 1. **MSE intercept** — Patches `MediaSource.addSourceBuffer()` before the player initializes. When the player creates an HEVC SourceBuffer, we return a proxy that accepts HEVC data but feeds H.264 to the real SourceBuffer.
@@ -66,6 +88,40 @@ player.initialize(videoElement, 'https://example.com/manifest.mpd', true);
 3. **Transparent to the player** — The proxy reports `updating`, fires `updatestart`/`updateend` events, and returns real `buffered` ranges. The player's buffer management, ABR logic, and seek handling work unmodified.
 
 **Tradeoff**: the software fallback introduces 2-3s of startup latency on the first segment (vs instant playback with native hardware decode). Once buffered, playback is smooth. When native HEVC is available, hevc.js detects it and does nothing.
+
+### Compute-aware quality control
+
+WASM-based HEVC transcoding is significantly more expensive than native decode. On low-end CPUs at 1080p, transcoding a 2s segment can take 6s — the buffer drains at -4s per segment and playback freezes. Bandwidth-based ABR (Shaka, dash.js) doesn't see this: the network is fine, so it keeps the top variant.
+
+The plugins fix this by piping per-segment transcode `speedX` (`segDurMs / wallClockMs`) onto a small in-process bus that both plugins consume. A player-agnostic decider observes the rolling speed, applies hysteresis, and asks the host player to narrow its variant ceiling via the player's own public ABR settings:
+
+- **Shaka** → `player.configure({ abr: { restrictions: { maxHeight, maxBandwidth } } })`
+- **dash.js** → `player.updateSettings({ streaming: { abr: { maxBitrate: { video } } } })`
+
+The host ABR is never replaced — we only narrow the menu it picks from. Once headroom returns (sustained `speedX > 1.3×`), the ceiling lifts back up.
+
+**On by default.** Pass `adaptiveCompute: false` to opt out:
+
+```js
+// Tune (defaults: measureWindow 2, lowerAfter 1, raiseAfter 6, targetSpeedX 1.3)
+registerHevcTransmuxer(shaka, { adaptiveCompute: { targetSpeedX: 1.5 } });
+// or
+attachHevcSupport(player, { adaptiveCompute: false });
+```
+
+Telemetry hook for diagnostics — fires on every segment, not just cap changes:
+
+```js
+attachHevcSupport(player, {
+  adaptiveCompute: {
+    onObservation: (stat, avg, capIdx, reason) => {
+      console.log(`speedX=${stat.speedX} avg=${avg} cap=${capIdx} (${reason})`);
+    },
+  },
+});
+```
+
+`subscribeSegmentStat` is also exported from both plugins if you want the raw perf bus.
 
 ### Browser compatibility
 
@@ -106,6 +162,18 @@ No `Cross-Origin-Embedder-Policy` or `Cross-Origin-Opener-Policy` headers needed
 ---
 
 ## C/C++ decoder
+
+### Why a from-scratch decoder?
+
+[libde265](https://github.com/strukturag/libde265) exists, is mature, and works. So why write another HEVC decoder?
+
+This implementation targets a different niche on three axes:
+
+- **Size** — 236 KB WASM vs ~2 MB for libde265 compiled to WASM. 8× smaller — which matters when shipping to a browser, a microVM, or a sandboxed runtime.
+- **Modernity & license** — C++17 throughout (`std::optional`, `std::shared_ptr`, `std::array`, `constexpr`), single-threaded, zero dependencies, **MIT-licensed** (vs LGPL for libde265 — relevant for static linking in commercial products).
+- **Spec traceability** — function names mirror ITU-T H.265 section numbers, and [`docs/cross-reference.md`](docs/cross-reference.md) maps every spec section to its source file and test. Useful if you want to *understand* HEVC, not just decode it (universities, codec research, contributors).
+
+This is **not a libde265 replacement** — libde265 is faster on pure native and battle-tested in production (GStreamer, VLC, libheif, FFmpeg fallback). For embedding in browsers, microVMs, and sandboxed environments where binary size, license, or readability matter more than the last 20% of native throughput, this decoder is a viable alternative.
 
 ### C API
 
@@ -179,17 +247,17 @@ cmake --build build-wasm
 
 Single-threaded, Apple Silicon (M-series):
 
-| | Native C++ | WASM (Chrome) |
-|---|---|---|
-| **1080p decode** | 76 fps | 61 fps |
-| **4K decode** | 28 fps | 21 fps |
-| **1080p transcode** | — | ~2.5x realtime (6s segment in 2.4s) |
+| | Native C++ | WASM (Chrome) | vs libde265 (WASM) |
+|---|---|---|---|
+| **1080p decode** | 76 fps | 61 fps | **83%** of libde265 speed |
+| **4K decode** | 28 fps | 21 fps | — |
+| **1080p transcode** | — | ~2.5x realtime (6s segment in 2.4s) | — |
 
-The WASM decoder is within 20% of native C++ performance, and reaches **83% of libde265** speed (a mature, 10-year-old optimized HEVC decoder) when both are compiled to WASM.
+The WASM decoder is within 20% of native C++ performance, and reaches **83% the speed of libde265** (a mature, 10-year-old optimized HEVC decoder) when both are compiled to WASM — in **1/8th the binary size** (236 KB vs ~2 MB).
 
 ### Spec conformance
 
-Implemented per **ITU-T H.265 (v8, 08/2021)** — 716 pages, transcribed directly from the spec. Validated pixel-perfect against ffmpeg on 128 test bitstreams.
+Implemented per **ITU-T H.265 (v8, 08/2021)** — 716 pages, transcribed directly from the spec. Validated pixel-perfect against ffmpeg on 128 test bitstreams. Each spec section is mapped 1:1 to its source file and test in [`docs/cross-reference.md`](docs/cross-reference.md).
 
 | Feature | Status |
 |---|---|
@@ -223,7 +291,8 @@ hevc.js/
 │
 ├── packages/
 │   ├── core/               @hevcjs/core — WASM decoder + transcoding pipeline
-│   └── dashjs-plugin/      @hevcjs/dashjs-plugin — dash.js plugin
+│   ├── dashjs-plugin/      @hevcjs/dashjs-plugin — dash.js plugin
+│   └── shaka-plugin/       @hevcjs/shaka-plugin — Shaka Player plugin
 │
 ├── demo/                   Browser demos (DASH)
 └── tests/                  Unit tests + 128 oracle tests (pixel-perfect vs ffmpeg)
@@ -237,6 +306,9 @@ hevc.js/
 |---|---|
 | [Decoder](https://hevcjs.dev/demo/) | Raw WASM decoder — drop a .265 file, frame-by-frame playback |
 | [dash.js](https://hevcjs.dev/demo/dash.html) | HEVC DASH streams via dash.js + WASM transcoding |
+| [Shaka](https://hevcjs.dev/demo/shaka.html) | HEVC DASH streams via Shaka Player + WASM transcoding |
+
+**Docs:** [dash.js plugin](https://hevcjs.dev/docs/dashjs-plugin.html) · [Shaka plugin](https://hevcjs.dev/docs/shaka-plugin.html)
 
 Each demo includes a **"Force transcoding"** toggle to bypass native HEVC detection — useful for testing the WASM pipeline on browsers that already support HEVC.
 
@@ -247,6 +319,29 @@ pnpm install
 pnpm build:demo     # Builds WASM + JS bundles + copies assets
 npx serve demo      # Open http://localhost:3000
 ```
+
+## Contributors
+
+Thanks goes to these people ([emoji key](https://allcontributors.org/docs/en/emoji-key)):
+
+<table>
+  <tr>
+    <td align="center">
+      <a href="https://github.com/privaloops">
+        <img src="https://github.com/privaloops.png" width="80" alt="privaloops" /><br />
+        <sub><b>Thibaut Lion</b></sub>
+      </a><br />
+      💻 📖 🤔 👀 🚇 ⚠️ 🚧
+    </td>
+    <td align="center">
+      <a href="https://github.com/kasty">
+        <img src="https://github.com/kasty.png" width="80" alt="kasty" /><br />
+        <sub><b>Marie</b></sub>
+      </a><br />
+      🤔 👀 ⚠️
+    </td>
+  </tr>
+</table>
 
 ## License
 

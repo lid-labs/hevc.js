@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://hevcjs.dev/sitemap.xml
+Sitemap: https://www.hevcjs.dev/sitemap.xml

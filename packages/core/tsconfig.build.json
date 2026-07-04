@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "emitDeclarationOnly": true,
+    "noEmit": false
+  },
+  "include": ["src"],
+  "exclude": ["src/transcode-worker.ts", "src/**/*.test.ts"]
+}

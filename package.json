@@ -13,26 +13,38 @@
       "import": "./packages/dashjs-plugin/dist/index.js",
       "types": "./packages/dashjs-plugin/dist/index.d.ts"
     },
+    "./shaka-plugin": {
+      "import": "./packages/shaka-plugin/dist/index.js",
+      "types": "./packages/shaka-plugin/dist/index.d.ts"
+    },
     "./wasm": "./packages/core/dist/wasm/hevc-decode.wasm"
   },
   "files": [
     "packages/core/dist/",
-    "packages/dashjs-plugin/dist/"
+    "packages/dashjs-plugin/dist/",
+    "packages/shaka-plugin/dist/"
   ],
   "scripts": {
     "build:wasm": "emcmake cmake -B build-wasm -DBUILD_WASM=ON -DCMAKE_BUILD_TYPE=Release && cmake --build build-wasm && cp build-wasm/hevc-decode.js build-wasm/hevc-decode.wasm packages/core/dist/wasm/",
     "build:core": "pnpm --filter @hevcjs/core build",
     "build:dashjs": "pnpm --filter @hevcjs/dashjs-plugin build",
+    "build:shaka": "pnpm --filter @hevcjs/shaka-plugin build",
     "build:demo:dash-bundle": "npx esbuild demo/dash-entry.ts --bundle --format=iife --global-name=HevcDash --outfile=demo/dash-bundle.js --external:dashjs --sourcemap --target=es2020",
+    "build:demo:shaka-bundle": "npx esbuild demo/shaka-entry.ts --bundle --format=iife --global-name=HevcShaka --outfile=demo/shaka-bundle.js --external:shaka-player --sourcemap --target=es2020",
     "build:demo:worker": "npx esbuild packages/core/src/transcode-worker.ts --bundle --format=iife --outfile=demo/transcode-worker.js --sourcemap --target=es2020",
     "build:demo:wasm": "cp build-wasm/hevc-decode.js build-wasm/hevc-decode.wasm demo/",
-    "build:demo": "pnpm build:demo:dash-bundle && pnpm build:demo:worker && pnpm build:demo:wasm",
+    "build:demo": "pnpm build:demo:dash-bundle && pnpm build:demo:shaka-bundle && pnpm build:demo:worker && pnpm build:demo:wasm",
     "build:js": "pnpm -r build",
     "build": "pnpm build:wasm && pnpm build:js",
     "dev": "pnpm -r --parallel dev",
+    "dev:lan": "bash scripts/dev-lan.sh",
     "test": "cd build && ctest --output-on-failure",
     "test:native": "cmake -B build -DCMAKE_BUILD_TYPE=Debug && cmake --build build && cd build && ctest --output-on-failure",
+    "test:unit": "pnpm -r --if-present test",
     "test:e2e": "npx playwright test --project=local-chromium",
+    "changeset": "changeset",
+    "version": "changeset version && pnpm install --lockfile-only",
+    "release": "pnpm build:js && changeset publish",
     "test:e2e:bs": "npx playwright test --project=bs-chrome-windows --project=bs-edge-windows --project=bs-firefox-windows --project=bs-chrome-macos --project=bs-safari-macos",
     "clean": "rm -rf build build-wasm packages/*/dist"
   },
@@ -51,7 +63,9 @@
     "media-source",
     "streaming",
     "dash",
-    "dashjs"
+    "dashjs",
+    "shaka",
+    "shaka-player"
   ],
   "license": "MIT",
   "author": "Thibaut Lion",
@@ -67,9 +81,11 @@
     "node": ">=18"
   },
   "devDependencies": {
-    "@playwright/test": "^1.59.1",
+    "@changesets/changelog-github": "^0.7.0",
+    "@changesets/cli": "^2.31.0",
+    "@playwright/test": "^1.61.1",
     "browserstack-local": "^1.5.13",
-    "browserstack-node-sdk": "^1.52.3",
-    "esbuild": "^0.28.0"
+    "browserstack-node-sdk": "^1.61.0",
+    "esbuild": "^0.28.1"
   }
 }

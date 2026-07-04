@@ -8,7 +8,7 @@ HEVC/H.265 playback plugin for [dash.js](https://github.com/Dash-Industry-Forum/
 npm install @hevcjs/dashjs-plugin dashjs
 ```
 
-## Setup
+## Usage — bundled (Vite, Webpack, etc.)
 
 Copy the static assets from `@hevcjs/core` to your public directory:
 
@@ -18,9 +18,7 @@ cp node_modules/@hevcjs/core/dist/wasm/hevc-decode.js public/
 cp node_modules/@hevcjs/core/dist/wasm/hevc-decode.wasm public/
 ```
 
-Adjust `public/` to match your project structure.
-
-## Usage
+Then:
 
 ```js
 import dashjs from 'dashjs';
@@ -36,6 +34,29 @@ await attachHevcSupport(player, {
 
 player.initialize(video, 'https://example.com/stream/manifest.mpd', true);
 ```
+
+## Usage — from a CDN (zero build)
+
+Load everything from a CDN, no install or build step required. Useful for prototyping, samples, codepens, and integrations where you don't control the build pipeline.
+
+```html
+<script type="module">
+  import { attachHevcSupport } from 'https://esm.sh/@hevcjs/dashjs-plugin@1';
+
+  const video = document.querySelector('video');
+  const player = dashjs.MediaPlayer().create();
+
+  await attachHevcSupport(player, {
+    workerUrl:     'https://unpkg.com/@hevcjs/core@1/dist/transcode-worker.js',
+    wasmUrl:       'https://unpkg.com/@hevcjs/core@1/dist/wasm/hevc-decode.js',
+    wasmBinaryUrl: 'https://unpkg.com/@hevcjs/core@1/dist/wasm/hevc-decode.wasm',
+  });
+
+  player.initialize(video, 'https://example.com/stream/manifest.mpd', true);
+</script>
+```
+
+`wasmBinaryUrl` is required when assets live on a different origin than the page — Emscripten otherwise resolves the `.wasm` relative to the worker's `blob:` URL and fails. The plugin transparently fetches the cross-origin worker source and wraps it in a same-origin `blob:` URL (the `Worker` constructor refuses cross-origin scripts even with CORS headers).
 
 ## How It Works
 
@@ -57,16 +78,43 @@ Audio and subtitle tracks pass through untouched.
 
 ```ts
 const cleanup = await attachHevcSupport(player, {
-  workerUrl: '/transcode-worker.js',
-  wasmUrl: '/hevc-decode.js',
-  fps: 25,              // Target framerate (optional, default: 25)
-  bitrate: 4_000_000,   // H.264 encode bitrate (optional)
-  forceTranscode: false, // Bypass native HEVC detection (optional)
+  workerUrl:     '/transcode-worker.js',     // URL to the Web Worker script
+  wasmUrl:       '/hevc-decode.js',          // URL to the Emscripten loader
+  wasmBinaryUrl: '/hevc-decode.wasm',        // URL to the .wasm binary — required for cross-origin loading
+  fps: 25,                                    // Target framerate (optional, default: 25)
+  bitrate: 4_000_000,                         // H.264 encode bitrate (optional)
+  forceTranscode: false,                      // Bypass native HEVC detection (optional)
+  adaptiveCompute: true,                      // Compute-aware ABR (default true; pass false to opt out)
 });
 
-// Remove patches when done
+// Remove patches when done (also detaches the compute-aware listener)
 cleanup();
 ```
+
+## Compute-aware ABR
+
+The plugin watches per-segment transcode `speedX` (`segDurMs / wallClockMs`). When the device can't keep up, it asks dash.js to narrow its variant ceiling via `player.updateSettings({ streaming: { abr: { maxBitrate: { video } } } })` — dash.js's own bandwidth-based ABR keeps picking freely from what's left. **On by default.**
+
+```js
+// Tune (defaults: measureWindow 2, lowerAfter 1, raiseAfter 6, targetSpeedX 1.3)
+await attachHevcSupport(player, {
+  adaptiveCompute: { targetSpeedX: 1.5, lowerAfter: 2 },
+});
+
+// Telemetry hook — fires per segment, not just on cap changes
+await attachHevcSupport(player, {
+  adaptiveCompute: {
+    onObservation: (stat, avgSpeedX, capIndex, reason) => {
+      console.log(`speedX=${stat.speedX.toFixed(2)} cap=${capIndex} (${reason})`);
+    },
+  },
+});
+
+// Opt out
+await attachHevcSupport(player, { adaptiveCompute: false });
+```
+
+`subscribeSegmentStat` and `SegmentPerfStat` are also re-exported from `@hevcjs/dashjs-plugin` for custom telemetry on the raw perf bus.
 
 ## Requirements
 

@@ -29,7 +29,8 @@ var HevcDash = (() => {
   // demo/dash-entry.ts
   var dash_entry_exports = {};
   __export(dash_entry_exports, {
-    attachHevcSupport: () => attachHevcSupport
+    attachHevcSupport: () => attachHevcSupport,
+    subscribeSegmentStat: () => subscribeSegmentStat
   });
 
   // node_modules/.pnpm/mp4box@2.3.0/node_modules/mp4box/dist/mp4box.all.js
@@ -11557,6 +11558,31 @@ var HevcDash = (() => {
     }
     return box("mdat", payload);
   }
+  function hevcMimeToH264Codec(mime) {
+    if (typeof mime !== "string") return "avc1.640033";
+    const match = mime.match(/\.[LH](\d+)/);
+    if (!match) return "avc1.640033";
+    const level = parseInt(match[1], 10);
+    if (level >= 150) return "avc1.640033";
+    if (level >= 120) return "avc1.64002a";
+    return "avc1.640028";
+  }
+  var listeners = /* @__PURE__ */ new Set();
+  function publishSegmentStat(stat) {
+    for (const l of listeners) {
+      try {
+        l(stat);
+      } catch (err) {
+        console.error("[hevc.js/perf-bus] listener threw:", err);
+      }
+    }
+  }
+  function subscribeSegmentStat(l) {
+    listeners.add(l);
+    return () => {
+      listeners.delete(l);
+    };
+  }
   var SegmentTranscoder = class {
     constructor(config = {}) {
       this._decoder = null;
@@ -11588,16 +11614,19 @@ var HevcDash = (() => {
     async init() {
       const decoderOpts = {};
       if (this._config.wasmUrl) decoderOpts.wasmUrl = this._config.wasmUrl;
+      if (this._config.wasmBinaryUrl) decoderOpts.wasmBinaryUrl = this._config.wasmBinaryUrl;
       this._decoder = await HEVCDecoder.create(decoderOpts);
       this._initialized = true;
     }
     /**
-     * Process an HEVC init segment (ftyp + moov).
-     * Parses track info, then returns the H.264 init segment to use instead.
+     * Process an HEVC init segment (ftyp + moov) — parses track metadata and
+     * extracts VPS/SPS/PPS for the WASM decoder. The H.264 init segment is
+     * generated lazily on the first media segment, because the H.264 avcC
+     * descriptor only exists after the first encoded frame.
      *
-     * The H.264 init segment is generated lazily — on the first media segment —
-     * because we need the encoder's avcC descriptor which requires encoding at least
-     * one frame. Returns null here; use getH264InitSegment() after first media segment.
+     * If you need the H.264 init segment up-front (e.g. when feeding Shaka's
+     * `Transmuxer.transmux()` which expects a result for the init segment
+     * before any media is delivered), use `prepareInit()` instead.
      */
     async processInitSegment(data) {
       this._demuxer = new FMP4Demuxer();
@@ -11622,6 +11651,65 @@ var HevcDash = (() => {
           off += ps.byteLength;
         }
       }
+    }
+    /**
+     * Process an HEVC init segment AND immediately produce a matching H.264
+     * fMP4 init segment by encoding a single black warmup frame to obtain a
+     * valid avcC descriptor. Useful for callers that must hand an init
+     * segment back to the player before any media segment has been seen
+     * (e.g. Shaka's `Transmuxer.transmux()`).
+     *
+     * After this call, `initResult` is populated and `processMediaSegment()`
+     * will skip the lazy init-generation path on its first call.
+     */
+    async prepareInit(data) {
+      if (this._encoder) {
+        this._encoder.close();
+        this._encoder = null;
+      }
+      this._paramSetsFed = false;
+      this._initResult = null;
+      await this.processInitSegment(data);
+      if (this._width === 0 || this._height === 0) {
+        throw new Error("prepareInit: missing dimensions in HEVC init segment");
+      }
+      const warmup = new H264Encoder({
+        width: this._width,
+        height: this._height,
+        fps: this._fps,
+        bitrate: this._config.bitrate
+      });
+      const cw = this._width >> 1;
+      const ch = this._height >> 1;
+      const blackFrame = {
+        y: new Uint16Array(this._width * this._height),
+        cb: new Uint16Array(cw * ch).fill(128),
+        cr: new Uint16Array(cw * ch).fill(128),
+        width: this._width,
+        height: this._height,
+        chromaWidth: cw,
+        chromaHeight: ch,
+        bitDepth: 8,
+        poc: 0
+      };
+      warmup.onChunk = () => {
+      };
+      warmup.encode(blackFrame, 0, true);
+      await warmup.flush();
+      const avcC = warmup.codecDescription;
+      const codec = warmup.codec;
+      warmup.close();
+      if (!avcC) {
+        throw new Error("prepareInit: encoder produced no avcC after warmup");
+      }
+      const initSegment = this._muxer.generateInit({
+        width: this._width,
+        height: this._height,
+        timescale: this._timescale,
+        avcC
+      });
+      this._initResult = { initSegment, codec };
+      return this._initResult;
     }
     async processMediaSegment(data) {
       if (!this._decoder || !this._demuxer) {
@@ -11718,12 +11806,31 @@ var HevcDash = (() => {
       const muxBaseTime = sortedPts.length > 0 ? sortedPts[0] : segmentBaseTime;
       const mediaSegment = this._muxer.muxSegment(muxerSamples, muxBaseTime);
       const tEncodeEnd = performance.now();
+      const demuxMs = tDemuxEnd - tDemux0;
+      const decodeMs = tDecodeEnd - tDemuxEnd;
+      const encodeMs = tEncodeEnd - tDecodeEnd;
+      const segDurTicks = samples.reduce((sum, s) => sum + s.duration, 0);
+      const segDurMs = segDurTicks / this._timescale * 1e3;
       this.lastPerfStats = {
-        demuxMs: tDemuxEnd - tDemux0,
-        decodeMs: tDecodeEnd - tDemuxEnd,
-        encodeMs: tEncodeEnd - tDecodeEnd,
-        frames: frames.length
+        demuxMs,
+        decodeMs,
+        encodeMs,
+        frames: frames.length,
+        segDurMs,
+        width: frameW,
+        height: frameH
       };
+      const totalMs = demuxMs + decodeMs + encodeMs;
+      if (totalMs > 0) {
+        publishSegmentStat({
+          totalMs,
+          segDurMs,
+          speedX: segDurMs / totalMs,
+          frames: frames.length,
+          width: frameW,
+          height: frameH
+        });
+      }
       return mediaSegment;
     }
     /**
@@ -11735,8 +11842,10 @@ var HevcDash = (() => {
         throw new Error("Transcoder not initialized. Call init() and processInitSegment() first.");
       }
       const BATCH_SIZE = 30;
+      const tDemux0 = performance.now();
       const samples = this._demuxer.parseSegment(data);
       if (samples.length === 0) return;
+      const tDemuxEnd = performance.now();
       const segmentBaseTime = extractTfdt(data) ?? samples[0].dts;
       if (!this._fpsAutoDetected && !this._config.fps && samples[0].duration > 0) {
         this._fps = this._timescale / samples[0].duration;
@@ -11762,6 +11871,7 @@ var HevcDash = (() => {
         this._decoder.feed(nalBuffer);
       }
       const frames = this._decoder.drain();
+      const tDecodeEnd = performance.now();
       if (frames.length === 0) return;
       const frameW = frames[0].width;
       const frameH = frames[0].height;
@@ -11781,6 +11891,7 @@ var HevcDash = (() => {
         this._height = frameH;
       }
       let initEmitted = false;
+      const tEncode0 = performance.now();
       for (let batchStart = 0; batchStart < frames.length; batchStart += BATCH_SIZE) {
         const batchEnd = Math.min(batchStart + BATCH_SIZE, frames.length);
         const batchChunks = [];
@@ -11818,6 +11929,32 @@ var HevcDash = (() => {
         const mediaSegment = this._muxer.muxSegment(muxerSamples, batchBaseTime);
         await onChunk(mediaSegment, !initEmitted ? this._initResult : null);
         initEmitted = true;
+      }
+      const tEncodeEnd = performance.now();
+      const demuxMs = tDemuxEnd - tDemux0;
+      const decodeMs = tDecodeEnd - tDemuxEnd;
+      const encodeMs = tEncodeEnd - tEncode0;
+      const segDurTicks = samples.reduce((sum, s) => sum + s.duration, 0);
+      const segDurMs = segDurTicks / this._timescale * 1e3;
+      this.lastPerfStats = {
+        demuxMs,
+        decodeMs,
+        encodeMs,
+        frames: frames.length,
+        segDurMs,
+        width: frameW,
+        height: frameH
+      };
+      const totalMs = demuxMs + decodeMs + encodeMs;
+      if (totalMs > 0) {
+        publishSegmentStat({
+          totalMs,
+          segDurMs,
+          speedX: segDurMs / totalMs,
+          frames: frames.length,
+          width: frameW,
+          height: frameH
+        });
       }
     }
     /**
@@ -11910,7 +12047,8 @@ var HevcDash = (() => {
       this._initResult = null;
       this._segmentId = 0;
       this._pendingResolves = /* @__PURE__ */ new Map();
-      this._worker = new Worker(config.workerUrl);
+      this._pendingPrepareInit = /* @__PURE__ */ new Map();
+      this._lastPerfStats = null;
       this._readyPromise = new Promise((resolve) => {
         this._readyResolve = resolve;
       });
@@ -11918,12 +12056,15 @@ var HevcDash = (() => {
         this._initParsedResolve = resolve;
         this._initParsedReject = reject;
       });
-      this._worker.onmessage = (e) => this._onMessage(e.data);
-      this._worker.onerror = (e) => {
-        log.error("Worker error:", e.message);
-      };
       const { workerUrl: _, ...transcoderConfig } = config;
-      this._worker.postMessage({ type: "init", config: transcoderConfig });
+      this._workerReady = loadWorker(config.workerUrl).then((worker) => {
+        worker.onmessage = (e) => this._onMessage(e.data);
+        worker.onerror = (e) => {
+          log.error("Worker error:", e.message);
+        };
+        worker.postMessage({ type: "init", config: transcoderConfig });
+        return worker;
+      });
     }
     get isInitialized() {
       return this._ready;
@@ -11934,24 +12075,48 @@ var HevcDash = (() => {
     get initResult() {
       return this._initResult;
     }
+    get lastPerfStats() {
+      return this._lastPerfStats;
+    }
     /** Wait for the WASM decoder to be ready inside the worker */
     async waitReady() {
+      await this._workerReady;
       return this._readyPromise;
     }
     /** Send an init segment (ftyp + moov) to the worker for parsing */
     async processInitSegment(data) {
-      this._worker.postMessage(
+      const worker = await this._workerReady;
+      worker.postMessage(
         { type: "initSegment", data: data.buffer },
         [data.buffer]
       );
       return this._initParsedPromise;
     }
+    /**
+     * Process an HEVC init segment and return a matching H.264 fMP4 init
+     * segment (warmup-encoder path inside the worker). Required by
+     * transmuxer plugins that must hand an init segment back to the host
+     * player before any media has been seen (Shaka 4.x's Transmuxer
+     * contract).
+     */
+    async prepareInit(data) {
+      const worker = await this._workerReady;
+      const id = this._segmentId++;
+      return new Promise((resolve, reject) => {
+        this._pendingPrepareInit.set(id, { resolve, reject });
+        worker.postMessage(
+          { type: "prepareInit", data: data.buffer, id },
+          [data.buffer]
+        );
+      });
+    }
     /** Send a media segment to the worker for transcoding */
     async processMediaSegment(data) {
+      const worker = await this._workerReady;
       const id = this._segmentId++;
       return new Promise((resolve, reject) => {
         this._pendingResolves.set(id, { resolve, reject });
-        this._worker.postMessage(
+        worker.postMessage(
           { type: "mediaSegment", data: data.buffer, id },
           [data.buffer]
         );
@@ -11959,10 +12124,10 @@ var HevcDash = (() => {
     }
     /** Send a media segment for streaming transcoding — onChunk called for each partial result */
     async processMediaSegmentStreaming(data, onChunk) {
+      const worker = await this._workerReady;
       const id = this._segmentId++;
       return new Promise((resolve, reject) => {
         let chainPromise = Promise.resolve();
-        let done = false;
         const handler = (e) => {
           const msg = e.data;
           if (msg.id !== id) return;
@@ -11977,16 +12142,30 @@ var HevcDash = (() => {
             const h264 = new Uint8Array(msg.h264);
             chainPromise = chainPromise.then(() => onChunk(h264, init, msg.codec ?? null));
           } else if (msg.type === "streamingDone") {
-            done = true;
-            this._worker.removeEventListener("message", handler);
+            worker.removeEventListener("message", handler);
+            const perf = msg.perf;
+            if (perf) {
+              this._lastPerfStats = perf;
+              const totalMs = perf.demuxMs + perf.decodeMs + perf.encodeMs;
+              if (totalMs > 0) {
+                publishSegmentStat({
+                  totalMs,
+                  segDurMs: perf.segDurMs,
+                  speedX: perf.segDurMs / totalMs,
+                  frames: perf.frames,
+                  width: perf.width,
+                  height: perf.height
+                });
+              }
+            }
             chainPromise.then(() => resolve()).catch(reject);
           } else if (msg.type === "error") {
-            this._worker.removeEventListener("message", handler);
+            worker.removeEventListener("message", handler);
             chainPromise.then(() => reject(new Error(msg.message))).catch(reject);
           }
         };
-        this._worker.addEventListener("message", handler);
-        this._worker.postMessage(
+        worker.addEventListener("message", handler);
+        worker.postMessage(
           { type: "mediaSegmentStreaming", data: data.buffer, id },
           [data.buffer]
         );
@@ -11998,6 +12177,10 @@ var HevcDash = (() => {
         reject(new Error("Aborted"));
       }
       this._pendingResolves.clear();
+      for (const [, { reject }] of this._pendingPrepareInit) {
+        reject(new Error("Aborted"));
+      }
+      this._pendingPrepareInit.clear();
       this._segmentId = 0;
       this._ready = false;
       this._readyPromise = new Promise((resolve) => {
@@ -12009,13 +12192,16 @@ var HevcDash = (() => {
         this._initParsedResolve = resolve;
         this._initParsedReject = reject;
       });
-      this._worker.postMessage({ type: "abort" });
+      this._workerReady.then((worker) => worker.postMessage({ type: "abort" }));
     }
     /** Destroy the worker */
     destroy() {
       this._pendingResolves.clear();
-      this._worker.postMessage({ type: "destroy" });
-      this._worker.terminate();
+      this._pendingPrepareInit.clear();
+      this._workerReady.then((worker) => {
+        worker.postMessage({ type: "destroy" });
+        worker.terminate();
+      });
     }
     _onMessage(msg) {
       switch (msg.type) {
@@ -12027,12 +12213,36 @@ var HevcDash = (() => {
           this._initParsed = true;
           this._initParsedResolve();
           break;
+        case "initPrepared": {
+          const id = msg.id;
+          const pending = this._pendingPrepareInit.get(id);
+          if (!pending) break;
+          this._pendingPrepareInit.delete(id);
+          const result = {
+            initSegment: new Uint8Array(msg.initSegment),
+            codec: msg.codec
+          };
+          if (!this._initResult) this._initResult = result;
+          pending.resolve(result);
+          break;
+        }
         case "transcoded": {
           const id = msg.id;
           const perf = msg.perf;
           if (perf) {
+            this._lastPerfStats = perf;
             const totalMs = perf.demuxMs + perf.decodeMs + perf.encodeMs;
             log.debug(`Segment #${id} transcoded in ${totalMs.toFixed(0)}ms (${perf.frames}f \u2014 demux:${perf.demuxMs.toFixed(0)}ms decode:${perf.decodeMs.toFixed(0)}ms encode:${perf.encodeMs.toFixed(0)}ms)`);
+            if (totalMs > 0) {
+              publishSegmentStat({
+                totalMs,
+                segDurMs: perf.segDurMs,
+                speedX: perf.segDurMs / totalMs,
+                frames: perf.frames,
+                width: perf.width,
+                height: perf.height
+              });
+            }
           }
           const pending = this._pendingResolves.get(id);
           if (!pending) break;
@@ -12053,7 +12263,15 @@ var HevcDash = (() => {
           if (pending) {
             this._pendingResolves.delete(id);
             pending.reject(new Error(msg.message));
-          } else if (id === -1 && !this._initParsed) {
+            break;
+          }
+          const prepareInitPending = this._pendingPrepareInit.get(id);
+          if (prepareInitPending) {
+            this._pendingPrepareInit.delete(id);
+            prepareInitPending.reject(new Error(msg.message));
+            break;
+          }
+          if (id === -1 && !this._initParsed) {
             this._initParsedReject(new Error(msg.message));
           } else {
             log.error(msg.message);
@@ -12067,9 +12285,17 @@ var HevcDash = (() => {
       }
     }
   };
+  async function loadWorker(workerUrl) {
+    const sameOrigin = typeof location === "undefined" || new URL(workerUrl, location.href).origin === location.origin;
+    if (sameOrigin) return new Worker(workerUrl);
+    const code = await (await fetch(workerUrl)).text();
+    const blobUrl = URL.createObjectURL(
+      new Blob([code], { type: "application/javascript" })
+    );
+    return new Worker(blobUrl);
+  }
   var HEVC_DETECT_RE = /hev1|hvc1/i;
   var HEVC_CODEC_RE = /hev1[^"']*|hvc1[^"']*/gi;
-  var H264_CODEC = "avc1.640033";
   var interceptState = null;
   function installMSEIntercept(config = {}) {
     if (config.logLevel) setLogLevel(config.logLevel);
@@ -12089,7 +12315,8 @@ var HevcDash = (() => {
     };
     MediaSource.isTypeSupported = function(mimeType) {
       if (HEVC_DETECT_RE.test(mimeType)) {
-        const h264Mime = mimeType.replace(HEVC_CODEC_RE, H264_CODEC);
+        const h264Codec = hevcMimeToH264Codec(mimeType);
+        const h264Mime = mimeType.replace(HEVC_CODEC_RE, h264Codec);
         const result = originalIsTypeSupported.call(MediaSource, h264Mime);
         log.debug(`isTypeSupported("${mimeType}") \u2192 "${h264Mime}" \u2192 ${result}`);
         return result;
@@ -12101,7 +12328,8 @@ var HevcDash = (() => {
       interceptState.originalDecodingInfo = originalDecodingInfo;
       navigator.mediaCapabilities.decodingInfo = async function(cfg) {
         if (cfg.video?.contentType && HEVC_DETECT_RE.test(cfg.video.contentType)) {
-          const h264Type = cfg.video.contentType.replace(HEVC_CODEC_RE, H264_CODEC);
+          const h264Codec = hevcMimeToH264Codec(cfg.video.contentType);
+          const h264Type = cfg.video.contentType.replace(HEVC_CODEC_RE, h264Codec);
           const h264Config = { ...cfg, video: { ...cfg.video, contentType: h264Type } };
           return originalDecodingInfo(h264Config);
         }
@@ -12112,8 +12340,9 @@ var HevcDash = (() => {
       if (!HEVC_DETECT_RE.test(mimeType)) {
         return originalAddSourceBuffer.call(this, mimeType);
       }
-      log.info(`addSourceBuffer("${mimeType}") \u2192 creating H.264 proxy`);
-      const h264Mime = `video/mp4; codecs="${H264_CODEC}"`;
+      const h264Codec = hevcMimeToH264Codec(mimeType);
+      log.info(`addSourceBuffer("${mimeType}") \u2192 creating H.264 proxy with ${h264Codec}`);
+      const h264Mime = `video/mp4; codecs="${h264Codec}"`;
       const realSB = originalAddSourceBuffer.call(this, h264Mime);
       return createTranscodingProxy(realSB, interceptState.config);
     };
@@ -12145,6 +12374,7 @@ var HevcDash = (() => {
       workerClient = new TranscodeWorkerClient({
         workerUrl: config.workerUrl,
         wasmUrl: config.wasmUrl,
+        wasmBinaryUrl: config.wasmBinaryUrl,
         fps: config.fps,
         bitrate: config.bitrate
       });
@@ -12163,9 +12393,9 @@ var HevcDash = (() => {
         );
       });
     }
-    const listeners = /* @__PURE__ */ new Map();
+    const listeners2 = /* @__PURE__ */ new Map();
     function dispatchOnSB(type) {
-      const set = listeners.get(type);
+      const set = listeners2.get(type);
       if (set) {
         const evt = new Event(type);
         for (const fn of set) {
@@ -12223,15 +12453,15 @@ var HevcDash = (() => {
     });
     Object.defineProperty(realSB, "addEventListener", {
       value: function(type, fn, options) {
-        if (!listeners.has(type)) listeners.set(type, /* @__PURE__ */ new Set());
-        listeners.get(type).add(fn);
+        if (!listeners2.has(type)) listeners2.set(type, /* @__PURE__ */ new Set());
+        listeners2.get(type).add(fn);
       },
       writable: true,
       configurable: true
     });
     Object.defineProperty(realSB, "removeEventListener", {
       value: function(type, fn) {
-        listeners.get(type)?.delete(fn);
+        listeners2.get(type)?.delete(fn);
       },
       writable: true,
       configurable: true
@@ -12418,6 +12648,193 @@ var HevcDash = (() => {
     }
     return new Uint8Array(data);
   }
+  var DEFAULTS = {
+    targetSpeedX: 1.3,
+    raiseAfter: 6,
+    lowerAfter: 1,
+    measureWindow: 2
+  };
+  var ComputeAwareDecider = class {
+    constructor(config = {}) {
+      this.window = [];
+      this.consecutiveLow = 0;
+      this.consecutiveHigh = 0;
+      this.capIndex_ = null;
+      this.ladderSize_ = 0;
+      this.prevCapIndex_ = null;
+      this.prevWindow_ = [];
+      this.prevConsecutiveLow_ = 0;
+      this.prevConsecutiveHigh_ = 0;
+      this.hasRevertablePoint_ = false;
+      this.cfg = {
+        targetSpeedX: config.targetSpeedX ?? DEFAULTS.targetSpeedX,
+        raiseAfter: config.raiseAfter ?? DEFAULTS.raiseAfter,
+        lowerAfter: config.lowerAfter ?? DEFAULTS.lowerAfter,
+        measureWindow: config.measureWindow ?? DEFAULTS.measureWindow
+      };
+      if (this.cfg.targetSpeedX <= 1) {
+        throw new Error("targetSpeedX must be > 1.0 (need headroom over real-time to raise)");
+      }
+      if (this.cfg.measureWindow < 1) throw new Error("measureWindow must be >= 1");
+      if (this.cfg.raiseAfter < 1 || this.cfg.lowerAfter < 1) {
+        throw new Error("raiseAfter / lowerAfter must be >= 1");
+      }
+    }
+    /** Set or update the number of available variants. Must be called at least once before observe(). */
+    setLadderSize(n) {
+      if (n < 1) throw new Error("ladderSize must be >= 1");
+      this.ladderSize_ = n;
+      if (this.capIndex_ != null && this.capIndex_ >= n) {
+        this.capIndex_ = n - 1;
+      }
+    }
+    get currentCap() {
+      return this.capIndex_;
+    }
+    get ladderSize() {
+      return this.ladderSize_;
+    }
+    /**
+     * Feed one speedX measurement plus the player's currently-active variant
+     * index (used as the starting point on first activation, per the
+     * "subtractive only on first activation" rule).
+     *
+     * Returns the decision: a `capIndex` plus the reason. The adapter applies
+     * the cap to the player only when `reason` is "lower" or "raise".
+     */
+    observe(speedX, currentVariantIdx) {
+      if (this.ladderSize_ === 0) {
+        return { capIndex: this.capIndex_, avgSpeedX: speedX, reason: "init" };
+      }
+      this.window.push(speedX);
+      if (this.window.length > this.cfg.measureWindow) this.window.shift();
+      if (this.window.length < this.cfg.measureWindow) {
+        return { capIndex: this.capIndex_, avgSpeedX: avg(this.window), reason: "init" };
+      }
+      const avgSpeed = avg(this.window);
+      if (avgSpeed < 1) {
+        this.consecutiveLow++;
+        this.consecutiveHigh = 0;
+        if (this.consecutiveLow >= this.cfg.lowerAfter) {
+          const base = this.capIndex_ ?? clamp(currentVariantIdx, 0, this.ladderSize_ - 1);
+          if (base > 0) {
+            this.snapshotForRevert();
+            this.capIndex_ = base - 1;
+            this.resetAfterChange();
+            return { capIndex: this.capIndex_, avgSpeedX: avgSpeed, reason: "lower" };
+          }
+          this.consecutiveLow = 0;
+        }
+      } else if (avgSpeed > this.cfg.targetSpeedX) {
+        this.consecutiveHigh++;
+        this.consecutiveLow = 0;
+        if (this.consecutiveHigh >= this.cfg.raiseAfter) {
+          if (this.capIndex_ != null && this.capIndex_ < this.ladderSize_ - 1) {
+            this.snapshotForRevert();
+            this.capIndex_ = this.capIndex_ + 1;
+            this.resetAfterChange();
+            return { capIndex: this.capIndex_, avgSpeedX: avgSpeed, reason: "raise" };
+          }
+          this.consecutiveHigh = 0;
+        }
+      } else {
+        this.consecutiveLow = 0;
+        this.consecutiveHigh = 0;
+      }
+      return { capIndex: this.capIndex_, avgSpeedX: avgSpeed, reason: "hold" };
+    }
+    /**
+     * Roll back the most recent "lower" or "raise" decision. Adapters call
+     * this when applying the cap to the host player throws — so the decider
+     * state stays in sync with what's actually configured on the player.
+     * Safe to call when no decision has happened yet (no-op).
+     */
+    revertLastDecision() {
+      if (!this.hasRevertablePoint_) return;
+      this.capIndex_ = this.prevCapIndex_;
+      this.window = [...this.prevWindow_];
+      this.consecutiveLow = this.prevConsecutiveLow_;
+      this.consecutiveHigh = this.prevConsecutiveHigh_;
+      this.hasRevertablePoint_ = false;
+    }
+    /** Test/debug — reset everything except the configured thresholds. */
+    reset() {
+      this.window = [];
+      this.consecutiveLow = 0;
+      this.consecutiveHigh = 0;
+      this.capIndex_ = null;
+      this.hasRevertablePoint_ = false;
+    }
+    snapshotForRevert() {
+      this.prevCapIndex_ = this.capIndex_;
+      this.prevWindow_ = [...this.window];
+      this.prevConsecutiveLow_ = this.consecutiveLow;
+      this.prevConsecutiveHigh_ = this.consecutiveHigh;
+      this.hasRevertablePoint_ = true;
+    }
+    resetAfterChange() {
+      this.window = [];
+      this.consecutiveLow = 0;
+      this.consecutiveHigh = 0;
+    }
+  };
+  function avg(arr) {
+    if (arr.length === 0) return 0;
+    let sum = 0;
+    for (const v of arr) sum += v;
+    return sum / arr.length;
+  }
+  function clamp(n, lo, hi) {
+    return Math.max(lo, Math.min(hi, n));
+  }
+
+  // packages/dashjs-plugin/src/compute-aware.ts
+  function attachDashComputeAware(player, options = {}) {
+    const { onObservation, ...deciderConfig } = options;
+    const decider = new ComputeAwareDecider(deciderConfig);
+    const unsubscribe = subscribeSegmentStat((stat) => {
+      const ladder = readLadder(player);
+      if (ladder.length === 0) return;
+      decider.setLadderSize(ladder.length);
+      const currentIdx = readCurrentIndex(player, ladder);
+      const decision = decider.observe(stat.speedX, currentIdx);
+      if (onObservation) {
+        try {
+          onObservation(stat, decision.avgSpeedX, decision.capIndex, decision.reason);
+        } catch {
+        }
+      }
+      if (decision.reason === "lower" || decision.reason === "raise") {
+        try {
+          applyCap(player, ladder, decision.capIndex);
+        } catch (err) {
+          decider.revertLastDecision();
+          console.warn("[hevc.js/dash] applyCap failed, reverted decider:", err);
+        }
+      }
+    });
+    return unsubscribe;
+  }
+  function readLadder(player) {
+    const infos = player.getBitrateInfoListFor?.("video") ?? [];
+    return infos.map((info) => ({
+      bandwidth: info.bitrate,
+      height: info.height ?? void 0
+    }));
+  }
+  function readCurrentIndex(player, ladder) {
+    const idx = player.getQualityFor?.("video");
+    if (typeof idx === "number" && idx >= 0 && idx < ladder.length) return idx;
+    return ladder.length - 1;
+  }
+  function applyCap(player, ladder, capIndex) {
+    const cap = ladder[capIndex];
+    if (!cap || typeof player.updateSettings !== "function") return;
+    const maxKbps = Math.ceil(cap.bandwidth / 1e3);
+    player.updateSettings({
+      streaming: { abr: { maxBitrate: { video: maxKbps } } }
+    });
+  }
 
   // packages/dashjs-plugin/src/plugin.ts
   async function hasNativeHevcSupport() {
@@ -12482,6 +12899,7 @@ var HevcDash = (() => {
     console.log("[hevc.js/dash] No native HEVC support \u2014 installing WASM transcoder");
     installMSEIntercept({
       wasmUrl: config.wasmUrl,
+      wasmBinaryUrl: config.wasmBinaryUrl,
       fps: config.fps,
       bitrate: config.bitrate,
       workerUrl: config.workerUrl
@@ -12489,7 +12907,13 @@ var HevcDash = (() => {
     if (player.registerCustomCapabilitiesFilter) {
       player.registerCustomCapabilitiesFilter(() => true);
     }
+    let detachComputeAware = null;
+    if (config.adaptiveCompute !== false) {
+      const opts = typeof config.adaptiveCompute === "object" ? config.adaptiveCompute : {};
+      detachComputeAware = attachDashComputeAware(player, opts);
+    }
     return () => {
+      detachComputeAware?.();
       uninstallMSEIntercept();
     };
   }

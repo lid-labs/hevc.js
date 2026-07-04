@@ -39,7 +39,7 @@
     "programmingLanguage": "TypeScript",
     "runtimePlatform": "Web Browser",
     "license": "https://opensource.org/licenses/MIT",
-    "url": "https://hevcjs.dev/docs/dashjs-plugin"
+    "url": "https://www.hevcjs.dev/docs/dashjs-plugin.html"
   }
   </script>
 
@@ -78,7 +78,7 @@
         "name": "What about HLS?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "There is no hls.js plugin at this time. The MSE intercept pattern works the same way, but hls.js support has not been implemented yet. Only dash.js is supported."
+          "text": "There is no hls.js plugin at this time. The MSE intercept pattern works the same way, but hls.js support has not been implemented yet. dash.js (@hevcjs/dashjs-plugin) and Shaka Player (@hevcjs/shaka-plugin) are supported."
         }
       }
     ]
@@ -206,9 +206,10 @@
   <nav class="fixed top-0 left-0 right-0 z-50 flex items-center gap-6 px-6 py-3 bg-ink/80 backdrop-blur-md border-b border-white/5">
     <a href="../" class="font-bold text-white text-sm tracking-tight">hevc<span class="text-accent">.js</span></a>
     <div class="flex gap-4 ml-auto">
-      <a href="../../demo/" class="text-silver/60 text-xs hover:text-white transition-colors">Decoder</a>
-      <a href="../../demo/dash.html" class="text-silver/60 text-xs hover:text-white transition-colors">dash.js demo</a>
-      <a href="./" class="text-accent-light text-xs font-medium">Docs</a>
+      <a href="../../demo/" class="text-silver/60 text-xs hover:text-white transition-colors">Core decoder</a>
+      <a href="../../demo/dash.html" class="text-silver/60 text-xs hover:text-white transition-colors">dash.js</a>
+      <a href="../../demo/shaka.html" class="text-silver/60 text-xs hover:text-white transition-colors">Shaka</a>
+      <a href="dashjs-plugin.html" class="text-accent-light text-xs font-medium">Docs</a>
       <a href="https://github.com/privaloops/hevc.js" target="_blank" rel="noopener noreferrer" class="text-silver/60 text-xs hover:text-white transition-colors">GitHub</a>
     </div>
   </nav>
@@ -553,6 +554,72 @@ cleanup();</code></pre>
           </div>
         </div>
 
+        <!-- Compute-aware ABR -->
+        <div class="code-block rounded-xl p-6 mb-8">
+          <h3 class="text-xl font-bold text-white mb-4"><code class="font-mono">adaptiveCompute</code> — compute-aware ABR <span class="text-xs font-normal text-green-400 ml-2">on by default</span></h3>
+          <p class="text-silver text-sm mb-6">
+            Feedback loop that caps dash.js variants when the device can't sustain transcoding at real-time. dash.js's bandwidth-based ABR keeps picking freely — we only narrow the bitrate ceiling.
+            Unlike Shaka, the player is available at registration time, so no extra <code class="font-mono">attach()</code> call is needed. <strong class="text-white">On by default</strong> — pass <code class="font-mono">adaptiveCompute: false</code> to opt out.
+          </p>
+
+          <div class="flex items-center gap-2 mb-4" aria-hidden="true">
+            <div class="w-3 h-3 rounded-full bg-red-500/60"></div>
+            <div class="w-3 h-3 rounded-full bg-yellow-500/60"></div>
+            <div class="w-3 h-3 rounded-full bg-green-500/60"></div>
+            <span class="text-xs text-silver/50 ml-2 font-mono">compute-aware.js</span>
+          </div>
+          <pre class="text-sm font-mono leading-relaxed overflow-x-auto mb-6"><code><span class="text-silver/50">// Default — adaptiveCompute is ON, defaults are sensible</span>
+<span class="text-accent">const</span> cleanup = <span class="text-accent">await</span> attachHevcSupport(player, {
+  <span class="param-name">workerUrl</span>: <span class="text-green-400">'/transcode-worker.js'</span>,
+});
+
+<span class="text-silver/50">// To tune knobs:</span>
+<span class="text-silver/50">// attachHevcSupport(player, { adaptiveCompute: { targetSpeedX: 1.5 } })</span>
+<span class="text-silver/50">// To opt out:</span>
+<span class="text-silver/50">// attachHevcSupport(player, { adaptiveCompute: false })</span>
+
+player.initialize(videoElement, mpdUrl, <span class="text-accent">true</span>);
+
+<span class="text-silver/50">// Cleanup detaches the compute-aware listener AND uninstalls MSE intercept</span>
+cleanup();</code></pre>
+
+          <h4 class="text-sm font-semibold text-white uppercase tracking-wider mb-4">Tuning knobs</h4>
+          <div class="space-y-4">
+            <div class="flex gap-4 items-start px-4 py-3 rounded-lg bg-ash/50">
+              <div>
+                <code class="param-name font-mono text-sm">targetSpeedX</code>
+                <span class="param-type text-xs ml-2">number, default 1.3</span>
+              </div>
+              <p class="text-silver text-sm">Required headroom over real-time before the cap is allowed to rise.</p>
+            </div>
+            <div class="flex gap-4 items-start px-4 py-3 rounded-lg bg-ash/50">
+              <div>
+                <code class="param-name font-mono text-sm">measureWindow</code>
+                <span class="param-type text-xs ml-2">number, default 2</span>
+              </div>
+              <p class="text-silver text-sm">Rolling-window size for smoothing per-segment <code class="font-mono">speedX</code>. Small by design — react fast when the device can't keep up.</p>
+            </div>
+            <div class="flex gap-4 items-start px-4 py-3 rounded-lg bg-ash/50">
+              <div>
+                <code class="param-name font-mono text-sm">lowerAfter</code>
+                <span class="param-type text-xs ml-2">number, default 1</span>
+              </div>
+              <p class="text-silver text-sm">Consecutive low windows before lowering the cap one notch.</p>
+            </div>
+            <div class="flex gap-4 items-start px-4 py-3 rounded-lg bg-ash/50">
+              <div>
+                <code class="param-name font-mono text-sm">raiseAfter</code>
+                <span class="param-type text-xs ml-2">number, default 6</span>
+              </div>
+              <p class="text-silver text-sm">Consecutive high windows before raising the cap one notch. Wider than <code class="font-mono">lowerAfter</code> — hysteresis prevents yo-yo.</p>
+            </div>
+          </div>
+
+          <p class="text-silver text-sm mt-6">
+            Caps are applied via <code class="font-mono">player.updateSettings({ streaming: { abr: { maxBitrate: { video } } } })</code> — dash.js's public ABR settings, no fork.
+          </p>
+        </div>
+
         <!-- Lower-level API -->
         <div class="code-block rounded-xl p-6">
           <h3 class="text-xl font-bold text-white mb-4">Lower-level API</h3>
@@ -644,7 +711,7 @@ installMSEIntercept({ wasmUrl: <span class="text-green-400">'/hevc-decode.js'</s
           <details>
             <summary>What about HLS?</summary>
             <div class="faq-answer">
-              <p>There is no hls.js plugin at this time. The MSE intercept pattern works the same way, but hls.js support has not been implemented yet. Only dash.js is supported via <code class="font-mono text-accent-light">@hevcjs/dashjs-plugin</code>.</p>
+              <p>There is no hls.js plugin at this time. The MSE intercept pattern works the same way, but hls.js support has not been implemented yet. dash.js is supported via <code class="font-mono text-accent-light">@hevcjs/dashjs-plugin</code>, and Shaka Player via <a href="shaka-plugin.html" class="text-accent hover:text-accent-light">@hevcjs/shaka-plugin</a>.</p>
             </div>
           </details>
         </div>
@@ -673,6 +740,10 @@ installMSEIntercept({ wasmUrl: <span class="text-green-400">'/hevc-decode.js'</s
              class="inline-flex items-center gap-2 px-6 py-3 bg-accent/15 text-accent-light font-semibold rounded-lg border border-accent/25 hover:bg-accent/25 transition-colors">
             Live demo
           </a>
+          <a href="shaka-plugin.html"
+             class="inline-flex items-center gap-2 px-6 py-3 bg-smoke text-silver font-semibold rounded-lg border border-ash hover:text-white transition-colors">
+            Shaka plugin docs
+          </a>
         </div>
       </div>
     </section>
@@ -683,11 +754,12 @@ installMSEIntercept({ wasmUrl: <span class="text-green-400">'/hevc-decode.js'</s
     <div class="max-w-5xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
       <div class="text-silver/50 text-sm">
         <a href="../" class="text-silver hover:text-white">Home</a> &middot;
+        <a href="shaka-plugin.html" class="text-silver hover:text-white">Shaka plugin</a> &middot;
         <a href="https://github.com/privaloops/hevc.js" class="text-silver hover:text-white" rel="noopener noreferrer" target="_blank">GitHub</a> &middot;
         <a href="https://www.npmjs.com/package/@hevcjs/dashjs-plugin" class="text-silver hover:text-white" rel="noopener noreferrer" target="_blank">npm</a>
       </div>
       <div class="text-silver/50 text-sm">
-        Built by <a href="https://developpement.ai" class="text-accent hover:text-accent-light" rel="noopener noreferrer" target="_blank">developpement.ai</a> &middot;
+        Built by <a href="https://www.developpement.ai" class="text-accent hover:text-accent-light" rel="noopener noreferrer" target="_blank">developpement.ai</a> &middot;
         <a href="https://www.developpement.ai/blog/hevcjs-decodeur-h265-navigateur-wasm" class="text-silver hover:text-white" rel="noopener noreferrer" target="_blank">Case study</a>
       </div>
     </div>

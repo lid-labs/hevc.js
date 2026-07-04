@@ -1,0 +1,781 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Shaka Player HEVC Plugin — H.265 Browser Fallback via WebAssembly | hevc.js</title>
+  <meta name="description" content="Drop-in HEVC/H.265 plugin for Shaka Player. Registers a Shaka Transmuxer that transcodes HEVC to H.264 client-side via WebAssembly. npm install @hevcjs/shaka-plugin. Works with live & VOD.">
+  <meta name="robots" content="index, follow">
+  <meta name="theme-color" content="#0a0a0b">
+  <link rel="canonical" href="https://www.hevcjs.dev/docs/shaka-plugin.html">
+
+  <!-- Open Graph -->
+  <meta property="og:title" content="Shaka Player HEVC Plugin — H.265 Browser Fallback via WebAssembly">
+  <meta property="og:description" content="Drop-in HEVC/H.265 plugin for Shaka Player. Registers a Shaka Transmuxer that transcodes HEVC to H.264 client-side via WebAssembly. Works with live & VOD.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://www.hevcjs.dev/docs/shaka-plugin.html">
+  <meta property="og:site_name" content="hevc.js">
+  <meta property="og:image" content="https://www.hevcjs.dev/og-image.png">
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Shaka Player HEVC Plugin — H.265 Browser Fallback via WebAssembly">
+  <meta name="twitter:description" content="Drop-in HEVC/H.265 plugin for Shaka Player. Registers a Shaka Transmuxer that transcodes HEVC to H.264 client-side via WebAssembly.">
+  <meta name="twitter:image" content="https://www.hevcjs.dev/og-image.png">
+
+  <!-- Favicon -->
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>▶</text></svg>">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>▶</text></svg>">
+  <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>▶</text></svg>">
+
+  <!-- Structured Data: SoftwareSourceCode -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareSourceCode",
+    "name": "@hevcjs/shaka-plugin",
+    "description": "Drop-in HEVC/H.265 plugin for Shaka Player. Transcodes HEVC to H.264 client-side via WebAssembly.",
+    "codeRepository": "https://github.com/privaloops/hevc.js",
+    "programmingLanguage": "TypeScript",
+    "runtimePlatform": "Web Browser",
+    "license": "https://opensource.org/licenses/MIT",
+    "url": "https://www.hevcjs.dev/docs/shaka-plugin.html"
+  }
+  </script>
+
+  <!-- Structured Data: FAQ -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {
+        "@type": "Question",
+        "name": "Does it work with live streams?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Yes. The transmuxer converts segments as Shaka requests them, so live (low-latency) and VOD streams both work. The only difference is that the first segment takes 2-3 seconds to transcode, which adds to the initial live edge latency."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "What happens when native HEVC is available?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Shaka plays HEVC natively and the transmuxer stays out of the way — Safari, any browser on macOS, Chrome 107+ on Windows with an HEVC-capable GPU, or Edge/Firefox on Windows with the Microsoft HEVC Video Extension installed. To force transcoding even when native HEVC is available, use Shaka's built-in player.configure({ mediaSource: { forceTransmux: true } })."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Do I need special server headers?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "No. The WASM decoder is single-threaded and does not use SharedArrayBuffer, so no Cross-Origin-Embedder-Policy or Cross-Origin-Opener-Policy headers are needed. It works on any static file server with HTTPS."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "How is this different from the dash.js plugin?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "The Shaka plugin registers a native Shaka Transmuxer for hev1/hvc1, so Shaka handles MIME routing itself. The dash.js plugin instead intercepts the MSE pipeline directly. Both share the same @hevcjs/core HEVC decoder and H.264 encoder."
+        }
+      }
+    ]
+  }
+  </script>
+
+  <!-- Tailwind CSS v3.4 — purged, inlined -->
+  <style>/*! tailwindcss v3.4.19 | MIT License | https://tailwindcss.com*/*,:after,:before{box-sizing:border-box;border:0 solid #e5e7eb;--tw-border-spacing-x:0;--tw-border-spacing-y:0;--tw-translate-x:0;--tw-translate-y:0;--tw-rotate:0;--tw-skew-x:0;--tw-skew-y:0;--tw-scale-x:1;--tw-scale-y:1;--tw-ring-offset-shadow:0 0 #0000;--tw-ring-shadow:0 0 #0000;--tw-shadow:0 0 #0000;--tw-shadow-colored:0 0 #0000}:after,:before{--tw-content:""}:host,html{line-height:1.5;-webkit-text-size-adjust:100%;tab-size:4;font-family:Inter,system-ui,-apple-system,sans-serif;-webkit-tap-highlight-color:transparent}body{margin:0;line-height:inherit}h1,h2,h3,h4,h5,h6{font-size:inherit;font-weight:inherit}a{color:inherit;text-decoration:inherit}code,kbd,pre,samp{font-family:JetBrains Mono,Fira Code,monospace;font-size:1em}button,input,optgroup,select,textarea{font-family:inherit;font-size:100%;font-weight:inherit;line-height:inherit;letter-spacing:inherit;color:inherit;margin:0;padding:0}button,select{text-transform:none}button,input:where([type=button]),input:where([type=reset]),input:where([type=submit]){-webkit-appearance:button;background-color:transparent;background-image:none}menu,ol,ul{list-style:none;margin:0;padding:0}canvas,img,svg,video{display:block;vertical-align:middle}img,video{max-width:100%;height:auto}[hidden]:where(:not([hidden=until-found])){display:none}.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border-width:0}.mx-auto{margin-left:auto;margin-right:auto}.mb-1{margin-bottom:.25rem}.mb-12{margin-bottom:3rem}.mb-2{margin-bottom:.5rem}.mb-4{margin-bottom:1rem}.mb-6{margin-bottom:1.5rem}.mb-8{margin-bottom:2rem}.ml-2{margin-left:.5rem}.mt-1{margin-top:.25rem}.mt-4{margin-top:1rem}.mt-6{margin-top:1.5rem}.mt-8{margin-top:2rem}.flex{display:flex}.inline-flex{display:inline-flex}.grid{display:grid}.hidden{display:none}.h-10{height:2.5rem}.h-2{height:.5rem}.h-3{height:.75rem}.h-5{height:1.25rem}.min-h-screen{min-height:100vh}.w-10{width:2.5rem}.w-2{width:.5rem}.w-3{width:.75rem}.w-5{width:1.25rem}.max-w-2xl{max-width:42rem}.max-w-3xl{max-width:48rem}.max-w-4xl{max-width:56rem}.max-w-5xl{max-width:64rem}.max-w-full{max-width:100%}@keyframes pulse{50%{opacity:.5}}.animate-pulse{animation:pulse 2s cubic-bezier(.4,0,.6,1) infinite}.cursor-pointer{cursor:pointer}.grid-cols-1{grid-template-columns:repeat(1,minmax(0,1fr))}.grid-cols-2{grid-template-columns:repeat(2,minmax(0,1fr))}.grid-cols-3{grid-template-columns:repeat(3,minmax(0,1fr))}.flex-col{flex-direction:column}.flex-wrap{flex-wrap:wrap}.items-center{align-items:center}.justify-center{justify-content:center}.justify-between{justify-content:space-between}.gap-2{gap:.5rem}.gap-3{gap:.75rem}.gap-4{gap:1rem}.gap-6{gap:1.5rem}.space-y-4>:not([hidden])~:not([hidden]){--tw-space-y-reverse:0;margin-top:calc(1rem*(1 - var(--tw-space-y-reverse)));margin-bottom:calc(1rem*var(--tw-space-y-reverse))}.overflow-x-auto{overflow-x:auto}.scroll-smooth{scroll-behavior:smooth}.rounded{border-radius:.25rem}.rounded-full{border-radius:9999px}.rounded-lg{border-radius:.5rem}.rounded-xl{border-radius:.75rem}.border{border-width:1px}.border-2{border-width:2px}.border-t{border-top-width:1px}.border-dashed{border-style:dashed}.border-accent{border-color:#6366f1}.border-accent\/20{border-color:rgba(99,102,241,.2)}.border-accent\/25{border-color:rgba(99,102,241,.25)}.border-accent\/30{border-color:rgba(99,102,241,.3)}.border-ash{border-color:#27272a}.bg-accent\/10{background-color:rgba(99,102,241,.1)}.bg-accent\/15{background-color:rgba(99,102,241,.15)}.bg-ash{background-color:#27272a}.bg-ash\/50{background-color:rgba(39,39,42,.5)}.bg-black{background-color:#000}.bg-green-500\/60{background-color:rgba(34,197,94,.6)}.bg-ink{background-color:#0a0a0b}.bg-red-500\/60{background-color:rgba(239,68,68,.6)}.bg-smoke{background-color:#18181b}.bg-white{background-color:#fff}.bg-yellow-500\/60{background-color:rgba(234,179,8,.6)}.p-12{padding:3rem}.p-6{padding:1.5rem}.p-8{padding:2rem}.px-3{padding-left:.75rem;padding-right:.75rem}.px-4{padding-left:1rem;padding-right:1rem}.px-6{padding-left:1.5rem;padding-right:1.5rem}.py-1{padding-top:.25rem;padding-bottom:.25rem}.py-1\.5{padding-top:.375rem;padding-bottom:.375rem}.py-12{padding-top:3rem;padding-bottom:3rem}.py-2{padding-top:.5rem;padding-bottom:.5rem}.py-20{padding-top:5rem;padding-bottom:5rem}.py-3{padding-top:.75rem;padding-bottom:.75rem}.text-center{text-align:center}.font-mono{font-family:JetBrains Mono,Fira Code,monospace}.font-sans{font-family:Inter,system-ui,-apple-system,sans-serif}.text-2xl{font-size:1.5rem;line-height:2rem}.text-3xl{font-size:1.875rem;line-height:2.25rem}.text-4xl{font-size:2.25rem;line-height:2.5rem}.text-5xl{font-size:3rem;line-height:1}.text-6xl{font-size:3.75rem;line-height:1}.text-lg{font-size:1.125rem;line-height:1.75rem}.text-sm{font-size:.875rem;line-height:1.25rem}.text-xl{font-size:1.25rem;line-height:1.75rem}.text-xs{font-size:.75rem;line-height:1rem}.font-bold{font-weight:700}.font-extrabold{font-weight:800}.font-medium{font-weight:500}.font-semibold{font-weight:600}.uppercase{text-transform:uppercase}.leading-\[1\.1\]{line-height:1.1}.leading-relaxed{line-height:1.625}.tracking-tight{letter-spacing:-.025em}.tracking-wider{letter-spacing:.05em}.text-accent{color:#6366f1}.text-accent-light{color:#818cf8}.text-bone{color:#e4e4e7}.text-green-400{color:#4ade80}.text-ink{color:#0a0a0b}.text-red-400{color:#f87171}.text-silver{color:#a1a1aa}.text-silver\/40{color:rgba(161,161,170,.4)}.text-silver\/50{color:rgba(161,161,170,.5)}.text-silver\/60{color:rgba(161,161,170,.6)}.text-silver\/70{color:rgba(161,161,170,.7)}.text-white{color:#fff}.underline{text-decoration-line:underline}.opacity-50{opacity:.5}.transition-all{transition-property:all;transition-timing-function:cubic-bezier(.4,0,.2,1);transition-duration:.15s}.transition-colors{transition-property:color,background-color,border-color,text-decoration-color,fill,stroke;transition-timing-function:cubic-bezier(.4,0,.2,1);transition-duration:.15s}.hover\:border-accent\/50:hover{border-color:rgba(99,102,241,.5)}.hover\:bg-accent\/25:hover{background-color:rgba(99,102,241,.25)}.hover\:bg-bone:hover{background-color:#e4e4e7}.hover\:text-accent-light:hover{color:#818cf8}.hover\:text-white:hover{color:#fff}@media (min-width:768px){.md\:grid-cols-2{grid-template-columns:repeat(2,minmax(0,1fr))}.md\:grid-cols-3{grid-template-columns:repeat(3,minmax(0,1fr))}.md\:flex-row{flex-direction:row}.md\:gap-6{gap:1.5rem}.md\:text-2xl{font-size:1.5rem;line-height:2rem}.md\:text-4xl{font-size:2.25rem;line-height:2.5rem}.md\:text-5xl{font-size:3rem;line-height:1}.md\:text-7xl{font-size:4.5rem;line-height:1}}</style>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    body { -webkit-font-smoothing: antialiased; }
+    .gradient-text {
+      background: linear-gradient(135deg, #6366f1 0%, #818cf8 50%, #a78bfa 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .stat-card {
+      background: linear-gradient(145deg, rgba(99,102,241,0.08) 0%, rgba(39,39,42,0.5) 100%);
+      border: 1px solid rgba(99,102,241,0.15);
+    }
+    .stat-card:hover {
+      border-color: rgba(99,102,241,0.35);
+      transform: translateY(-2px);
+      transition: all 0.2s ease;
+    }
+    .pipeline-step {
+      position: relative;
+    }
+    .pipeline-step::after {
+      content: '\2192';
+      position: absolute;
+      right: -1.5rem;
+      top: 50%;
+      transform: translateY(-50%);
+      color: #6366f1;
+      font-size: 1.25rem;
+    }
+    .pipeline-step:last-child::after { content: ''; }
+    .code-block {
+      background: rgba(10,10,11,0.8);
+      border: 1px solid rgba(99,102,241,0.15);
+    }
+    @media (max-width: 768px) {
+      .pipeline-step::after {
+        content: '\2193';
+        right: 50%;
+        top: auto;
+        bottom: -1.5rem;
+        transform: translateX(50%);
+      }
+    }
+    a:focus-visible, button:focus-visible {
+      outline: 2px solid #6366f1;
+      outline-offset: 2px;
+    }
+    /* FAQ details styling */
+    details {
+      border: 1px solid #27272a;
+      border-radius: 0.5rem;
+      background: #18181b;
+      transition: all 0.2s ease;
+    }
+    details[open] {
+      border-color: rgba(99,102,241,0.3);
+    }
+    details summary {
+      cursor: pointer;
+      padding: 1rem 1.5rem;
+      font-weight: 600;
+      color: #e4e4e7;
+      list-style: none;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    details summary::-webkit-details-marker { display: none; }
+    details summary::after {
+      content: '+';
+      color: #6366f1;
+      font-size: 1.25rem;
+      font-weight: 700;
+      transition: transform 0.2s ease;
+    }
+    details[open] summary::after {
+      transform: rotate(45deg);
+    }
+    details .faq-answer {
+      padding: 0 1.5rem 1rem;
+      color: #a1a1aa;
+      line-height: 1.625;
+    }
+    /* Table styling */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    th {
+      text-align: left;
+      padding: 0.75rem 1rem;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #a1a1aa;
+      border-bottom: 1px solid #27272a;
+    }
+    td {
+      padding: 0.75rem 1rem;
+      font-size: 0.875rem;
+      color: #e4e4e7;
+      border-bottom: 1px solid rgba(39,39,42,0.5);
+    }
+    tr:last-child td { border-bottom: none; }
+    /* API param list */
+    .param-name { color: #818cf8; }
+    .param-type { color: #a1a1aa; font-style: italic; }
+    .param-default { color: rgba(161,161,170,0.6); }
+  </style>
+</head>
+<body class="bg-ink text-bone font-sans">
+
+  <!-- Nav -->
+  <nav class="fixed top-0 left-0 right-0 z-50 flex items-center gap-6 px-6 py-3 bg-ink/80 backdrop-blur-md border-b border-white/5">
+    <a href="../" class="font-bold text-white text-sm tracking-tight">hevc<span class="text-accent">.js</span></a>
+    <div class="flex gap-4 ml-auto">
+      <a href="../../demo/" class="text-silver/60 text-xs hover:text-white transition-colors">Core decoder</a>
+      <a href="../../demo/dash.html" class="text-silver/60 text-xs hover:text-white transition-colors">dash.js</a>
+      <a href="../../demo/shaka.html" class="text-silver/60 text-xs hover:text-white transition-colors">Shaka</a>
+      <a href="shaka-plugin.html" class="text-accent-light text-xs font-medium">Docs</a>
+      <a href="https://github.com/privaloops/hevc.js" target="_blank" rel="noopener noreferrer" class="text-silver/60 text-xs hover:text-white transition-colors">GitHub</a>
+    </div>
+  </nav>
+
+  <!-- Hero -->
+  <header class="px-6 py-20 mt-12" aria-label="Introduction">
+    <div class="max-w-3xl mx-auto text-center">
+      <div class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-accent/10 border border-accent/20 text-accent-light text-sm font-medium mb-8">
+        <span class="w-2 h-2 rounded-full bg-accent animate-pulse" aria-hidden="true"></span>
+        @hevcjs/shaka-plugin
+      </div>
+
+      <h1 class="text-4xl md:text-5xl font-extrabold tracking-tight leading-[1.1] mb-6">
+        <span class="text-white">HEVC Plugin for </span><span class="gradient-text">Shaka Player</span>
+      </h1>
+
+      <p class="text-xl md:text-2xl text-silver max-w-2xl mx-auto mb-4 leading-relaxed">
+        Play H.265 streams in every browser. <span class="text-white font-semibold">One registration call.</span>
+      </p>
+
+      <p class="text-lg text-silver/70 mb-12">
+        Registers a Shaka <code class="font-mono text-accent-light">Transmuxer</code> that transcodes HEVC to H.264 client-side via WebAssembly.
+        <br>When native HEVC is available, Shaka plays it directly.
+      </p>
+
+      <div class="flex flex-wrap gap-4 justify-center">
+        <a href="https://www.npmjs.com/package/@hevcjs/shaka-plugin" target="_blank" rel="noopener noreferrer"
+           class="inline-flex items-center gap-2 px-6 py-3 bg-white text-ink font-semibold rounded-lg hover:bg-bone transition-colors">
+          npm install
+        </a>
+        <a href="../../demo/shaka.html"
+           class="inline-flex items-center gap-2 px-6 py-3 bg-accent/15 text-accent-light font-semibold rounded-lg border border-accent/25 hover:bg-accent/25 transition-colors">
+          Live demo
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <!-- Quick start -->
+    <section class="px-6 py-20" aria-label="Quick start">
+      <div class="max-w-3xl mx-auto">
+        <h2 class="text-3xl md:text-4xl font-bold text-white text-center mb-4">Quick start</h2>
+        <p class="text-silver text-center max-w-2xl mx-auto mb-12">
+          Install the package, register the transmuxer, load your stream.
+        </p>
+
+        <!-- Install -->
+        <div class="code-block rounded-xl p-6 mb-6">
+          <div class="flex items-center gap-2 mb-4" aria-hidden="true">
+            <div class="w-3 h-3 rounded-full bg-red-500/60"></div>
+            <div class="w-3 h-3 rounded-full bg-yellow-500/60"></div>
+            <div class="w-3 h-3 rounded-full bg-green-500/60"></div>
+            <span class="text-xs text-silver/50 ml-2 font-mono">terminal</span>
+          </div>
+          <pre class="text-sm font-mono leading-relaxed overflow-x-auto"><code><span class="text-silver/50">$</span> <span class="text-accent">npm install</span> @hevcjs/shaka-plugin shaka-player</code></pre>
+        </div>
+
+        <!-- Usage -->
+        <div class="code-block rounded-xl p-6">
+          <div class="flex items-center gap-2 mb-4" aria-hidden="true">
+            <div class="w-3 h-3 rounded-full bg-red-500/60"></div>
+            <div class="w-3 h-3 rounded-full bg-yellow-500/60"></div>
+            <div class="w-3 h-3 rounded-full bg-green-500/60"></div>
+            <span class="text-xs text-silver/50 ml-2 font-mono">app.js</span>
+          </div>
+          <pre class="text-sm font-mono leading-relaxed overflow-x-auto"><code><span class="text-accent">import</span> shaka <span class="text-accent">from</span> <span class="text-green-400">'shaka-player'</span>;
+<span class="text-accent">import</span> { registerHevcTransmuxer } <span class="text-accent">from</span> <span class="text-green-400">'@hevcjs/shaka-plugin'</span>;
+
+<span class="text-silver/50">// Register once — Shaka routes hev1/hvc1 through the transmuxer</span>
+registerHevcTransmuxer(shaka);
+
+<span class="text-accent">const</span> video = document.querySelector(<span class="text-green-400">'video'</span>);
+<span class="text-accent">const</span> player = <span class="text-accent">new</span> shaka.Player();
+<span class="text-accent">await</span> player.attach(video);
+<span class="text-accent">await</span> player.load(<span class="text-green-400">'https://example.com/stream/manifest.mpd'</span>);</code></pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- How it works -->
+    <section class="px-6 py-20" aria-label="How it works">
+      <div class="max-w-5xl mx-auto">
+        <h2 class="text-3xl md:text-4xl font-bold text-white text-center mb-4">How it works</h2>
+        <p class="text-silver text-center max-w-2xl mx-auto mb-12">
+          A native Shaka Transmuxer. Shaka handles MIME routing — the plugin only converts bytes.
+        </p>
+
+        <!-- Pipeline diagram -->
+        <div class="flex flex-col md:flex-row items-center justify-center gap-3 md:gap-6 mb-12" role="img" aria-label="Shaka transmuxer pipeline: register transmuxer for hev1/hvc1, Shaka feeds HEVC segments, decode via WASM, encode H.264, mux fMP4, return to Shaka">
+          <div class="pipeline-step code-block rounded-lg px-4 py-3 text-center">
+            <div class="text-xs text-accent font-mono mb-1">register</div>
+            <div class="text-sm text-silver">Transmuxer (hev1/hvc1)</div>
+          </div>
+          <div class="pipeline-step code-block rounded-lg px-4 py-3 text-center">
+            <div class="text-xs text-accent font-mono mb-1">Shaka calls</div>
+            <div class="text-sm text-silver">transmux(segment)</div>
+          </div>
+          <div class="pipeline-step code-block rounded-lg px-4 py-3 text-center">
+            <div class="text-xs text-accent font-mono mb-1">demux + decode</div>
+            <div class="text-sm text-silver">HEVC &rarr; YUV</div>
+          </div>
+          <div class="pipeline-step code-block rounded-lg px-4 py-3 text-center">
+            <div class="text-xs text-accent font-mono mb-1">encode + mux</div>
+            <div class="text-sm text-silver">YUV &rarr; H.264 fMP4</div>
+          </div>
+          <div class="code-block rounded-lg px-4 py-3 text-center border-accent/30">
+            <div class="text-xs text-accent font-mono mb-1">return</div>
+            <div class="text-sm text-white font-medium">H.264 to Shaka</div>
+          </div>
+        </div>
+
+        <!-- Steps -->
+        <div class="max-w-3xl mx-auto space-y-4">
+          <div class="flex gap-4 items-start px-4 py-3 rounded-lg bg-smoke">
+            <span class="text-accent font-mono text-sm font-bold mt-0.5">1</span>
+            <div>
+              <span class="text-white text-sm font-medium">Registers a <code class="font-mono text-accent-light">shaka.transmuxer.TransmuxerEngine</code></span>
+              <span class="text-silver text-sm"> &mdash; for <code class="font-mono">video/mp4; codecs="hev1"</code> and <code class="font-mono">hvc1</code></span>
+            </div>
+          </div>
+          <div class="flex gap-4 items-start px-4 py-3 rounded-lg bg-smoke">
+            <span class="text-accent font-mono text-sm font-bold mt-0.5">2</span>
+            <div>
+              <span class="text-white text-sm font-medium">Exposes the standard <code class="font-mono text-accent-light">isSupported</code> / <code class="font-mono text-accent-light">convertCodecs</code> hooks</span>
+              <span class="text-silver text-sm"> &mdash; Shaka handles HEVC MIME routing natively</span>
+            </div>
+          </div>
+          <div class="flex gap-4 items-start px-4 py-3 rounded-lg bg-smoke">
+            <span class="text-accent font-mono text-sm font-bold mt-0.5">3</span>
+            <div>
+              <span class="text-white text-sm font-medium">On the init segment, calls <code class="font-mono text-accent-light">SegmentTranscoder.prepareInit()</code></span>
+              <span class="text-silver text-sm"> &mdash; returns a matching H.264 fMP4 init segment by warming up the encoder with a single black frame</span>
+            </div>
+          </div>
+          <div class="flex gap-4 items-start px-4 py-3 rounded-lg bg-smoke">
+            <span class="text-accent font-mono text-sm font-bold mt-0.5">4</span>
+            <div>
+              <span class="text-white text-sm font-medium">On each media segment, <code class="font-mono text-accent-light">transmux()</code></span>
+              <span class="text-silver text-sm"> &mdash; demux, decode HEVC (WASM), encode H.264 (WebCodecs), mux fMP4, return to Shaka</span>
+            </div>
+          </div>
+          <div class="flex gap-4 items-start px-4 py-3 rounded-lg bg-smoke">
+            <span class="text-accent font-mono text-sm font-bold mt-0.5">5</span>
+            <div>
+              <span class="text-white text-sm font-medium">Optional Web Worker (<code class="font-mono text-accent-light">workerUrl</code>)</span>
+              <span class="text-silver text-sm"> &mdash; runs the decode + encode pipeline off the main thread (recommended for 4K / high-bitrate)</span>
+            </div>
+          </div>
+          <div class="flex gap-4 items-start px-4 py-3 rounded-lg bg-smoke">
+            <span class="text-accent font-mono text-sm font-bold mt-0.5">6</span>
+            <div>
+              <span class="text-white text-sm font-medium">Force transcoding when needed</span>
+              <span class="text-silver text-sm"> &mdash; <code class="font-mono">player.configure({ mediaSource: { forceTransmux: true } })</code> routes HEVC through the transmuxer even where the browser supports HEVC natively</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="max-w-3xl mx-auto mt-8 px-4 py-3 rounded-lg bg-smoke border border-ash text-sm text-silver">
+          <span class="text-white font-medium">Audio &amp; subtitles</span> pass through untouched. Only the HEVC video track is transcoded.
+        </div>
+      </div>
+    </section>
+
+    <!-- Browser compatibility -->
+    <section class="px-6 py-20" aria-label="Browser compatibility">
+      <div class="max-w-4xl mx-auto">
+        <h2 class="text-3xl md:text-4xl font-bold text-white text-center mb-4">Browser compatibility</h2>
+        <p class="text-silver text-center max-w-2xl mx-auto mb-12">
+          <span class="text-white font-semibold">~94% of browsers</span> play HEVC natively (hardware decode).
+          hevc.js activates only for the ~6% that don't.
+        </p>
+
+        <div class="code-block rounded-xl overflow-x-auto">
+          <table>
+            <thead>
+              <tr>
+                <th>Browser</th>
+                <th>Native HEVC</th>
+                <th>hevc.js needed?</th>
+                <th>Transcoding works?</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="text-white font-medium">Safari 13+ <span class="text-silver/50 text-xs">(macOS/iOS)</span></td>
+                <td><span class="text-green-400">Yes</span> (VideoToolbox)</td>
+                <td>No &mdash; native</td>
+                <td class="text-silver/50">&mdash;</td>
+              </tr>
+              <tr>
+                <td class="text-white font-medium">Chrome/Edge/Firefox <span class="text-silver/50 text-xs">(Mac)</span></td>
+                <td><span class="text-green-400">Yes</span> (VideoToolbox)</td>
+                <td>No &mdash; native</td>
+                <td class="text-silver/50">&mdash;</td>
+              </tr>
+              <tr>
+                <td class="text-white font-medium">Chrome 107+ <span class="text-silver/50 text-xs">(Win, HEVC-capable GPU)</span></td>
+                <td><span class="text-green-400">Yes</span> (D3D11VA)</td>
+                <td>No &mdash; native</td>
+                <td class="text-silver/50">&mdash;</td>
+              </tr>
+              <tr>
+                <td class="text-white font-medium">Chrome 107+ <span class="text-silver/50 text-xs">(Win, GPU without HEVC)</span></td>
+                <td><span class="text-red-400">No</span></td>
+                <td class="text-accent font-medium">Yes</td>
+                <td><span class="text-green-400">Yes</span> (WebCodecs H.264)</td>
+              </tr>
+              <tr>
+                <td class="text-white font-medium">Edge <span class="text-silver/50 text-xs">(Win, with HEVC Video Extension)</span></td>
+                <td><span class="text-green-400">Yes</span> (MFT)</td>
+                <td>No &mdash; native</td>
+                <td class="text-silver/50">&mdash;</td>
+              </tr>
+              <tr>
+                <td class="text-white font-medium">Edge <span class="text-silver/50 text-xs">(Win, no extension)</span></td>
+                <td><span class="text-red-400">No</span></td>
+                <td class="text-accent font-medium">Yes</td>
+                <td><span class="text-green-400">Yes</span> (WebCodecs H.264)</td>
+              </tr>
+              <tr>
+                <td class="text-white font-medium">Firefox 133+ <span class="text-silver/50 text-xs">(Win, with HEVC Video Extension)</span></td>
+                <td><span class="text-green-400">Yes</span> (MFT)</td>
+                <td>No &mdash; native</td>
+                <td class="text-silver/50">&mdash;</td>
+              </tr>
+              <tr>
+                <td class="text-white font-medium">Firefox 133+ <span class="text-silver/50 text-xs">(Win, no extension — use forceTransmux)</span></td>
+                <td><span class="text-yellow-400">Reported but fake</span></td>
+                <td class="text-accent font-medium">Yes</td>
+                <td><span class="text-green-400">Yes</span> (force via player.configure)</td>
+              </tr>
+              <tr>
+                <td class="text-white font-medium">Chrome/Edge 94&ndash;106</td>
+                <td><span class="text-red-400">No</span></td>
+                <td class="text-accent font-medium">Yes</td>
+                <td><span class="text-green-400">Yes</span> (WebCodecs H.264)</td>
+              </tr>
+              <tr>
+                <td class="text-white font-medium">Chrome/Edge &lt; 94</td>
+                <td><span class="text-red-400">No</span></td>
+                <td class="text-accent font-medium">Yes</td>
+                <td><span class="text-red-400">No</span> (no WebCodecs) &mdash; falls back to AVC</td>
+              </tr>
+              <tr>
+                <td class="text-white font-medium">Chrome <span class="text-silver/50 text-xs">(Linux, VAAPI)</span></td>
+                <td><span class="text-yellow-400">Variable</span> (driver-dependent)</td>
+                <td>Sometimes</td>
+                <td><span class="text-green-400">Yes</span> (software encode)</td>
+              </tr>
+              <tr>
+                <td class="text-white font-medium">Chrome <span class="text-silver/50 text-xs">(Linux, no VAAPI)</span></td>
+                <td><span class="text-red-400">No</span></td>
+                <td class="text-accent font-medium">Yes</td>
+                <td><span class="text-green-400">Yes</span> (software encode)</td>
+              </tr>
+              <tr>
+                <td class="text-white font-medium">Firefox <span class="text-silver/50 text-xs">(Linux)</span></td>
+                <td><span class="text-red-400">No</span></td>
+                <td class="text-accent font-medium">Yes</td>
+                <td><span class="text-yellow-400">Depends</span> &mdash; needs WebCodecs H.264 encoder</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="max-w-3xl mx-auto mt-8 text-sm text-silver">
+          <p class="mb-2"><span class="text-white font-medium">Other requirements</span> (supported by all modern browsers):</p>
+          <div class="flex flex-wrap gap-3">
+            <span class="px-3 py-1 rounded-full bg-accent/10 border border-accent/20 text-accent-light text-xs font-medium">WebAssembly</span>
+            <span class="px-3 py-1 rounded-full bg-accent/10 border border-accent/20 text-accent-light text-xs font-medium">Web Workers</span>
+            <span class="px-3 py-1 rounded-full bg-accent/10 border border-accent/20 text-accent-light text-xs font-medium">Secure Context (HTTPS)</span>
+            <span class="px-3 py-1 rounded-full bg-accent/10 border border-accent/20 text-accent-light text-xs font-medium">WebCodecs VideoEncoder</span>
+            <span class="px-3 py-1 rounded-full bg-accent/10 border border-accent/20 text-accent-light text-xs font-medium">shaka-player &ge; 4.0.0</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- API Reference -->
+    <section class="px-6 py-20" aria-label="API reference">
+      <div class="max-w-3xl mx-auto">
+        <h2 class="text-3xl md:text-4xl font-bold text-white text-center mb-4">API reference</h2>
+        <p class="text-silver text-center max-w-2xl mx-auto mb-12">
+          One function to register, one function to tear down.
+        </p>
+
+        <!-- registerHevcTransmuxer -->
+        <div class="code-block rounded-xl p-6 mb-8">
+          <h3 class="text-xl font-bold text-white mb-4"><code class="font-mono">registerHevcTransmuxer(shaka, config?)</code></h3>
+          <p class="text-silver text-sm mb-6">
+            Registers the Shaka transmuxer for HEVC mime types.
+            Returns a <code class="font-mono text-accent-light">cleanup()</code> function that unregisters it.
+          </p>
+
+          <div class="flex items-center gap-2 mb-4" aria-hidden="true">
+            <div class="w-3 h-3 rounded-full bg-red-500/60"></div>
+            <div class="w-3 h-3 rounded-full bg-yellow-500/60"></div>
+            <div class="w-3 h-3 rounded-full bg-green-500/60"></div>
+            <span class="text-xs text-silver/50 ml-2 font-mono">signature</span>
+          </div>
+          <pre class="text-sm font-mono leading-relaxed overflow-x-auto mb-6"><code><span class="text-accent">const</span> cleanup = registerHevcTransmuxer(shaka, {
+  <span class="param-name">workerUrl</span>:     <span class="text-green-400">'/transcode-worker.js'</span>,   <span class="text-silver/50">// Web Worker URL</span>
+  <span class="param-name">wasmUrl</span>:       <span class="text-green-400">'/hevc-decode.js'</span>,         <span class="text-silver/50">// WASM glue location</span>
+  <span class="param-name">wasmBinaryUrl</span>: <span class="text-green-400">'/hevc-decode.wasm'</span>,       <span class="text-silver/50">// WASM binary location</span>
+});
+
+<span class="text-silver/50">// Force the transmuxer even on browsers with native HEVC</span>
+player.configure({ mediaSource: { forceTransmux: <span class="text-accent">true</span> } });
+
+<span class="text-silver/50">// Unregister when done</span>
+cleanup();</code></pre>
+
+          <h4 class="text-sm font-semibold text-white uppercase tracking-wider mb-4">Options</h4>
+          <div class="space-y-4">
+            <div class="flex gap-4 items-start px-4 py-3 rounded-lg bg-ash/50">
+              <div>
+                <code class="param-name font-mono text-sm">workerUrl</code>
+                <span class="param-type text-xs ml-2">string</span>
+              </div>
+              <p class="text-silver text-sm">URL of the Web Worker script for off-main-thread transcoding. Recommended for 4K and high-bitrate streams. If omitted, transcoding runs on the main thread.</p>
+            </div>
+            <div class="flex gap-4 items-start px-4 py-3 rounded-lg bg-ash/50">
+              <div>
+                <code class="param-name font-mono text-sm">wasmUrl</code>
+                <span class="param-type text-xs ml-2">string</span>
+              </div>
+              <p class="text-silver text-sm">Path to the WASM glue JS file. Auto-detected from the package if omitted.</p>
+            </div>
+            <div class="flex gap-4 items-start px-4 py-3 rounded-lg bg-ash/50">
+              <div>
+                <code class="param-name font-mono text-sm">wasmBinaryUrl</code>
+                <span class="param-type text-xs ml-2">string</span>
+              </div>
+              <p class="text-silver text-sm">Path to the WASM binary. Useful when serving the decoder from a custom path or CDN. Forwarded to the underlying <code class="font-mono">SegmentTranscoder</code>.</p>
+            </div>
+            <div class="flex gap-4 items-start px-4 py-3 rounded-lg bg-ash/50">
+              <div>
+                <code class="param-name font-mono text-sm">forceTransmux</code>
+                <span class="param-type text-xs ml-2">Shaka config</span>
+              </div>
+              <p class="text-silver text-sm">Not a plugin option — use Shaka's built-in <code class="font-mono">player.configure({ mediaSource: { forceTransmux: true } })</code> to route HEVC through the transmuxer even when the browser supports HEVC natively.</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Compute-aware ABR -->
+        <div class="code-block rounded-xl p-6 mb-8">
+          <h3 class="text-xl font-bold text-white mb-4"><code class="font-mono">adaptiveCompute</code> — compute-aware ABR <span class="text-xs font-normal text-green-400 ml-2">on by default</span></h3>
+          <p class="text-silver text-sm mb-6">
+            Feedback loop that caps Shaka variants when the device can't sustain transcoding at real-time. Shaka's bandwidth-based ABR keeps choosing freely — we only narrow the ceiling it's allowed to pick from.
+            Useful on devices where WASM HEVC decode + WebCodecs H.264 encode runs slower than playback (typical on low-end Windows boxes at 1080p+). <strong class="text-white">On by default</strong> — pass <code class="font-mono">adaptiveCompute: false</code> to opt out.
+          </p>
+
+          <div class="flex items-center gap-2 mb-4" aria-hidden="true">
+            <div class="w-3 h-3 rounded-full bg-red-500/60"></div>
+            <div class="w-3 h-3 rounded-full bg-yellow-500/60"></div>
+            <div class="w-3 h-3 rounded-full bg-green-500/60"></div>
+            <span class="text-xs text-silver/50 ml-2 font-mono">compute-aware.js</span>
+          </div>
+          <pre class="text-sm font-mono leading-relaxed overflow-x-auto mb-6"><code><span class="text-silver/50">// Default — adaptiveCompute is ON, defaults are sensible</span>
+<span class="text-accent">const</span> handle = registerHevcTransmuxer(shaka, {
+  <span class="param-name">workerUrl</span>: <span class="text-green-400">'/transcode-worker.js'</span>,
+});
+
+<span class="text-silver/50">// To tune knobs:</span>
+<span class="text-silver/50">// registerHevcTransmuxer(shaka, { adaptiveCompute: { targetSpeedX: 1.5 } })</span>
+<span class="text-silver/50">// To opt out:</span>
+<span class="text-silver/50">// registerHevcTransmuxer(shaka, { adaptiveCompute: false })</span>
+
+<span class="text-accent">const</span> player = <span class="text-accent">new</span> shaka.Player();
+<span class="text-accent">const</span> detach = handle.attachComputeAware(player); <span class="text-silver/50">// after player exists</span>
+<span class="text-accent">await</span> player.load(manifestUrl);
+
+<span class="text-silver/50">// Cleanup</span>
+detach();    <span class="text-silver/50">// stop observing</span>
+handle();    <span class="text-silver/50">// unregister transmuxer + detach</span></code></pre>
+
+          <h4 class="text-sm font-semibold text-white uppercase tracking-wider mb-4">Tuning knobs</h4>
+          <div class="space-y-4">
+            <div class="flex gap-4 items-start px-4 py-3 rounded-lg bg-ash/50">
+              <div>
+                <code class="param-name font-mono text-sm">targetSpeedX</code>
+                <span class="param-type text-xs ml-2">number, default 1.3</span>
+              </div>
+              <p class="text-silver text-sm">Required headroom over real-time before the cap is allowed to rise. <code class="font-mono">1.3</code> means the rolling average must show transcode at 1.3× real-time before we let the host ABR pick a higher variant.</p>
+            </div>
+            <div class="flex gap-4 items-start px-4 py-3 rounded-lg bg-ash/50">
+              <div>
+                <code class="param-name font-mono text-sm">measureWindow</code>
+                <span class="param-type text-xs ml-2">number, default 2</span>
+              </div>
+              <p class="text-silver text-sm">Rolling-window size for smoothing. Default is intentionally small — the cost of staying too long at an unreachable quality (buffer underrun, frozen playback) is much worse than the cost of a brief unnecessary dip.</p>
+            </div>
+            <div class="flex gap-4 items-start px-4 py-3 rounded-lg bg-ash/50">
+              <div>
+                <code class="param-name font-mono text-sm">lowerAfter</code>
+                <span class="param-type text-xs ml-2">number, default 1</span>
+              </div>
+              <p class="text-silver text-sm">Consecutive windows averaging below 1.0× before lowering the cap one notch. Default <code class="font-mono">1</code> — react on the first confirmed low window.</p>
+            </div>
+            <div class="flex gap-4 items-start px-4 py-3 rounded-lg bg-ash/50">
+              <div>
+                <code class="param-name font-mono text-sm">raiseAfter</code>
+                <span class="param-type text-xs ml-2">number, default 6</span>
+              </div>
+              <p class="text-silver text-sm">Consecutive windows averaging above <code class="font-mono">targetSpeedX</code> before raising the cap one notch. Wider than <code class="font-mono">lowerAfter</code> by design — hysteresis prevents yo-yo between two adjacent variants.</p>
+            </div>
+            <div class="flex gap-4 items-start px-4 py-3 rounded-lg bg-ash/50">
+              <div>
+                <code class="param-name font-mono text-sm">onObservation</code>
+                <span class="param-type text-xs ml-2">(stat, avg, cap) =&gt; void</span>
+              </div>
+              <p class="text-silver text-sm">Optional telemetry sink called for every segment (not just cap changes). Handy for plotting <code class="font-mono">speedX</code> over time in a demo or admin panel.</p>
+            </div>
+          </div>
+
+          <p class="text-silver text-sm mt-6">
+            Caps are applied via Shaka's public <code class="font-mono">player.configure({ abr: { restrictions: { maxHeight, maxBandwidth } } })</code> — no fork of the ABR controller, no reach into private APIs.
+          </p>
+        </div>
+
+        <!-- Lower-level API -->
+        <div class="code-block rounded-xl p-6">
+          <h3 class="text-xl font-bold text-white mb-4">Lower-level API</h3>
+          <p class="text-silver text-sm mb-6">
+            For advanced use cases — direct transcoding without Shaka, via <code class="font-mono">@hevcjs/core</code>.
+          </p>
+          <div class="flex items-center gap-2 mb-4" aria-hidden="true">
+            <div class="w-3 h-3 rounded-full bg-red-500/60"></div>
+            <div class="w-3 h-3 rounded-full bg-yellow-500/60"></div>
+            <div class="w-3 h-3 rounded-full bg-green-500/60"></div>
+            <span class="text-xs text-silver/50 ml-2 font-mono">advanced.js</span>
+          </div>
+          <pre class="text-sm font-mono leading-relaxed overflow-x-auto"><code><span class="text-accent">import</span> { SegmentTranscoder }
+  <span class="text-accent">from</span> <span class="text-green-400">'@hevcjs/core'</span>;
+
+<span class="text-accent">const</span> transcoder = <span class="text-accent">new</span> SegmentTranscoder({ fps: <span class="text-accent">25</span> });
+<span class="text-accent">await</span> transcoder.init();
+
+<span class="text-silver/50">// Synthesize a matching H.264 init segment up-front</span>
+<span class="text-accent">const</span> init = <span class="text-accent">await</span> transcoder.prepareInit(hevcInitBytes);
+
+<span class="text-silver/50">// Then transcode media segments</span>
+<span class="text-accent">const</span> h264Segment = <span class="text-accent">await</span> transcoder.processMediaSegment(mediaSegmentBytes);</code></pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- Performance -->
+    <section class="px-6 py-20" aria-label="Performance">
+      <div class="max-w-5xl mx-auto">
+        <h2 class="text-3xl md:text-4xl font-bold text-white text-center mb-4">Performance</h2>
+        <p class="text-silver text-center max-w-2xl mx-auto mb-12">
+          Real numbers from a single-threaded WebAssembly decoder.
+        </p>
+
+        <div class="grid grid-cols-2 md:grid-cols-3 gap-4 max-w-3xl mx-auto">
+          <div class="stat-card rounded-xl p-6 text-center transition-all">
+            <div class="text-4xl md:text-5xl font-extrabold text-white mb-2">60<span class="text-accent text-2xl">fps</span></div>
+            <div class="text-sm text-silver uppercase tracking-wider">1080p decode</div>
+            <div class="text-xs text-silver/50 mt-1">WASM, single-thread</div>
+          </div>
+          <div class="stat-card rounded-xl p-6 text-center transition-all">
+            <div class="text-4xl md:text-5xl font-extrabold text-white mb-2">236<span class="text-accent text-2xl">KB</span></div>
+            <div class="text-sm text-silver uppercase tracking-wider">WASM binary</div>
+            <div class="text-xs text-silver/50 mt-1">gzipped, zero deps</div>
+          </div>
+          <div class="stat-card rounded-xl p-6 text-center transition-all">
+            <div class="text-4xl md:text-5xl font-extrabold text-white mb-2">2-3<span class="text-accent text-2xl">s</span></div>
+            <div class="text-sm text-silver uppercase tracking-wider">startup latency</div>
+            <div class="text-xs text-silver/50 mt-1">first segment transcode</div>
+          </div>
+        </div>
+
+        <div class="max-w-3xl mx-auto mt-8 px-4 py-3 rounded-lg bg-smoke border border-ash text-sm text-silver">
+          <span class="text-white font-medium">Tradeoff:</span> the first segment takes 2-3s to transcode (vs instant with native hardware decode). Once buffered, playback is smooth. Use <code class="font-mono">workerUrl</code> to keep the pipeline off the main thread for 4K and high-bitrate streams.
+        </div>
+      </div>
+    </section>
+
+    <!-- FAQ -->
+    <section class="px-6 py-20" aria-label="Frequently asked questions">
+      <div class="max-w-3xl mx-auto">
+        <h2 class="text-3xl md:text-4xl font-bold text-white text-center mb-12">FAQ</h2>
+
+        <div class="space-y-4">
+          <details>
+            <summary>Does it work with live streams?</summary>
+            <div class="faq-answer">
+              <p>Yes. The transmuxer converts segments as Shaka requests them, so live (low-latency) and VOD streams both work. The only difference is that the first segment takes 2-3 seconds to transcode, which adds to the initial live edge latency.</p>
+            </div>
+          </details>
+
+          <details>
+            <summary>What happens when native HEVC is available?</summary>
+            <div class="faq-answer">
+              <p>Shaka plays HEVC natively and the transmuxer stays out of the way &mdash; Safari, any browser on macOS, Chrome 107+ on Windows with an HEVC-capable GPU, or Edge/Firefox on Windows with the Microsoft HEVC Video Extension installed. To force transcoding anyway, use Shaka's built-in <code class="font-mono text-accent-light">player.configure({ mediaSource: { forceTransmux: true } })</code>.</p>
+            </div>
+          </details>
+
+          <details>
+            <summary>Do I need special server headers?</summary>
+            <div class="faq-answer">
+              <p>No. The WASM decoder is single-threaded and does not use <code class="font-mono text-accent-light">SharedArrayBuffer</code>, so no <code class="font-mono text-accent-light">Cross-Origin-Embedder-Policy</code> or <code class="font-mono text-accent-light">Cross-Origin-Opener-Policy</code> headers are needed. It works on any static file server with HTTPS.</p>
+            </div>
+          </details>
+
+          <details>
+            <summary>How is this different from the dash.js plugin?</summary>
+            <div class="faq-answer">
+              <p>The Shaka plugin registers a native Shaka <code class="font-mono text-accent-light">Transmuxer</code> for <code class="font-mono">hev1</code>/<code class="font-mono">hvc1</code>, so Shaka handles MIME routing itself. The <a href="dashjs-plugin.html" class="text-accent hover:text-accent-light">dash.js plugin</a> instead intercepts the MSE pipeline directly. Both share the same <code class="font-mono text-accent-light">@hevcjs/core</code> HEVC decoder and H.264 encoder.</p>
+            </div>
+          </details>
+        </div>
+      </div>
+    </section>
+
+    <!-- CTA -->
+    <section class="px-6 py-20" aria-label="Get started">
+      <div class="max-w-3xl mx-auto text-center">
+        <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">Get started</h2>
+        <p class="text-silver mb-8">Install the package and start playing HEVC in every browser.</p>
+
+        <code class="text-sm font-mono text-silver/60 bg-ash/50 px-4 py-2 rounded-lg">npm install @hevcjs/shaka-plugin</code>
+
+        <div class="flex flex-wrap gap-4 justify-center mt-8">
+          <a href="https://www.npmjs.com/package/@hevcjs/shaka-plugin" target="_blank" rel="noopener noreferrer"
+             class="inline-flex items-center gap-2 px-6 py-3 bg-white text-ink font-semibold rounded-lg hover:bg-bone transition-colors">
+            npm
+          </a>
+          <a href="https://github.com/privaloops/hevc.js" target="_blank" rel="noopener noreferrer"
+             class="inline-flex items-center gap-2 px-6 py-3 bg-accent/15 text-accent-light font-semibold rounded-lg border border-accent/25 hover:bg-accent/25 transition-colors">
+            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+            GitHub
+          </a>
+          <a href="../../demo/shaka.html"
+             class="inline-flex items-center gap-2 px-6 py-3 bg-accent/15 text-accent-light font-semibold rounded-lg border border-accent/25 hover:bg-accent/25 transition-colors">
+            Live demo
+          </a>
+          <a href="dashjs-plugin.html"
+             class="inline-flex items-center gap-2 px-6 py-3 bg-smoke text-silver font-semibold rounded-lg border border-ash hover:text-white transition-colors">
+            dash.js plugin docs
+          </a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Footer -->
+  <footer class="px-6 py-12 border-t border-ash">
+    <div class="max-w-5xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
+      <div class="text-silver/50 text-sm">
+        <a href="../" class="text-silver hover:text-white">Home</a> &middot;
+        <a href="dashjs-plugin.html" class="text-silver hover:text-white">dash.js plugin</a> &middot;
+        <a href="https://github.com/privaloops/hevc.js" class="text-silver hover:text-white" rel="noopener noreferrer" target="_blank">GitHub</a> &middot;
+        <a href="https://www.npmjs.com/package/@hevcjs/shaka-plugin" class="text-silver hover:text-white" rel="noopener noreferrer" target="_blank">npm</a>
+      </div>
+      <div class="text-silver/50 text-sm">
+        Built by <a href="https://www.developpement.ai" class="text-accent hover:text-accent-light" rel="noopener noreferrer" target="_blank">developpement.ai</a> &middot;
+        <a href="https://www.developpement.ai/blog/hevcjs-decodeur-h265-navigateur-wasm" class="text-silver hover:text-white" rel="noopener noreferrer" target="_blank">Case study</a>
+      </div>
+    </div>
+  </footer>
+
+<script data-goatcounter="https://privaloops.goatcounter.com/count"
+        async src="//gc.zgo.at/count.js"></script>
+</body>
+</html>

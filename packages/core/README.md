@@ -41,6 +41,24 @@ installMSEIntercept({
 });
 ```
 
+### Loading from a CDN (zero build, cross-origin)
+
+`@hevcjs/core` works directly from a CDN — no install, no build step, no static asset copy:
+
+```html
+<script type="module">
+  import { installMSEIntercept } from 'https://esm.sh/@hevcjs/core@1';
+
+  installMSEIntercept({
+    workerUrl:     'https://unpkg.com/@hevcjs/core@1/dist/transcode-worker.js',
+    wasmUrl:       'https://unpkg.com/@hevcjs/core@1/dist/wasm/hevc-decode.js',
+    wasmBinaryUrl: 'https://unpkg.com/@hevcjs/core@1/dist/wasm/hevc-decode.wasm',
+  });
+</script>
+```
+
+`wasmBinaryUrl` is required when assets live on a different origin than the page (Emscripten otherwise fails to resolve the `.wasm` relative to the worker's `blob:` URL). Cross-origin worker loading is handled transparently — the plugin fetches the script and wraps it in a same-origin blob URL since classic Workers refuse cross-origin scripts even with CORS headers.
+
 ### Segment transcoder (manual control)
 
 ```js
@@ -50,6 +68,25 @@ const transcoder = new SegmentTranscoder({ fps: 25 });
 await transcoder.init();
 await transcoder.processInitSegment(initSegmentBytes);
 const h264Segment = await transcoder.processMediaSegment(hevcSegmentBytes);
+```
+
+### Compute-aware ABR primitives
+
+`@hevcjs/core` publishes a `SegmentPerfStat` on every successful segment transcode. Both `@hevcjs/shaka-plugin` and `@hevcjs/dashjs-plugin` consume this bus to cap variants when the device can't keep up. You can subscribe directly if you're integrating with a different player or building custom telemetry:
+
+```js
+import { subscribeSegmentStat, ComputeAwareDecider } from '@hevcjs/core';
+
+const detach = subscribeSegmentStat(stat => {
+  // stat: { totalMs, segDurMs, speedX, frames, width, height }
+  console.log(`speedX=${stat.speedX} on ${stat.width}x${stat.height}`);
+});
+
+// Or use the player-agnostic decider directly
+const decider = new ComputeAwareDecider({ measureWindow: 2, lowerAfter: 1 });
+decider.setLadderSize(4);
+const decision = decider.observe(stat.speedX, currentVariantIdx);
+// decision: { capIndex, avgSpeedX, reason: 'init' | 'hold' | 'lower' | 'raise' }
 ```
 
 ## How it works

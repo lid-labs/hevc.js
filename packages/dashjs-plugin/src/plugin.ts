@@ -17,6 +17,8 @@
 
 import { H264Encoder, installMSEIntercept, uninstallMSEIntercept } from "@hevcjs/core";
 import type { MSEInterceptConfig } from "@hevcjs/core";
+import { attachDashComputeAware } from "./compute-aware.js";
+import type { DashComputeAwareOptions } from "./compute-aware.js";
 
 export interface HevcDashPluginConfig extends MSEInterceptConfig {
   /**
@@ -24,6 +26,16 @@ export interface HevcDashPluginConfig extends MSEInterceptConfig {
    * Useful for testing. Default: false.
    */
   forceTranscode?: boolean;
+  /**
+   * Compute-aware ABR feedback loop. Caps dash.js variants by observed
+   * transcode `speedX` so the device doesn't pick a variant it can't
+   * transcode in real time.
+   *
+   * - **On by default** (undefined or `true`) — sensible defaults.
+   * - Pass an object to tune the decider knobs (`targetSpeedX`, etc.).
+   * - Pass `false` to opt out.
+   */
+  adaptiveCompute?: boolean | DashComputeAwareOptions;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -113,6 +125,7 @@ export async function attachHevcSupport(
   // Install MSE intercept — patches isTypeSupported + addSourceBuffer
   installMSEIntercept({
     wasmUrl: config.wasmUrl,
+    wasmBinaryUrl: config.wasmBinaryUrl,
     fps: config.fps,
     bitrate: config.bitrate,
     workerUrl: config.workerUrl,
@@ -123,7 +136,15 @@ export async function attachHevcSupport(
     player.registerCustomCapabilitiesFilter(() => true);
   }
 
+  let detachComputeAware: (() => void) | null = null;
+  // Default-on: only an explicit `false` opts out.
+  if (config.adaptiveCompute !== false) {
+    const opts = typeof config.adaptiveCompute === "object" ? config.adaptiveCompute : {};
+    detachComputeAware = attachDashComputeAware(player, opts);
+  }
+
   return () => {
+    detachComputeAware?.();
     uninstallMSEIntercept();
   };
 }

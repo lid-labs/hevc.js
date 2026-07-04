@@ -6,7 +6,18 @@
  */
 
 import { log } from "./log.js";
+import { publishSegmentStat } from "./perf-bus.js";
 import type { SegmentTranscoderConfig, TranscodedInit } from "./segment-transcoder.js";
+
+type PerfEnvelope = {
+  demuxMs: number;
+  decodeMs: number;
+  encodeMs: number;
+  frames: number;
+  segDurMs: number;
+  width: number;
+  height: number;
+};
 
 export interface TranscodeWorkerClientConfig extends SegmentTranscoderConfig {
   /** URL to the worker script (transcode-worker.js). */
@@ -14,59 +25,90 @@ export interface TranscodeWorkerClientConfig extends SegmentTranscoderConfig {
 }
 
 export class TranscodeWorkerClient {
-  private _worker: Worker;
+  // Resolves once the worker exists. All postMessage paths await this first
+  // so that cross-origin worker loading (fetch + blob URL) stays transparent
+  // to the synchronous public constructor.
+  private _workerReady: Promise<Worker>;
   private _ready = false;
   private _initParsed = false;
   private _initResult: TranscodedInit | null = null;
   private _segmentId = 0;
   private _pendingResolves = new Map<number, { resolve: (data: Uint8Array | null) => void; reject: (err: Error) => void }>();
+  private _pendingPrepareInit = new Map<number, { resolve: (result: TranscodedInit) => void; reject: (err: Error) => void }>();
   private _readyPromise: Promise<void>;
   private _readyResolve!: () => void;
   private _initParsedPromise!: Promise<void>;
   private _initParsedResolve!: () => void;
   private _initParsedReject!: (err: Error) => void;
+  // Mirror of SegmentTranscoder.lastPerfStats, refreshed on each
+  // `transcoded` / `streamingDone` message. Surfaces perf to consumers
+  // (compute-aware ABR) when transcoding runs off-thread.
+  private _lastPerfStats: PerfEnvelope | null = null;
 
   constructor(config: TranscodeWorkerClientConfig) {
-    // Classic worker (not module) — needed for importScripts() to load WASM glue
-    this._worker = new Worker(config.workerUrl);
-
     this._readyPromise = new Promise<void>((resolve) => { this._readyResolve = resolve; });
     this._initParsedPromise = new Promise<void>((resolve, reject) => { this._initParsedResolve = resolve; this._initParsedReject = reject; });
 
-    this._worker.onmessage = (e: MessageEvent) => this._onMessage(e.data);
-    this._worker.onerror = (e: ErrorEvent) => {
-      log.error("Worker error:", e.message);
-    };
-
-    // Init the transcoder inside the worker
     const { workerUrl: _, ...transcoderConfig } = config;
-    this._worker.postMessage({ type: "init", config: transcoderConfig });
+    this._workerReady = loadWorker(config.workerUrl).then((worker) => {
+      worker.onmessage = (e: MessageEvent) => this._onMessage(e.data);
+      worker.onerror = (e: ErrorEvent) => {
+        log.error("Worker error:", e.message);
+      };
+      worker.postMessage({ type: "init", config: transcoderConfig });
+      return worker;
+    });
   }
 
   get isInitialized(): boolean { return this._ready; }
   get isInitParsed(): boolean { return this._initParsed; }
   get initResult(): TranscodedInit | null { return this._initResult; }
+  get lastPerfStats(): PerfEnvelope | null { return this._lastPerfStats; }
 
   /** Wait for the WASM decoder to be ready inside the worker */
   async waitReady(): Promise<void> {
+    // Surface worker creation failures (cross-origin fetch, blob URL, etc.)
+    // before we sit waiting on _readyPromise that would never resolve.
+    await this._workerReady;
     return this._readyPromise;
   }
 
   /** Send an init segment (ftyp + moov) to the worker for parsing */
   async processInitSegment(data: Uint8Array): Promise<void> {
-    this._worker.postMessage(
+    const worker = await this._workerReady;
+    worker.postMessage(
       { type: "initSegment", data: data.buffer },
       [data.buffer],
     );
     return this._initParsedPromise;
   }
 
+  /**
+   * Process an HEVC init segment and return a matching H.264 fMP4 init
+   * segment (warmup-encoder path inside the worker). Required by
+   * transmuxer plugins that must hand an init segment back to the host
+   * player before any media has been seen (Shaka 4.x's Transmuxer
+   * contract).
+   */
+  async prepareInit(data: Uint8Array): Promise<TranscodedInit> {
+    const worker = await this._workerReady;
+    const id = this._segmentId++;
+    return new Promise<TranscodedInit>((resolve, reject) => {
+      this._pendingPrepareInit.set(id, { resolve, reject });
+      worker.postMessage(
+        { type: "prepareInit", data: data.buffer, id },
+        [data.buffer],
+      );
+    });
+  }
+
   /** Send a media segment to the worker for transcoding */
   async processMediaSegment(data: Uint8Array): Promise<Uint8Array | null> {
+    const worker = await this._workerReady;
     const id = this._segmentId++;
     return new Promise<Uint8Array | null>((resolve, reject) => {
       this._pendingResolves.set(id, { resolve, reject });
-      this._worker.postMessage(
+      worker.postMessage(
         { type: "mediaSegment", data: data.buffer, id },
         [data.buffer],
       );
@@ -78,11 +120,11 @@ export class TranscodeWorkerClient {
     data: Uint8Array,
     onChunk: (h264: Uint8Array, initSegment: Uint8Array | null, codec: string | null) => Promise<void> | void,
   ): Promise<void> {
+    const worker = await this._workerReady;
     const id = this._segmentId++;
     return new Promise<void>((resolve, reject) => {
       // Queue to serialize async onChunk calls (MSE appends must be sequential)
       let chainPromise = Promise.resolve();
-      let done = false;
 
       const handler = (e: MessageEvent) => {
         const msg = e.data;
@@ -99,17 +141,31 @@ export class TranscodeWorkerClient {
           // Chain async calls so MSE appends don't overlap
           chainPromise = chainPromise.then(() => onChunk(h264, init, msg.codec ?? null));
         } else if (msg.type === "streamingDone") {
-          done = true;
-          this._worker.removeEventListener("message", handler);
+          worker.removeEventListener("message", handler);
+          const perf = msg.perf as PerfEnvelope | null;
+          if (perf) {
+            this._lastPerfStats = perf;
+            const totalMs = perf.demuxMs + perf.decodeMs + perf.encodeMs;
+            if (totalMs > 0) {
+              publishSegmentStat({
+                totalMs,
+                segDurMs: perf.segDurMs,
+                speedX: perf.segDurMs / totalMs,
+                frames: perf.frames,
+                width: perf.width,
+                height: perf.height,
+              });
+            }
+          }
           // Wait for all queued onChunk calls to finish before resolving
           chainPromise.then(() => resolve()).catch(reject);
         } else if (msg.type === "error") {
-          this._worker.removeEventListener("message", handler);
+          worker.removeEventListener("message", handler);
           chainPromise.then(() => reject(new Error(msg.message as string))).catch(reject);
         }
       };
-      this._worker.addEventListener("message", handler);
-      this._worker.postMessage(
+      worker.addEventListener("message", handler);
+      worker.postMessage(
         { type: "mediaSegmentStreaming", data: data.buffer, id },
         [data.buffer],
       );
@@ -123,6 +179,10 @@ export class TranscodeWorkerClient {
       reject(new Error("Aborted"));
     }
     this._pendingResolves.clear();
+    for (const [, { reject }] of this._pendingPrepareInit) {
+      reject(new Error("Aborted"));
+    }
+    this._pendingPrepareInit.clear();
     this._segmentId = 0;
 
     // Reset ready state — worker will destroy + re-create transcoder (async init)
@@ -138,14 +198,17 @@ export class TranscodeWorkerClient {
       this._initParsedReject = reject;
     });
 
-    this._worker.postMessage({ type: "abort" });
+    this._workerReady.then((worker) => worker.postMessage({ type: "abort" }));
   }
 
   /** Destroy the worker */
   destroy(): void {
     this._pendingResolves.clear();
-    this._worker.postMessage({ type: "destroy" });
-    this._worker.terminate();
+    this._pendingPrepareInit.clear();
+    this._workerReady.then((worker) => {
+      worker.postMessage({ type: "destroy" });
+      worker.terminate();
+    });
   }
 
   private _onMessage(msg: Record<string, unknown>): void {
@@ -160,12 +223,39 @@ export class TranscodeWorkerClient {
         this._initParsedResolve();
         break;
 
+      case "initPrepared": {
+        const id = msg.id as number;
+        const pending = this._pendingPrepareInit.get(id);
+        if (!pending) break;
+        this._pendingPrepareInit.delete(id);
+        const result: TranscodedInit = {
+          initSegment: new Uint8Array(msg.initSegment as ArrayBuffer),
+          codec: msg.codec as string,
+        };
+        // Cache for the .initResult getter so downstream code that
+        // queries it after the warmup path still gets a value.
+        if (!this._initResult) this._initResult = result;
+        pending.resolve(result);
+        break;
+      }
+
       case "transcoded": {
         const id = msg.id as number;
-        const perf = msg.perf as { demuxMs: number; decodeMs: number; encodeMs: number; frames: number } | null;
+        const perf = msg.perf as PerfEnvelope | null;
         if (perf) {
+          this._lastPerfStats = perf;
           const totalMs = perf.demuxMs + perf.decodeMs + perf.encodeMs;
           log.debug(`Segment #${id} transcoded in ${totalMs.toFixed(0)}ms (${perf.frames}f — demux:${perf.demuxMs.toFixed(0)}ms decode:${perf.decodeMs.toFixed(0)}ms encode:${perf.encodeMs.toFixed(0)}ms)`);
+          if (totalMs > 0) {
+            publishSegmentStat({
+              totalMs,
+              segDurMs: perf.segDurMs,
+              speedX: perf.segDurMs / totalMs,
+              frames: perf.frames,
+              width: perf.width,
+              height: perf.height,
+            });
+          }
         }
         const pending = this._pendingResolves.get(id);
         if (!pending) break;
@@ -190,7 +280,15 @@ export class TranscodeWorkerClient {
         if (pending) {
           this._pendingResolves.delete(id);
           pending.reject(new Error(msg.message as string));
-        } else if (id === -1 && !this._initParsed) {
+          break;
+        }
+        const prepareInitPending = this._pendingPrepareInit.get(id);
+        if (prepareInitPending) {
+          this._pendingPrepareInit.delete(id);
+          prepareInitPending.reject(new Error(msg.message as string));
+          break;
+        }
+        if (id === -1 && !this._initParsed) {
           // Error during processInitSegment in worker — reject the awaited promise
           // to unblock processNext (otherwise it awaits forever)
           this._initParsedReject(new Error(msg.message as string));
@@ -207,4 +305,19 @@ export class TranscodeWorkerClient {
         break;
     }
   }
+}
+
+// Classic Workers refuse cross-origin scripts even with CORS headers.
+// When workerUrl is cross-origin we fetch its source and wrap it in a
+// same-origin blob URL so `new Worker(...)` accepts it.
+async function loadWorker(workerUrl: string): Promise<Worker> {
+  const sameOrigin =
+    typeof location === "undefined" ||
+    new URL(workerUrl, location.href).origin === location.origin;
+  if (sameOrigin) return new Worker(workerUrl);
+  const code = await (await fetch(workerUrl)).text();
+  const blobUrl = URL.createObjectURL(
+    new Blob([code], { type: "application/javascript" }),
+  );
+  return new Worker(blobUrl);
 }

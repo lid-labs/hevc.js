@@ -7,6 +7,7 @@
  * 3. Passes audio and other non-HEVC tracks through untouched
  */
 
+import { hevcMimeToH264Codec } from "./codec-mapping.js";
 import { log, setLogLevel } from "./log.js";
 import type { LogLevel } from "./log.js";
 import { SegmentTranscoder } from "./segment-transcoder.js";
@@ -15,7 +16,6 @@ import { TranscodeWorkerClient } from "./transcode-worker-client.js";
 
 const HEVC_DETECT_RE = /hev1|hvc1/i;                // Detect HEVC in a string
 const HEVC_CODEC_RE = /hev1[^"']*|hvc1[^"']*/gi;   // Match full HEVC codec string (hev1.2.4.L123.B0)
-const H264_CODEC = "avc1.640033";                    // High Profile Level 5.1 — supports up to 4K
 
 export interface MSEInterceptConfig extends SegmentTranscoderConfig {
   /** URL to the transcode worker script. When provided, transcoding runs off main thread. */
@@ -65,7 +65,8 @@ export function installMSEIntercept(config: MSEInterceptConfig = {}): void {
   // Patch isTypeSupported
   MediaSource.isTypeSupported = function (mimeType: string): boolean {
     if (HEVC_DETECT_RE.test(mimeType)) {
-      const h264Mime = mimeType.replace(HEVC_CODEC_RE, H264_CODEC);
+      const h264Codec = hevcMimeToH264Codec(mimeType);
+      const h264Mime = mimeType.replace(HEVC_CODEC_RE, h264Codec);
       const result = originalIsTypeSupported.call(MediaSource, h264Mime);
       log.debug(`isTypeSupported("${mimeType}") → "${h264Mime}" → ${result}`);
       return result;
@@ -79,7 +80,8 @@ export function installMSEIntercept(config: MSEInterceptConfig = {}): void {
     interceptState.originalDecodingInfo = originalDecodingInfo;
     navigator.mediaCapabilities.decodingInfo = async function (cfg: MediaDecodingConfiguration) {
       if (cfg.video?.contentType && HEVC_DETECT_RE.test(cfg.video.contentType)) {
-        const h264Type = cfg.video.contentType.replace(HEVC_CODEC_RE, H264_CODEC);
+        const h264Codec = hevcMimeToH264Codec(cfg.video.contentType);
+        const h264Type = cfg.video.contentType.replace(HEVC_CODEC_RE, h264Codec);
         const h264Config = { ...cfg, video: { ...cfg.video, contentType: h264Type } };
         return originalDecodingInfo!(h264Config);
       }
@@ -93,8 +95,9 @@ export function installMSEIntercept(config: MSEInterceptConfig = {}): void {
       return originalAddSourceBuffer.call(this, mimeType);
     }
 
-    log.info(`addSourceBuffer("${mimeType}") → creating H.264 proxy`);
-    const h264Mime = `video/mp4; codecs="${H264_CODEC}"`;
+    const h264Codec = hevcMimeToH264Codec(mimeType);
+    log.info(`addSourceBuffer("${mimeType}") → creating H.264 proxy with ${h264Codec}`);
+    const h264Mime = `video/mp4; codecs="${h264Codec}"`;
     const realSB = originalAddSourceBuffer.call(this, h264Mime);
 
     return createTranscodingProxy(realSB, interceptState!.config);
@@ -153,6 +156,7 @@ function createTranscodingProxy(
     workerClient = new TranscodeWorkerClient({
       workerUrl: config.workerUrl!,
       wasmUrl: config.wasmUrl,
+      wasmBinaryUrl: config.wasmBinaryUrl,
       fps: config.fps,
       bitrate: config.bitrate,
     });

@@ -6,7 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [1.1.0] - 2026-05-10
+
+`@hevcjs/core@1.1.0` + `@hevcjs/dashjs-plugin@1.0.4`
+
 ### Added
+- **`hevcMimeToH264Codec` helper** (`packages/core/src/codec-mapping.ts`): parses the HEVC level (`L<level*30>` field) from a mime/codec string and returns a matching H.264 codec string. Used by MSE intercept to advertise an `avc1.X` profile/level that fits the resolution implied by the input HEVC level, instead of always advertising High@5.1.
+- **vitest setup for `packages/core`**: first JS/TS unit tests in the project (`codec-mapping.test.ts`, 14 cases covering boundary levels, hev1/hvc1/H prefixes, malformed input, dot-anchored regex). Added `pnpm test:unit` workspace script.
+- **CI: JS unit tests** (`.github/workflows/test.yml`): new `js-unit-tests` job runs `pnpm test:unit` on every push and PR.
+
+### Changed
+- **MSE intercept advertises a dynamic H.264 codec** (`packages/core/src/mse-intercept.ts`): `isTypeSupported`, `decodingInfo`, and `addSourceBuffer` no longer hardcode `avc1.640033`. The advertised string is now derived from the incoming HEVC mime via `hevcMimeToH264Codec`. A 720p HEVC manifest now advertises `avc1.640028`, a 1080p manifest `avc1.64002a`, a 4K manifest `avc1.640033`. `@hevcjs/dashjs-plugin` benefits transparently — no code change in the plugin itself.
+
+## Previously published (to be retro-attributed)
+
+> Entries below were shipped in `@hevcjs/core@1.0.3`–`1.0.5` and `@hevcjs/dashjs-plugin@1.0.1`–`1.0.3` but never got their own git tag or GitHub release at the time. A follow-up housekeeping pass will redistribute them into proper versioned sections.
+
+### Added
+- **CDN-friendly asset loading** (`@hevcjs/core@1.0.5` + `@hevcjs/dashjs-plugin@1.0.3`): the plugin can now be loaded directly from a CDN (esm.sh, unpkg, jsDelivr) onto a page hosted on a different origin. Two related fixes:
+  - `TranscodeWorkerClient` auto-fetches a cross-origin `workerUrl` and wraps it in a same-origin `blob:` URL (the `Worker` constructor refuses cross-origin scripts even with CORS).
+  - `wasmBinaryUrl` is now plumbed through `MSEInterceptConfig` / `TranscodePipelineConfig` / `SegmentTranscoderConfig` and forwarded to Emscripten's `locateFile`, so the `.wasm` resolves correctly when the loader runs inside a `blob:` worker context. Same-origin callers are unaffected (additive option).
+- **E2E cross-origin asset test** (`tests/e2e/dash.spec.ts`): page on `localhost:8090`, worker + wasm fetched from `127.0.0.1:8090`. Local Python test server now sends permissive CORS headers (`tests/cors-server.py`).
+- **Demo URL parameter overrides** (`demo/dash.html`): `?workerUrl=`, `?wasmUrl=`, `?wasmBinaryUrl=` for testing alternate asset locations without rebuilding.
+
+
 - **Security hardening CI**: CodeQL static analysis (C++ + JS/TS) on push/PR/weekly schedule, Dependabot for npm deps + GitHub Actions versions, `pnpm audit --prod` in test pipeline
 - **SECURITY.md**: vulnerability reporting policy via GitHub Security Advisories
 - **CI hardening**: all GitHub Actions pinned by SHA (supply chain protection), github-script injection fix (env vars instead of inline `${{ }}`), permissions scoped per-job

@@ -9,10 +9,12 @@
  *     { type: "init", config }
  *     { type: "initSegment", data: ArrayBuffer }
  *     { type: "mediaSegment", data: ArrayBuffer, id: number }
+ *     { type: "prepareInit", data: ArrayBuffer, id: number }
  *
  *   Worker → Main:
  *     { type: "ready" }
  *     { type: "initParsed" }
+ *     { type: "initPrepared", id: number, initSegment: ArrayBuffer, codec: string }
  *     { type: "transcoded", id: number, h264: ArrayBuffer | null, initSegment?: ArrayBuffer, codec?: string }
  *     { type: "error", id: number, message: string }
  */
@@ -63,6 +65,23 @@ self.onmessage = async (e: MessageEvent) => {
       break;
     }
 
+    case "prepareInit": {
+      try {
+        if (!transcoder) throw new Error("Transcoder not initialized");
+        const result = await transcoder.prepareInit(new Uint8Array(msg.data));
+        const response: Record<string, unknown> = {
+          type: "initPrepared",
+          id: msg.id,
+          initSegment: result.initSegment.buffer,
+          codec: result.codec,
+        };
+        self.postMessage(response, [result.initSegment.buffer]);
+      } catch (err) {
+        self.postMessage({ type: "error", id: msg.id, message: (err as Error).message });
+      }
+      break;
+    }
+
     case "mediaSegment": {
       try {
         if (!transcoder) throw new Error("Transcoder not initialized");
@@ -72,6 +91,9 @@ self.onmessage = async (e: MessageEvent) => {
           type: "transcoded",
           id: msg.id,
           h264: h264 ? h264.buffer : null,
+          // `lastPerfStats` shape extended to include segDurMs/width/height
+          // for compute-aware ABR. Spread to ship the whole envelope so the
+          // worker client can forward to the perf-bus unchanged.
           perf: transcoder.lastPerfStats ? { ...transcoder.lastPerfStats } : null,
         };
 
@@ -118,7 +140,13 @@ self.onmessage = async (e: MessageEvent) => {
             self.postMessage(resp, transfers);
           },
         );
-        self.postMessage({ type: "streamingDone", id: msg.id });
+        // Forward the final perf envelope so the main-thread client can
+        // publish it on the perf-bus (same shape as the non-streaming path).
+        self.postMessage({
+          type: "streamingDone",
+          id: msg.id,
+          perf: transcoder.lastPerfStats ? { ...transcoder.lastPerfStats } : null,
+        });
       } catch (err) {
         self.postMessage({ type: "error", id: msg.id, message: (err as Error).message });
       }

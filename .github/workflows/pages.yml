@@ -18,7 +18,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Setup Emscripten
         uses: mymindstorm/setup-emsdk@4528d102f7230f0e7b276855c01ea1159be0e984 # v16
@@ -26,7 +26,7 @@ jobs:
           version: 3.1.51
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@903f9c1a6ebcba6cf41d87230be49611ac97822e # v6.0.3
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
         with:
           version: 9
 
@@ -62,6 +62,9 @@ jobs:
           sed -i 's|\.\./demo/|./demo/|g' _site/index.html
           # docs/ pages are one level deeper: ../../demo/ becomes ../demo/
           find _site/docs -name '*.html' -exec sed -i 's|\.\./\.\./demo/|\.\./demo/|g' {} +
+          # demo/ pages reference site/ as a sibling locally, but site/ is the
+          # root on GH Pages: ../site/ -> ../ (so ../site/docs/x -> ../docs/x)
+          find _site/demo -name '*.html' -exec sed -i 's|\.\./site/|\.\./|g' {} +
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
@@ -77,4 +80,4 @@ jobs:
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5.0.0
