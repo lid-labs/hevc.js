@@ -1,5 +1,11 @@
 # @hevcjs/core
 
+## 1.3.1
+
+### Patch Changes
+
+- [#159](https://github.com/privaloops/hevc.js/pull/159) [`bfab7a0`](https://github.com/privaloops/hevc.js/commit/bfab7a0edf30772b2f4b2fbe5278c229e867e945) Thanks [@privaloops](https://github.com/privaloops)! - Bump the mp4box runtime dependency to ^2.4.1 so published installs pick up the updated demuxer.
+
 ## 1.3.0
 
 ### Minor Changes
