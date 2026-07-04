@@ -6,10 +6,10 @@ vi.mock("@hevcjs/core", () => ({
   hevcMimeToH264Codec: vi.fn(() => "avc1.640028"),
   // compute-aware imports — stubbed so the index module loads under the mock.
   // Real wiring is exercised by compute-aware.test.ts which doesn't mock core.
-  ComputeAwareDecider: vi.fn().mockImplementation(() => ({
+  ComputeAwareDecider: vi.fn().mockImplementation(function () { return {
     setLadderSize: vi.fn(),
     observe: vi.fn(() => ({ capIndex: null, avgSpeedX: 1, reason: "hold" })),
-  })),
+  }; }),
   subscribeSegmentStat: vi.fn(() => () => {}),
 }));
 
@@ -49,7 +49,9 @@ describe("registerHevcTransmuxer", () => {
   let warnSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
+    // vitest 4: repeated spyOn returns the same mock — clear stale calls.
     warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    warnSpy.mockClear();
   });
 
   it("registers HevcTransmuxer for hev1 and hvc1 mime types", () => {
@@ -159,15 +161,17 @@ describe("registerHevcTransmuxer", () => {
     SegmentTranscoderMock.mockClear();
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (SegmentTranscoderMock as any).mockImplementation(() => ({
-      init: vi.fn().mockResolvedValue(undefined),
-      prepareInit: vi.fn().mockResolvedValue({
-        initSegment: new Uint8Array(),
-        codec: "avc1.640028",
-      }),
-      processMediaSegment: vi.fn(),
-      destroy: vi.fn(),
-    }));
+    (SegmentTranscoderMock as any).mockImplementation(function () {
+      return {
+        init: vi.fn().mockResolvedValue(undefined),
+        prepareInit: vi.fn().mockResolvedValue({
+          initSegment: new Uint8Array(),
+          codec: "avc1.640028",
+        }),
+        processMediaSegment: vi.fn(),
+        destroy: vi.fn(),
+      };
+    });
 
     await instance.transmux(
       new Uint8Array([0, 0, 0, 8, 0x66, 0x74, 0x79, 0x70]),
@@ -298,15 +302,17 @@ describe("registerHevcTransmuxer", () => {
     >;
     SegmentTranscoderMock.mockClear();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (SegmentTranscoderMock as any).mockImplementation(() => ({
-      init: vi.fn().mockResolvedValue(undefined),
-      prepareInit: vi.fn().mockResolvedValue({
-        initSegment: new Uint8Array(),
-        codec: "avc1.640028",
-      }),
-      processMediaSegment: vi.fn(),
-      destroy: vi.fn(),
-    }));
+    (SegmentTranscoderMock as any).mockImplementation(function () {
+      return {
+        init: vi.fn().mockResolvedValue(undefined),
+        prepareInit: vi.fn().mockResolvedValue({
+          initSegment: new Uint8Array(),
+          codec: "avc1.640028",
+        }),
+        processMediaSegment: vi.fn(),
+        destroy: vi.fn(),
+      };
+    });
 
     await instance.transmux(
       new Uint8Array([0, 0, 0, 8, 0x66, 0x74, 0x79, 0x70]),
