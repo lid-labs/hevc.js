@@ -86,6 +86,6 @@
     "@playwright/test": "^1.61.1",
     "browserstack-local": "^1.5.13",
     "browserstack-node-sdk": "^1.61.0",
-    "esbuild": "^0.28.0"
+    "esbuild": "^0.28.1"
   }
 }
