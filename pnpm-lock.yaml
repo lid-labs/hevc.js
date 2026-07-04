@@ -30,8 +30,8 @@ importers:
   packages/core:
     dependencies:
       mp4box:
-        specifier: ^2.3.0
-        version: 2.3.0
+        specifier: ^2.4.1
+        version: 2.4.1
     devDependencies:
       tsup:
         specifier: ^8.0.0
@@ -2332,8 +2332,8 @@ packages:
   monkeypatch@1.0.0:
     resolution: {integrity: sha512-6tG0IrCUUIBuAspnbdmOAd+D/AptB/ya9JLujp88NIAuFuTGdGvCKtDkc6pwNOcIJ6nKLm3FjJlaCdx8vr3r2w==}
 
-  mp4box@2.3.0:
-    resolution: {integrity: sha512-nnABYbdh4UguEYyV+uRwQBi1tbb8kXka2Fx9yKzmDKAeh8gkvRKYxoK1XDd8GQIjSfN4rvsXrW1CBo4yRQJZDA==}
+  mp4box@2.4.1:
+    resolution: {integrity: sha512-0HGX7nXoDIX6FKLVl4a3wtYjBlwqsN3xuQC3GXzNtKp98FXUOhDSq623azsz8DG5ptd9ZXcXodDkgbdMZOjWvw==}
     engines: {node: '>=20.8.1'}
 
   mri@1.2.0:
@@ -5619,7 +5619,7 @@ snapshots:
 
   monkeypatch@1.0.0: {}
 
-  mp4box@2.3.0: {}
+  mp4box@2.4.1: {}
 
   mri@1.2.0: {}
 
