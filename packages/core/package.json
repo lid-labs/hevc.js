@@ -53,7 +53,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "mp4box": "^2.3.0"
+    "mp4box": "^2.4.1"
   },
   "devDependencies": {
     "tsup": "^8.0.0",
