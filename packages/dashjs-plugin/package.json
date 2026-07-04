@@ -64,7 +64,7 @@
     }
   },
   "devDependencies": {
-    "dashjs": "^5.1.1",
+    "dashjs": "^5.2.0",
     "tsup": "^8.0.0",
     "typescript": "^6.0.3"
   }
