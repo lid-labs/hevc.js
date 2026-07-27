@@ -1,5 +1,19 @@
 # @hevcjs/core
 
+## 1.3.2
+
+### Patch Changes
+
+- [#186](https://github.com/privaloops/hevc.js/pull/186) [`0852568`](https://github.com/privaloops/hevc.js/commit/085256818fb9e04a9f9924e341d6f1aa57e5ff3f) Thanks [@privaloops](https://github.com/privaloops)! - Fix iPhone Safari: detect native HEVC via ManagedMediaSource and stop crashing when classic MediaSource is absent
+
+  iPhone Safari only exposes `ManagedMediaSource` (iOS 17.1+). The dash.js plugin
+  misdetected "no native HEVC support" there, then threw an unhandled
+  `ReferenceError` inside `installMSEIntercept`, killing playback before
+  `player.initialize()`. Native HEVC detection now checks
+  `MediaSource ?? ManagedMediaSource` (new `getMediaSourceConstructor` export),
+  and `installMSEIntercept` safely no-ops with a warning when classic
+  `MediaSource` is unavailable.
+
 ## 1.3.1
 
 ### Patch Changes
