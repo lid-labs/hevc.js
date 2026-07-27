@@ -443,8 +443,13 @@
 // (Firefox Win without HEVC extension), so we verify with a real SourceBuffer.
 async function hasNativeHevcSupport() {
   try {
-    if (typeof MediaSource === 'undefined') return false;
-    if (!MediaSource.isTypeSupported('video/mp4; codecs="hev1.1.6.L93.B0"')) return false;
+    // iPhone Safari only exposes ManagedMediaSource (iOS 17.1+).
+    const MS = window.MediaSource || window.ManagedMediaSource;
+    if (!MS) return false;
+    if (!MS.isTypeSupported('video/mp4; codecs="hev1.1.6.L93.B0"')) return false;
+    // ManagedMediaSource-only: trust isTypeSupported (reflects hardware HEVC);
+    // the SourceBuffer probe below needs classic MSE.
+    if (typeof MediaSource === 'undefined') return true;
     return await new Promise((resolve) => {
       const ms = new MediaSource();
       const url = URL.createObjectURL(ms);
@@ -496,18 +501,22 @@ let player = null;
 async function loadStream() {
   const url = '../demo/streams/dash_abr/manifest.mpd';
   const video = document.getElementById('player');
-  player = dashjs.MediaPlayer().create();
-  await HevcDash.attachHevcSupport(player, {
-    workerUrl: '../demo/transcode-worker.js',
-  });
-  player.on(dashjs.MediaPlayer.events.PLAYBACK_STARTED, () => {
-    document.getElementById('status').textContent = 'Playing via dash.js + hevc.js';
-  });
-  player.on(dashjs.MediaPlayer.events.ERROR, (e) => {
-    document.getElementById('status').textContent = 'Error: ' + (e.error && e.error.message ? e.error.message : JSON.stringify(e.error));
-  });
-  player.initialize(video, url, true);
-  document.getElementById('status').textContent = 'Loading HEVC stream…';
+  try {
+    player = dashjs.MediaPlayer().create();
+    await HevcDash.attachHevcSupport(player, {
+      workerUrl: '../demo/transcode-worker.js',
+    });
+    player.on(dashjs.MediaPlayer.events.PLAYBACK_STARTED, () => {
+      document.getElementById('status').textContent = 'Playing via dash.js + hevc.js';
+    });
+    player.on(dashjs.MediaPlayer.events.ERROR, (e) => {
+      document.getElementById('status').textContent = 'Error: ' + (e.error && e.error.message ? e.error.message : JSON.stringify(e.error));
+    });
+    player.initialize(video, url, true);
+    document.getElementById('status').textContent = 'Loading HEVC stream…';
+  } catch (e) {
+    document.getElementById('status').textContent = 'Error: ' + (e && e.message ? e.message : e);
+  }
 }
 
 // Don't load/transcode on page load — only when the player scrolls into view.
