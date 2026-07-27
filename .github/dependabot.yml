@@ -1,25 +1,30 @@
 version: 2
 updates:
   - package-ecosystem: npm
-    directory: /
+    directories:
+      - /
+      - /packages/core
+      - /packages/dashjs-plugin
+      - /packages/shaka-plugin
     schedule:
       interval: weekly
     open-pull-requests-limit: 10
-
-  - package-ecosystem: npm
-    directory: /packages/core
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
-
-  - package-ecosystem: npm
-    directory: /packages/dashjs-plugin
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
+    groups:
+      # One weekly PR for all minor/patch bumps; majors stay individual
+      npm-minor-patch:
+        applies-to: version-updates
+        update-types:
+          - minor
+          - patch
 
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    groups:
+      # Single PR for all action bumps so paired actions (codeql init/analyze)
+      # always move together and CI stays consistent
+      actions:
+        patterns:
+          - "*"
