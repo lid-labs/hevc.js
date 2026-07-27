@@ -130,23 +130,28 @@ async function loadMPD(presetUrl) {
   console.log('[demo] workerUrl =', workerUrl);
   console.log('[demo] adaptiveCompute =', adaptiveOff ? 'off' : 'on (default)');
   console.log('[demo] attachHevcSupport');
-  cleanup = await HevcDash.attachHevcSupport(player, {
-    workerUrl,
-    wasmUrl: qp.get('wasmUrl') || undefined,
-    wasmBinaryUrl: qp.get('wasmBinaryUrl') || undefined,
-    forceTranscode,
-    adaptiveCompute: adaptiveOff
-      ? false
-      : {
-          onObservation: (stat, avg, cap, reason) => {
-            document.getElementById('cmp-speed').textContent =
-              'speedX: ' + stat.speedX.toFixed(2) + ' (avg ' + avg.toFixed(2) + ')';
-            document.getElementById('cmp-cap').textContent =
-              'cap: ' + (cap == null ? 'none' : 'idx ' + cap);
-            document.getElementById('cmp-reason').textContent = 'reason: ' + reason;
+  try {
+    cleanup = await HevcDash.attachHevcSupport(player, {
+      workerUrl,
+      wasmUrl: qp.get('wasmUrl') || undefined,
+      wasmBinaryUrl: qp.get('wasmBinaryUrl') || undefined,
+      forceTranscode,
+      adaptiveCompute: adaptiveOff
+        ? false
+        : {
+            onObservation: (stat, avg, cap, reason) => {
+              document.getElementById('cmp-speed').textContent =
+                'speedX: ' + stat.speedX.toFixed(2) + ' (avg ' + avg.toFixed(2) + ')';
+              document.getElementById('cmp-cap').textContent =
+                'cap: ' + (cap == null ? 'none' : 'idx ' + cap);
+              document.getElementById('cmp-reason').textContent = 'reason: ' + reason;
+            },
           },
-        },
-  });
+    });
+  } catch (e) {
+    document.getElementById('status').textContent = 'Error: ' + (e && e.message ? e.message : e);
+    return;
+  }
 
   // Active variant (refreshed when dash.js switches quality).
   function refreshActive() {

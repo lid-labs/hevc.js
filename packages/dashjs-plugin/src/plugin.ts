@@ -15,7 +15,7 @@
  * ```
  */
 
-import { H264Encoder, installMSEIntercept, uninstallMSEIntercept } from "@hevcjs/core";
+import { H264Encoder, installMSEIntercept, uninstallMSEIntercept, getMediaSourceConstructor } from "@hevcjs/core";
 import type { MSEInterceptConfig } from "@hevcjs/core";
 import { attachDashComputeAware } from "./compute-aware.js";
 import type { DashComputeAwareOptions } from "./compute-aware.js";
@@ -44,8 +44,12 @@ type DashMediaPlayer = any;
 /** Check if the browser can play HEVC natively via MSE */
 async function hasNativeHevcSupport(): Promise<boolean> {
   try {
-    if (typeof MediaSource === "undefined") return false;
-    if (!MediaSource.isTypeSupported('video/mp4; codecs="hev1.1.6.L93.B0"')) return false;
+    const MS = getMediaSourceConstructor();
+    if (!MS) return false;
+    if (!MS.isTypeSupported('video/mp4; codecs="hev1.1.6.L93.B0"')) return false;
+    // ManagedMediaSource-only browsers (iPhone Safari): trust isTypeSupported —
+    // it reflects hardware HEVC there, and the probe below needs classic MSE.
+    if (typeof MediaSource === "undefined") return true;
     // isTypeSupported can lie (e.g. Firefox Win without HEVC extension installed).
     // Verify by actually creating a SourceBuffer.
     return await new Promise<boolean>((resolve) => {
@@ -99,6 +103,16 @@ export async function attachHevcSupport(
     if (player?.registerCustomCapabilitiesFilter) {
       player.registerCustomCapabilitiesFilter(() => true);
     }
+    return () => {};
+  }
+
+  // The transcoding path patches classic MediaSource — without it (iPhone
+  // Safari has only ManagedMediaSource) there is nothing we can intercept.
+  if (typeof MediaSource === "undefined") {
+    console.warn(
+      "[hevc.js/dash] Classic MediaSource is not available in this browser — " +
+      "HEVC transcoding disabled.",
+    );
     return () => {};
   }
 

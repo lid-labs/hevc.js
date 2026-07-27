@@ -12296,9 +12296,17 @@ var HevcDash = (() => {
   }
   var HEVC_DETECT_RE = /hev1|hvc1/i;
   var HEVC_CODEC_RE = /hev1[^"']*|hvc1[^"']*/gi;
+  function getMediaSourceConstructor() {
+    const g = globalThis;
+    return g.MediaSource ?? g.ManagedMediaSource ?? null;
+  }
   var interceptState = null;
   function installMSEIntercept(config = {}) {
     if (config.logLevel) setLogLevel(config.logLevel);
+    if (typeof MediaSource === "undefined") {
+      log.warn("MediaSource is not available in this browser \u2014 MSE intercept not installed");
+      return;
+    }
     if (interceptState?.active) {
       Object.assign(interceptState.config, config);
       return;
@@ -12839,8 +12847,10 @@ var HevcDash = (() => {
   // packages/dashjs-plugin/src/plugin.ts
   async function hasNativeHevcSupport() {
     try {
-      if (typeof MediaSource === "undefined") return false;
-      if (!MediaSource.isTypeSupported('video/mp4; codecs="hev1.1.6.L93.B0"')) return false;
+      const MS = getMediaSourceConstructor();
+      if (!MS) return false;
+      if (!MS.isTypeSupported('video/mp4; codecs="hev1.1.6.L93.B0"')) return false;
+      if (typeof MediaSource === "undefined") return true;
       return await new Promise((resolve) => {
         const ms = new MediaSource();
         const url = URL.createObjectURL(ms);
@@ -12878,6 +12888,13 @@ var HevcDash = (() => {
       if (player?.registerCustomCapabilitiesFilter) {
         player.registerCustomCapabilitiesFilter(() => true);
       }
+      return () => {
+      };
+    }
+    if (typeof MediaSource === "undefined") {
+      console.warn(
+        "[hevc.js/dash] Classic MediaSource is not available in this browser \u2014 HEVC transcoding disabled."
+      );
       return () => {
       };
     }

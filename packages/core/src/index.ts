@@ -19,7 +19,7 @@ export { TranscodePipeline } from "./transcode-pipeline.js";
 export type { TranscodePipelineConfig } from "./transcode-pipeline.js";
 export { setLogLevel } from "./log.js";
 export type { LogLevel } from "./log.js";
-export { installMSEIntercept, uninstallMSEIntercept } from "./mse-intercept.js";
+export { installMSEIntercept, uninstallMSEIntercept, getMediaSourceConstructor } from "./mse-intercept.js";
 export type { MSEInterceptConfig } from "./mse-intercept.js";
 export { SegmentTranscoder } from "./segment-transcoder.js";
 export type { SegmentTranscoderConfig, TranscodedInit } from "./segment-transcoder.js";
