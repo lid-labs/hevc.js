@@ -17,6 +17,19 @@ import { TranscodeWorkerClient } from "./transcode-worker-client.js";
 const HEVC_DETECT_RE = /hev1|hvc1/i;                // Detect HEVC in a string
 const HEVC_CODEC_RE = /hev1[^"']*|hvc1[^"']*/gi;   // Match full HEVC codec string (hev1.2.4.L123.B0)
 
+/**
+ * The MSE constructor available in this browser: classic `MediaSource`,
+ * `ManagedMediaSource` (the only one on iPhone Safari, iOS 17.1+), or null.
+ */
+export function getMediaSourceConstructor(): typeof MediaSource | null {
+  const g = globalThis as Record<string, unknown>;
+  return (
+    (g.MediaSource as typeof MediaSource | undefined) ??
+    (g.ManagedMediaSource as typeof MediaSource | undefined) ??
+    null
+  );
+}
+
 export interface MSEInterceptConfig extends SegmentTranscoderConfig {
   /** URL to the transcode worker script. When provided, transcoding runs off main thread. */
   workerUrl?: string;
@@ -43,6 +56,13 @@ let interceptState: InterceptState | null = null;
  */
 export function installMSEIntercept(config: MSEInterceptConfig = {}): void {
   if (config.logLevel) setLogLevel(config.logLevel);
+
+  // iPhone Safari only exposes ManagedMediaSource; the transcoding proxy
+  // requires classic MSE. No-op instead of throwing a ReferenceError.
+  if (typeof MediaSource === "undefined") {
+    log.warn("MediaSource is not available in this browser — MSE intercept not installed");
+    return;
+  }
 
   if (interceptState?.active) {
     // Already installed — update config (allows late-binding of callbacks)
