@@ -215,7 +215,6 @@ function createTranscodingProxy(
   const realAppend = realSB.appendBuffer.bind(realSB);
   const realAbort = realSB.abort.bind(realSB);
   const realAddEventListener = realSB.addEventListener.bind(realSB);
-  const realRemoveEventListener = realSB.removeEventListener.bind(realSB);
 
   // Internal wait using the real (unpatched) addEventListener
   const updatingGetter = Object.getOwnPropertyDescriptor(SourceBuffer.prototype, "updating")!.get!;
@@ -333,13 +332,6 @@ function createTranscodingProxy(
     }
   }
 
-  async function transcodeMedia(segment: Uint8Array): Promise<Uint8Array | null> {
-    if (workerClient) {
-      return workerClient.processMediaSegment(segment);
-    }
-    return transcoder!.processMediaSegment(segment);
-  }
-
   async function transcodeMediaStreaming(
     segment: Uint8Array,
     onPartial: (h264: Uint8Array, initSegment: Uint8Array | null, codec: string | null) => Promise<void> | void,
@@ -350,11 +342,6 @@ function createTranscodingProxy(
     return transcoder!.processMediaSegmentStreaming(segment, (h264, init) => {
       return onPartial(h264, init?.initSegment ?? null, init?.codec ?? null);
     });
-  }
-
-  function getInitResult(): { initSegment: Uint8Array; codec: string } | null {
-    if (workerClient) return workerClient.initResult;
-    return transcoder!.initResult;
   }
 
   async function processNext(target: SourceBuffer): Promise<void> {

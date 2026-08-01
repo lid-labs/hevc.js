@@ -6,7 +6,7 @@
  * extended sizes, multi-track, and proper hvcC/avcC extraction.
  */
 
-import { createFile as mp4boxCreateFile, Log as MP4BoxLog } from "mp4box";
+import { createFile as mp4boxCreateFile } from "mp4box";
 import type { MP4Info, MP4Sample, MP4Track, ArrayBufferWithStart } from "mp4box";
 import { log } from "./log.js";
 
@@ -148,7 +148,7 @@ export class FMP4Demuxer {
     );
 
     if (videoTrack) {
-      const isHevc = /^hev1|hvc1/i.test(videoTrack.codec);
+      const isHevc = /^(hev1|hvc1)/i.test(videoTrack.codec);
       this._videoTrack = {
         trackId: videoTrack.id,
         codec: videoTrack.codec,
