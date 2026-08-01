@@ -127,7 +127,7 @@ attachHevcSupport(player, {
 
 hevc.js transcodes HEVC to H.264 client-side. This requires two things from the browser: **WebAssembly** (to run the HEVC decoder) and **WebCodecs VideoEncoder with H.264 support** (to re-encode the decoded frames). When native HEVC is available, the plugin detects it and does nothing — zero overhead.
 
-**Detection strategy**: `MediaSource.isTypeSupported()` can lie (Firefox on Windows reports HEVC support even without the HEVC Video Extension installed). hevc.js verifies native support by actually creating a SourceBuffer — if that fails, it falls back to transcoding. On iPhone Safari (iOS 17.1+), only `ManagedMediaSource` exists — hevc.js detects native HEVC through it and defers to the browser (the transcoding path requires classic `MediaSource`).
+**Detection strategy**: `MediaSource.isTypeSupported()` can lie (Firefox on Windows reports HEVC support even without the HEVC Video Extension installed). hevc.js verifies native support by actually creating a SourceBuffer — if that fails, it falls back to transcoding. On iPhone Safari (iOS 17.1+), only `ManagedMediaSource` exists — hevc.js detects native HEVC through it and defers to the browser (the transcoding path requires classic `MediaSource`). For the same reason, `forceTranscode` is ignored there for the dash.js plugin and playback stays native; Shaka's `forceTransmux` still works since Shaka feeds its own SourceBuffers.
 
 Each browser has its own decode path on Windows, with different dependencies:
 
