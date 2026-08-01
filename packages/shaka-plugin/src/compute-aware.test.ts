@@ -149,7 +149,9 @@ describe("attachShakaComputeAware", () => {
         { active: false, height: 720, videoBandwidth: 2_000_000 },
         { active: true, height: 1080, videoBandwidth: 5_000_000 },
       ]),
-      configure: vi.fn(() => {
+      // Annotated: an always-throwing impl would infer `() => never`, which
+      // rejects the non-throwing mockImplementation swapped in below.
+      configure: vi.fn<() => void>(() => {
         throw new Error("player destroyed");
       }),
     };

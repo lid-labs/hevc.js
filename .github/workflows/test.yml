@@ -59,6 +59,10 @@ jobs:
       - name: Build @hevcjs/core
         run: pnpm --filter @hevcjs/core build
 
+      # tsup and vitest don't typecheck test files — tsc --noEmit does.
+      - name: Typecheck (sources + tests)
+        run: pnpm typecheck
+
       - name: Run JS unit tests
         run: pnpm test:unit
 

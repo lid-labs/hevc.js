@@ -50,7 +50,8 @@
   "scripts": {
     "build": "tsup && tsc -p tsconfig.build.json && mv dist/transcode-worker.global.js dist/transcode-worker.js && mv dist/transcode-worker.global.js.map dist/transcode-worker.js.map && mkdir -p dist/wasm && cp wasm/hevc-decode.js wasm/hevc-decode.wasm dist/wasm/",
     "dev": "tsup --watch",
-    "test": "vitest run"
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "mp4box": "^2.4.1"

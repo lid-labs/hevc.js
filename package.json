@@ -46,7 +46,8 @@
     "version": "changeset version && pnpm install --lockfile-only",
     "release": "pnpm build:js && changeset publish",
     "test:e2e:bs": "npx playwright test --project=bs-chrome-windows --project=bs-edge-windows --project=bs-firefox-windows --project=bs-chrome-macos --project=bs-safari-macos",
-    "clean": "rm -rf build build-wasm packages/*/dist"
+    "clean": "rm -rf build build-wasm packages/*/dist",
+    "typecheck": "pnpm -r --if-present typecheck"
   },
   "keywords": [
     "hevc",
