@@ -135,6 +135,13 @@ bool SliceHeader::parse(BitstreamReader& bs, const SPS& sps, const PPS& pps,
         // slice_segment_address — u(v) where v = Ceil(Log2(PicSizeInCtbsY))
         int addr_bits = ceil_log2(sps.PicSizeInCtbsY);
         slice_segment_address = bs.read_bits(addr_bits);
+        // §7.4.7.1: address < PicSizeInCtbsY (read_bits can exceed it for
+        // non-power-of-2 CTB counts); indexes CtbAddrRsToTs downstream
+        if (slice_segment_address >= static_cast<uint32_t>(sps.PicSizeInCtbsY)) {
+            HEVC_LOG(PARSE, "Slice rejected: segment_address=%u PicSizeInCtbsY=%d",
+                     slice_segment_address, sps.PicSizeInCtbsY);
+            return false;
+        }
     }
 
     // The rest is only present for independent slice segments
@@ -168,15 +175,21 @@ bool SliceHeader::parse(BitstreamReader& bs, const SPS& sps, const PPS& pps,
         short_term_ref_pic_set_sps_flag = bs.read_flag();
         if (!short_term_ref_pic_set_sps_flag) {
             // Parse inline short-term RPS
-            st_rps.parse(bs, static_cast<int>(sps.num_short_term_ref_pic_sets),
-                         static_cast<int>(sps.num_short_term_ref_pic_sets),
-                         sps.st_ref_pic_sets);
+            if (!st_rps.parse(bs, static_cast<int>(sps.num_short_term_ref_pic_sets),
+                              static_cast<int>(sps.num_short_term_ref_pic_sets),
+                              sps.st_ref_pic_sets)) return false;
             active_rps = &st_rps;
         } else {
             short_term_ref_pic_set_idx = 0;
             if (sps.num_short_term_ref_pic_sets > 1) {
                 int idx_bits = ceil_log2(static_cast<int>(sps.num_short_term_ref_pic_sets));
                 short_term_ref_pic_set_idx = bs.read_bits(idx_bits);
+            }
+            // §7.4.7.1: idx < num sets (read_bits can exceed it for non-power-of-2 counts)
+            if (short_term_ref_pic_set_idx >= sps.num_short_term_ref_pic_sets) {
+                HEVC_LOG(PARSE, "Slice rejected: st_rps_idx=%u num_sets=%u",
+                         short_term_ref_pic_set_idx, sps.num_short_term_ref_pic_sets);
+                return false;
             }
             active_rps = &sps.st_ref_pic_sets[short_term_ref_pic_set_idx];
         }
@@ -188,6 +201,14 @@ bool SliceHeader::parse(BitstreamReader& bs, const SPS& sps, const PPS& pps,
                 num_long_term_sps = bs.read_ue();
             }
             num_long_term_pics = bs.read_ue();
+            // §7.4.7.1: sps subset bounded by the SPS count; arrays hold 32 entries
+            if (num_long_term_sps > sps.num_long_term_ref_pics_sps ||
+                num_long_term_pics > 32 ||
+                num_long_term_sps + num_long_term_pics > 32) {
+                HEVC_LOG(PARSE, "Slice rejected: num_long_term sps=%u pics=%u",
+                         num_long_term_sps, num_long_term_pics);
+                return false;
+            }
 
             int poc_lsb_bits = static_cast<int>(sps.log2_max_pic_order_cnt_lsb_minus4) + 4;
             int lt_sps_bits = (sps.num_long_term_ref_pics_sps > 1)
@@ -198,6 +219,11 @@ bool SliceHeader::parse(BitstreamReader& bs, const SPS& sps, const PPS& pps,
                 if (i < num_long_term_sps) {
                     if (sps.num_long_term_ref_pics_sps > 1) {
                         lt_idx_sps[i] = bs.read_bits(lt_sps_bits);
+                        // §7.4.7.1: lt_idx_sps indexes the SPS long-term tables
+                        if (lt_idx_sps[i] >= sps.num_long_term_ref_pics_sps) {
+                            HEVC_LOG(PARSE, "Slice rejected: lt_idx_sps=%u", lt_idx_sps[i]);
+                            return false;
+                        }
                     }
                 } else {
                     poc_lsb_lt[i] = bs.read_bits(poc_lsb_bits);
@@ -238,6 +264,12 @@ bool SliceHeader::parse(BitstreamReader& bs, const SPS& sps, const PPS& pps,
         } else {
             num_ref_idx_l0_active_minus1 = pps.num_ref_idx_l0_default_active_minus1;
             num_ref_idx_l1_active_minus1 = pps.num_ref_idx_l1_default_active_minus1;
+        }
+        // §7.4.7.1: range 0..14 — the ref list and weight arrays hold 16 entries
+        if (num_ref_idx_l0_active_minus1 > 14 || num_ref_idx_l1_active_minus1 > 14) {
+            HEVC_LOG(PARSE, "Slice rejected: num_ref_idx l0=%u l1=%u",
+                     num_ref_idx_l0_active_minus1, num_ref_idx_l1_active_minus1);
+            return false;
         }
 
         // NumPicTotalCurr — derived from active RPS
@@ -354,6 +386,12 @@ bool SliceHeader::parse(BitstreamReader& bs, const SPS& sps, const PPS& pps,
     // Entry point offsets
     if (pps.tiles_enabled_flag || pps.entropy_coding_sync_enabled_flag) {
         num_entry_point_offsets = bs.read_ue();
+        // §7.4.7.1: bounded by the CTB count — caps the resize below
+        if (num_entry_point_offsets >= static_cast<uint32_t>(sps.PicSizeInCtbsY)) {
+            HEVC_LOG(PARSE, "Slice rejected: num_entry_point_offsets=%u",
+                     num_entry_point_offsets);
+            return false;
+        }
         if (num_entry_point_offsets > 0) {
             uint32_t offset_len_minus1 = bs.read_ue();
             entry_point_offset_minus1.resize(num_entry_point_offsets);

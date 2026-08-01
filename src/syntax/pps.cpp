@@ -17,6 +17,13 @@ bool PPS::parse(BitstreamReader& bs, const SPS& sps) {
 
     num_ref_idx_l0_default_active_minus1 = bs.read_ue();
     num_ref_idx_l1_default_active_minus1 = bs.read_ue();
+    // §7.4.3.3.1: range 0..14 — copied into slice headers whose ref arrays hold 16
+    if (num_ref_idx_l0_default_active_minus1 > 14 ||
+        num_ref_idx_l1_default_active_minus1 > 14) {
+        HEVC_LOG(PARSE, "PPS rejected: num_ref_idx_default l0=%u l1=%u",
+                 num_ref_idx_l0_default_active_minus1, num_ref_idx_l1_default_active_minus1);
+        return false;
+    }
 
     init_qp_minus26 = bs.read_se();
     constrained_intra_pred_flag = bs.read_flag();
