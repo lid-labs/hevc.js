@@ -67,7 +67,7 @@
   "devDependencies": {
     "shaka-player": "^5.2.4",
     "tsup": "^8.0.0",
-    "typescript": "^6.0.3",
+    "typescript": "^7.0.2",
     "vite": "^7.3.6",
     "vitest": "^4.1.10"
   }
