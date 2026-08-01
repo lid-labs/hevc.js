@@ -51,7 +51,8 @@
   "scripts": {
     "build": "tsup && tsc -p tsconfig.build.json",
     "dev": "tsup --watch",
-    "test": "vitest run"
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@hevcjs/core": "workspace:*"
