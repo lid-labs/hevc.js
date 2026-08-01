@@ -7,6 +7,11 @@
 
 namespace hevc {
 
+// §A.4.1 Table A.8, level 6.2 (highest defined): MaxLumaPs, and per-dimension
+// cap Sqrt(MaxLumaPs * 8). Bounds all grid allocations to well within int range.
+static constexpr uint32_t kMaxLumaPs = 35651584;
+static constexpr uint32_t kMaxLumaDimension = 16888;
+
 // ---- Default scaling list matrices (spec Tables 7-3 to 7-5) ----
 
 static const uint8_t default_scaling_list_4x4[16] = {
@@ -132,6 +137,14 @@ bool ShortTermRefPicSet::parse(BitstreamReader& bs, int stRpsIdx,
         if (stRpsIdx == num_short_term_ref_pic_sets) {
             delta_idx_minus1 = bs.read_ue();
         }
+        // §7.4.8: delta_idx_minus1 in 0..stRpsIdx-1 so RefRpsIdx stays ≥ 0
+        // (the stRpsIdx <= 0 arm also keeps the cast below well-defined)
+        if (stRpsIdx <= 0 || delta_idx_minus1 >= static_cast<uint32_t>(stRpsIdx)) {
+            HEVC_LOG(PARSE, "st_rps rejected: delta_idx_minus1=%u stRpsIdx=%d",
+                     delta_idx_minus1, stRpsIdx);
+            return false;
+        }
+
         bool delta_rps_sign = bs.read_flag();
         uint32_t abs_delta_rps_minus1 = bs.read_ue();
 
@@ -140,6 +153,11 @@ bool ShortTermRefPicSet::parse(BitstreamReader& bs, int stRpsIdx,
 
         const auto& ref = rps_array[RefRpsIdx];
         int NumDeltaPocsRef = static_cast<int>(ref.NumDeltaPocs);
+        // §7.4.8: DPB-bounded (≤ 16); keeps the dPoc[32] accumulation below in range
+        if (NumDeltaPocsRef > 16) {
+            HEVC_LOG(PARSE, "st_rps rejected: ref NumDeltaPocs=%d", NumDeltaPocsRef);
+            return false;
+        }
 
         // Parse used_by_curr_pic_flag and use_delta_flag for each entry
         std::array<bool, 33> used_by_curr_pic_flag = {};
@@ -188,6 +206,10 @@ bool ShortTermRefPicSet::parse(BitstreamReader& bs, int stRpsIdx,
                 numEntries++;
             }
         }
+        if (numEntries > 16) {  // DeltaPocS0 holds 16 entries
+            HEVC_LOG(PARSE, "st_rps rejected: %d derived negative pics", numEntries);
+            return false;
+        }
         NumNegativePics = numEntries;
         for (int k = 0; k < numEntries; k++) {
             DeltaPocS0[k] = dPoc[k];
@@ -217,18 +239,36 @@ bool ShortTermRefPicSet::parse(BitstreamReader& bs, int stRpsIdx,
                 numEntries++;
             }
         }
+        if (numEntries > 16) {  // DeltaPocS1 holds 16 entries
+            HEVC_LOG(PARSE, "st_rps rejected: %d derived positive pics", numEntries);
+            return false;
+        }
         NumPositivePics = numEntries;
         for (int k = 0; k < numEntries; k++) {
             DeltaPocS1[k] = dPoc[k];
             UsedByCurrPicS1[k] = usedFlag[k];
         }
 
+        // §7.4.8: combined count is DPB-bounded, same invariant as the explicit branch
+        if (NumNegativePics + NumPositivePics > 16) {
+            HEVC_LOG(PARSE, "st_rps rejected: %u derived delta POCs",
+                     NumNegativePics + NumPositivePics);
+            return false;
+        }
         NumDeltaPocs = NumNegativePics + NumPositivePics;
         (void)i;
     } else {
         // Direct specification
         num_negative_pics = bs.read_ue();
         num_positive_pics = bs.read_ue();
+
+        // §7.4.8: counts bounded by DPB size; the delta_poc arrays hold 16 entries
+        if (num_negative_pics > 16 || num_positive_pics > 16 ||
+            num_negative_pics + num_positive_pics > 16) {
+            HEVC_LOG(PARSE, "st_rps rejected: num_negative=%u num_positive=%u",
+                     num_negative_pics, num_positive_pics);
+            return false;
+        }
 
         NumNegativePics = num_negative_pics;
         NumPositivePics = num_positive_pics;
@@ -352,6 +392,11 @@ static void skip_vui_parameters(BitstreamReader& bs) {
 bool SPS::parse(BitstreamReader& bs) {
     sps_video_parameter_set_id = bs.read_bits(4);
     sps_max_sub_layers_minus1 = bs.read_bits(3);
+    // §7.4.3.2.1: range 0..6 — also bounds the sub_layer_ordering[7] writes below
+    if (sps_max_sub_layers_minus1 > 6) {
+        HEVC_LOG(PARSE, "SPS rejected: sps_max_sub_layers_minus1=%u", sps_max_sub_layers_minus1);
+        return false;
+    }
     sps_temporal_id_nesting_flag = bs.read_flag();
 
     // profile_tier_level(1, sps_max_sub_layers_minus1)
@@ -359,6 +404,12 @@ bool SPS::parse(BitstreamReader& bs) {
 
     sps_seq_parameter_set_id = bs.read_ue();
     chroma_format_idc = bs.read_ue();
+    // §7.4.3.2.1: sps id in 0..15 (indexes the 16-entry SPS store), chroma idc in 0..3
+    if (sps_seq_parameter_set_id > 15 || chroma_format_idc > 3) {
+        HEVC_LOG(PARSE, "SPS rejected: id=%u chroma_format_idc=%u",
+                 sps_seq_parameter_set_id, chroma_format_idc);
+        return false;
+    }
 
     if (chroma_format_idc == 3) {
         separate_colour_plane_flag = bs.read_flag();
@@ -378,6 +429,14 @@ bool SPS::parse(BitstreamReader& bs) {
     bit_depth_luma_minus8 = bs.read_ue();
     bit_depth_chroma_minus8 = bs.read_ue();
     log2_max_pic_order_cnt_lsb_minus4 = bs.read_ue();
+    // §7.4.3.2.1: bit depths in 0..8, log2_max_poc_lsb in 0..12
+    if (bit_depth_luma_minus8 > 8 || bit_depth_chroma_minus8 > 8 ||
+        log2_max_pic_order_cnt_lsb_minus4 > 12) {
+        HEVC_LOG(PARSE, "SPS rejected: bit_depth=%u/%u log2_max_poc_lsb_minus4=%u",
+                 bit_depth_luma_minus8, bit_depth_chroma_minus8,
+                 log2_max_pic_order_cnt_lsb_minus4);
+        return false;
+    }
 
     // Sub-layer ordering
     sps_sub_layer_ordering_info_present_flag = bs.read_flag();
@@ -395,6 +454,56 @@ bool SPS::parse(BitstreamReader& bs) {
     log2_diff_max_min_luma_transform_block_size = bs.read_ue();
     max_transform_hierarchy_depth_inter = bs.read_ue();
     max_transform_hierarchy_depth_intra = bs.read_ue();
+
+    // Coarse bounds on raw log2 fields so the derived sums below cannot overflow
+    if (log2_min_luma_coding_block_size_minus3 > 3 ||
+        log2_diff_max_min_luma_coding_block_size > 3 ||
+        log2_min_luma_transform_block_size_minus2 > 3 ||
+        log2_diff_max_min_luma_transform_block_size > 3) {
+        HEVC_LOG(PARSE, "SPS rejected: log2 block size field out of range%s", "");
+        return false;
+    }
+
+    // §7.4.3.2.1 + §A.4.1: block size constraints (CTB in 16..64, TB below CB, ≤ 32)
+    const int minCbLog2 = static_cast<int>(log2_min_luma_coding_block_size_minus3) + 3;
+    const int ctbLog2 = minCbLog2 + static_cast<int>(log2_diff_max_min_luma_coding_block_size);
+    const int minTbLog2 = static_cast<int>(log2_min_luma_transform_block_size_minus2) + 2;
+    const int maxTbLog2 = minTbLog2 + static_cast<int>(log2_diff_max_min_luma_transform_block_size);
+    if (ctbLog2 < 4 || ctbLog2 > 6 ||
+        minTbLog2 >= minCbLog2 || maxTbLog2 > std::min(ctbLog2, 5) ||
+        max_transform_hierarchy_depth_inter > static_cast<uint32_t>(ctbLog2 - minTbLog2) ||
+        max_transform_hierarchy_depth_intra > static_cast<uint32_t>(ctbLog2 - minTbLog2)) {
+        HEVC_LOG(PARSE, "SPS rejected: block sizes ctbLog2=%d minCbLog2=%d tb=[%d,%d]",
+                 ctbLog2, minCbLog2, minTbLog2, maxTbLog2);
+        return false;
+    }
+
+    // §7.4.3.2.1: dimensions nonzero and multiple of MinCbSizeY;
+    // §A.4.1: capped at level 6.2 limits so all grid math stays within int
+    const uint32_t minCbSize = 1u << minCbLog2;
+    if (pic_width_in_luma_samples == 0 || pic_height_in_luma_samples == 0 ||
+        pic_width_in_luma_samples % minCbSize != 0 ||
+        pic_height_in_luma_samples % minCbSize != 0 ||
+        pic_width_in_luma_samples > kMaxLumaDimension ||
+        pic_height_in_luma_samples > kMaxLumaDimension ||
+        static_cast<uint64_t>(pic_width_in_luma_samples) * pic_height_in_luma_samples >
+            kMaxLumaPs) {
+        HEVC_LOG(PARSE, "SPS rejected: dimensions %ux%u (MinCb=%u)",
+                 pic_width_in_luma_samples, pic_height_in_luma_samples, minCbSize);
+        return false;
+    }
+
+    // §7.4.3.2.1: conformance window must stay strictly inside the picture
+    const uint32_t subW = (chroma_format_idc == 1 || chroma_format_idc == 2) ? 2 : 1;
+    const uint32_t subH = (chroma_format_idc == 1) ? 2 : 1;
+    if (subW * (static_cast<uint64_t>(conf_win_left_offset) + conf_win_right_offset) >=
+            pic_width_in_luma_samples ||
+        subH * (static_cast<uint64_t>(conf_win_top_offset) + conf_win_bottom_offset) >=
+            pic_height_in_luma_samples) {
+        HEVC_LOG(PARSE, "SPS rejected: conformance window exceeds %ux%u picture",
+                 pic_width_in_luma_samples, pic_height_in_luma_samples);
+        return false;
+    }
 
     // Scaling lists
     scaling_list_enabled_flag = bs.read_flag();
@@ -419,21 +528,47 @@ bool SPS::parse(BitstreamReader& bs) {
         log2_min_pcm_luma_coding_block_size_minus3 = bs.read_ue();
         log2_diff_max_min_pcm_luma_coding_block_size = bs.read_ue();
         pcm_loop_filter_disabled_flag = bs.read_flag();
+
+        // §7.4.3.2.1: PCM block sizes within [8, min(CtbSizeY, 32)], depth ≤ bit depth
+        if (log2_min_pcm_luma_coding_block_size_minus3 > 2 ||
+            log2_diff_max_min_pcm_luma_coding_block_size > 2) {
+            HEVC_LOG(PARSE, "SPS rejected: PCM log2 block size field out of range%s", "");
+            return false;
+        }
+        const int minIpcmLog2 = static_cast<int>(log2_min_pcm_luma_coding_block_size_minus3) + 3;
+        const int maxIpcmLog2 = minIpcmLog2 + static_cast<int>(log2_diff_max_min_pcm_luma_coding_block_size);
+        if (maxIpcmLog2 > std::min(ctbLog2, 5) ||
+            pcm_sample_bit_depth_luma_minus1 + 1u > 8u + bit_depth_luma_minus8 ||
+            pcm_sample_bit_depth_chroma_minus1 + 1u > 8u + bit_depth_chroma_minus8) {
+            HEVC_LOG(PARSE, "SPS rejected: PCM config out of range%s", "");
+            return false;
+        }
     }
 
     // Short-term reference picture sets
     num_short_term_ref_pic_sets = bs.read_ue();
+    if (num_short_term_ref_pic_sets > 64) {  // §7.4.3.2.1: range 0..64
+        HEVC_LOG(PARSE, "SPS rejected: num_short_term_ref_pic_sets=%u",
+                 num_short_term_ref_pic_sets);
+        return false;
+    }
     st_ref_pic_sets.resize(num_short_term_ref_pic_sets);
     for (uint32_t i = 0; i < num_short_term_ref_pic_sets; i++) {
-        st_ref_pic_sets[i].parse(bs, static_cast<int>(i),
-                                  static_cast<int>(num_short_term_ref_pic_sets),
-                                  st_ref_pic_sets);
+        if (!st_ref_pic_sets[i].parse(bs, static_cast<int>(i),
+                                       static_cast<int>(num_short_term_ref_pic_sets),
+                                       st_ref_pic_sets)) return false;
     }
 
     // Long-term reference pictures
     long_term_ref_pics_present_flag = bs.read_flag();
     if (long_term_ref_pics_present_flag) {
         num_long_term_ref_pics_sps = bs.read_ue();
+        // §7.4.3.2.1: range 0..32 — bounds the lt_ref_pic_poc_lsb_sps[32] writes
+        if (num_long_term_ref_pics_sps > 32) {
+            HEVC_LOG(PARSE, "SPS rejected: num_long_term_ref_pics_sps=%u",
+                     num_long_term_ref_pics_sps);
+            return false;
+        }
         for (uint32_t i = 0; i < num_long_term_ref_pics_sps; i++) {
             // lt_ref_pic_poc_lsb_sps[i] — u(v) where v = log2_max_pic_order_cnt_lsb_minus4 + 4
             int poc_lsb_bits = static_cast<int>(log2_max_pic_order_cnt_lsb_minus4) + 4;
