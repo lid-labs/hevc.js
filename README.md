@@ -11,15 +11,47 @@
 
 **Play HEVC/H.265 video in browsers without native support. No plugin. No install. No server changes.**
 
+![hevc.js playing an HEVC DASH stream in the browser — WASM transcoding to H.264 in real time, with live per-segment speed stats](docs/assets/dashjs-demo.gif)
+
 A from-scratch HEVC decoder written in C++17, compiled to WebAssembly, with drop-in plugins for dash.js and Shaka Player. Transcodes HEVC to H.264 in real-time, client-side, via WebCodecs inside a Web Worker. Works on Chrome, Edge, and Firefox where WebCodecs H.264 encoding is available.
 
 1080p @ 60fps. 236KB WASM. Zero dependencies. No special server headers required. Compute-aware quality control caps the player's ABR ceiling when the device can't transcode at real-time, so the buffer never starves — on by default, no manual tuning.
 
 Built in 8 days by one developer, assisted by AI — [read the story](https://www.developpement.ai/blog/hevcjs-decodeur-h265-navigateur-wasm).
 
+## Adoption
+
+- **dash.js** — hevc.js ships as an official [HEVC playback sample](https://github.com/Dash-Industry-Forum/dash.js/pull/5028) in dash.js (5.2.1+).
+- **Shaka Player** — the [Shaka plugin](https://www.npmjs.com/package/@hevcjs/shaka-plugin) was built after a Shaka Player maintainer [requested it](https://github.com/privaloops/hevc.js/issues/101).
+
+See [ROADMAP.md](ROADMAP.md) for what's next.
+
 ---
 
 ## JavaScript plugin
+
+### Try it in 30 seconds (CDN, zero build)
+
+No bundler, no file copying — load everything from public CDNs:
+
+```html
+<video id="player" controls></video>
+
+<script src="https://cdn.dashjs.org/latest/dash.all.min.js"></script>
+<script type="module">
+  import { attachHevcSupport } from 'https://esm.sh/@hevcjs/dashjs-plugin@1';
+
+  const player = dashjs.MediaPlayer().create();
+  await attachHevcSupport(player, {
+    wasmUrl:       'https://unpkg.com/@hevcjs/core@1/dist/wasm/hevc-decode.js',
+    wasmBinaryUrl: 'https://unpkg.com/@hevcjs/core@1/dist/wasm/hevc-decode.wasm',
+    workerUrl:     'https://unpkg.com/@hevcjs/core@1/dist/transcode-worker.js',
+  });
+  player.initialize(document.querySelector('#player'), 'https://example.com/manifest.mpd', true);
+</script>
+```
+
+Cross-origin Worker and WASM loading are handled automatically. For production, prefer the npm install below (self-hosted assets, version pinning).
 
 ### Installation
 
