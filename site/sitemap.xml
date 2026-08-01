@@ -13,6 +13,12 @@
     <priority>0.8</priority>
   </url>
   <url>
+    <loc>https://www.hevcjs.dev/docs/comparison.html</loc>
+    <lastmod>2026-08-01</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
     <loc>https://www.hevcjs.dev/demo/</loc>
     <lastmod>2026-05-07</lastmod>
     <changefreq>monthly</changefreq>

@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>hevc.js vs libde265.js vs ffmpeg.wasm vs h265web.js — HEVC in the Browser, Compared | hevc.js</title>
+  <meta name="description" content="Honest comparison of the four ways to play HEVC/H.265 in browsers without native support: hevc.js, libde265.js, ffmpeg.wasm and h265web.js — WASM size, license, MSE streaming, COOP/COEP requirements.">
+  <meta name="robots" content="index, follow">
+  <meta name="theme-color" content="#0a0a0b">
+  <link rel="canonical" href="https://www.hevcjs.dev/docs/comparison.html">
+
+  <!-- Open Graph -->
+  <meta property="og:title" content="hevc.js vs libde265.js vs ffmpeg.wasm vs h265web.js — HEVC in the Browser, Compared">
+  <meta property="og:description" content="WASM size, license, MSE streaming support, COOP/COEP requirements — an honest comparison of browser-side HEVC decoding options.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://www.hevcjs.dev/docs/comparison.html">
+  <meta property="og:site_name" content="hevc.js">
+  <meta property="og:image" content="https://www.hevcjs.dev/og-image.png">
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="hevc.js vs libde265.js vs ffmpeg.wasm vs h265web.js">
+  <meta name="twitter:description" content="An honest comparison of browser-side HEVC decoding options: size, license, MSE streaming, headers.">
+  <meta name="twitter:image" content="https://www.hevcjs.dev/og-image.png">
+
+  <!-- Favicon -->
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>▶</text></svg>">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>▶</text></svg>">
+  <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>▶</text></svg>">
+
+  <!-- Structured Data: FAQ -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {
+        "@type": "Question",
+        "name": "Is hevc.js faster than libde265 compiled to WASM?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "libde265 is slightly faster: hevc.js reaches about 83% of libde265's decode speed when both run as WebAssembly. The trade-off is size and license: hevc.js is 236 KB of WASM (vs ~2 MB) and MIT-licensed (vs LGPL-3.0), and it ships a complete MSE streaming pipeline with dash.js and Shaka Player plugins rather than a raw decoder."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Can ffmpeg.wasm be used for real-time HEVC streaming playback?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "ffmpeg.wasm is a general audio/video toolbox oriented toward file processing. Its core is tens of megabytes, the multithreaded build requires SharedArrayBuffer and therefore COOP/COEP headers, and it does not provide an MSE intercept pipeline for streaming players. It is a great tool for transcoding files in the browser, not a drop-in playback fallback for dash.js or Shaka."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "How is hevc.js different from h265web.js?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "h265web.js is a complete standalone player with its own rendering pipeline (canvas/WebGL) and its own custom license (CYL_Free-1.0). hevc.js is not a player: it is an MIT-licensed fallback layer that plugs into the player you already use (dash.js or Shaka Player), feeds a real SourceBuffer with H.264, and stays dormant when the browser decodes HEVC natively."
+        }
+      }
+    ]
+  }
+  </script>
+  <!-- Tailwind CSS v3.4 — purged, inlined -->
+  <style>/*! tailwindcss v3.4.19 | MIT License | https://tailwindcss.com*/*,:after,:before{box-sizing:border-box;border:0 solid #e5e7eb;--tw-border-spacing-x:0;--tw-border-spacing-y:0;--tw-translate-x:0;--tw-translate-y:0;--tw-rotate:0;--tw-skew-x:0;--tw-skew-y:0;--tw-scale-x:1;--tw-scale-y:1;--tw-ring-offset-shadow:0 0 #0000;--tw-ring-shadow:0 0 #0000;--tw-shadow:0 0 #0000;--tw-shadow-colored:0 0 #0000}:after,:before{--tw-content:""}:host,html{line-height:1.5;-webkit-text-size-adjust:100%;tab-size:4;font-family:Inter,system-ui,-apple-system,sans-serif;-webkit-tap-highlight-color:transparent}body{margin:0;line-height:inherit}h1,h2,h3,h4,h5,h6{font-size:inherit;font-weight:inherit}a{color:inherit;text-decoration:inherit}code,kbd,pre,samp{font-family:JetBrains Mono,Fira Code,monospace;font-size:1em}button,input,optgroup,select,textarea{font-family:inherit;font-size:100%;font-weight:inherit;line-height:inherit;letter-spacing:inherit;color:inherit;margin:0;padding:0}button,select{text-transform:none}button,input:where([type=button]),input:where([type=reset]),input:where([type=submit]){-webkit-appearance:button;background-color:transparent;background-image:none}menu,ol,ul{list-style:none;margin:0;padding:0}canvas,img,svg,video{display:block;vertical-align:middle}img,video{max-width:100%;height:auto}[hidden]:where(:not([hidden=until-found])){display:none}.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border-width:0}.mx-auto{margin-left:auto;margin-right:auto}.mb-1{margin-bottom:.25rem}.mb-12{margin-bottom:3rem}.mb-2{margin-bottom:.5rem}.mb-4{margin-bottom:1rem}.mb-6{margin-bottom:1.5rem}.mb-8{margin-bottom:2rem}.ml-2{margin-left:.5rem}.mt-1{margin-top:.25rem}.mt-4{margin-top:1rem}.mt-6{margin-top:1.5rem}.mt-8{margin-top:2rem}.flex{display:flex}.inline-flex{display:inline-flex}.grid{display:grid}.hidden{display:none}.h-10{height:2.5rem}.h-2{height:.5rem}.h-3{height:.75rem}.h-5{height:1.25rem}.min-h-screen{min-height:100vh}.w-10{width:2.5rem}.w-2{width:.5rem}.w-3{width:.75rem}.w-5{width:1.25rem}.max-w-2xl{max-width:42rem}.max-w-3xl{max-width:48rem}.max-w-4xl{max-width:56rem}.max-w-5xl{max-width:64rem}.max-w-full{max-width:100%}@keyframes pulse{50%{opacity:.5}}.animate-pulse{animation:pulse 2s cubic-bezier(.4,0,.6,1) infinite}.cursor-pointer{cursor:pointer}.grid-cols-1{grid-template-columns:repeat(1,minmax(0,1fr))}.grid-cols-2{grid-template-columns:repeat(2,minmax(0,1fr))}.grid-cols-3{grid-template-columns:repeat(3,minmax(0,1fr))}.flex-col{flex-direction:column}.flex-wrap{flex-wrap:wrap}.items-center{align-items:center}.justify-center{justify-content:center}.justify-between{justify-content:space-between}.gap-2{gap:.5rem}.gap-3{gap:.75rem}.gap-4{gap:1rem}.gap-6{gap:1.5rem}.space-y-4>:not([hidden])~:not([hidden]){--tw-space-y-reverse:0;margin-top:calc(1rem*(1 - var(--tw-space-y-reverse)));margin-bottom:calc(1rem*var(--tw-space-y-reverse))}.overflow-x-auto{overflow-x:auto}.scroll-smooth{scroll-behavior:smooth}.rounded{border-radius:.25rem}.rounded-full{border-radius:9999px}.rounded-lg{border-radius:.5rem}.rounded-xl{border-radius:.75rem}.border{border-width:1px}.border-2{border-width:2px}.border-t{border-top-width:1px}.border-dashed{border-style:dashed}.border-accent{border-color:#6366f1}.border-accent\/20{border-color:rgba(99,102,241,.2)}.border-accent\/25{border-color:rgba(99,102,241,.25)}.border-accent\/30{border-color:rgba(99,102,241,.3)}.border-ash{border-color:#27272a}.bg-accent\/10{background-color:rgba(99,102,241,.1)}.bg-accent\/15{background-color:rgba(99,102,241,.15)}.bg-ash{background-color:#27272a}.bg-ash\/50{background-color:rgba(39,39,42,.5)}.bg-black{background-color:#000}.bg-green-500\/60{background-color:rgba(34,197,94,.6)}.bg-ink{background-color:#0a0a0b}.bg-red-500\/60{background-color:rgba(239,68,68,.6)}.bg-smoke{background-color:#18181b}.bg-white{background-color:#fff}.bg-yellow-500\/60{background-color:rgba(234,179,8,.6)}.p-12{padding:3rem}.p-6{padding:1.5rem}.p-8{padding:2rem}.px-3{padding-left:.75rem;padding-right:.75rem}.px-4{padding-left:1rem;padding-right:1rem}.px-6{padding-left:1.5rem;padding-right:1.5rem}.py-1{padding-top:.25rem;padding-bottom:.25rem}.py-1\.5{padding-top:.375rem;padding-bottom:.375rem}.py-12{padding-top:3rem;padding-bottom:3rem}.py-2{padding-top:.5rem;padding-bottom:.5rem}.py-20{padding-top:5rem;padding-bottom:5rem}.py-3{padding-top:.75rem;padding-bottom:.75rem}.text-center{text-align:center}.font-mono{font-family:JetBrains Mono,Fira Code,monospace}.font-sans{font-family:Inter,system-ui,-apple-system,sans-serif}.text-2xl{font-size:1.5rem;line-height:2rem}.text-3xl{font-size:1.875rem;line-height:2.25rem}.text-4xl{font-size:2.25rem;line-height:2.5rem}.text-5xl{font-size:3rem;line-height:1}.text-6xl{font-size:3.75rem;line-height:1}.text-lg{font-size:1.125rem;line-height:1.75rem}.text-sm{font-size:.875rem;line-height:1.25rem}.text-xl{font-size:1.25rem;line-height:1.75rem}.text-xs{font-size:.75rem;line-height:1rem}.font-bold{font-weight:700}.font-extrabold{font-weight:800}.font-medium{font-weight:500}.font-semibold{font-weight:600}.uppercase{text-transform:uppercase}.leading-\[1\.1\]{line-height:1.1}.leading-relaxed{line-height:1.625}.tracking-tight{letter-spacing:-.025em}.tracking-wider{letter-spacing:.05em}.text-accent{color:#6366f1}.text-accent-light{color:#818cf8}.text-bone{color:#e4e4e7}.text-green-400{color:#4ade80}.text-ink{color:#0a0a0b}.text-red-400{color:#f87171}.text-silver{color:#a1a1aa}.text-silver\/40{color:rgba(161,161,170,.4)}.text-silver\/50{color:rgba(161,161,170,.5)}.text-silver\/60{color:rgba(161,161,170,.6)}.text-silver\/70{color:rgba(161,161,170,.7)}.text-white{color:#fff}.underline{text-decoration-line:underline}.opacity-50{opacity:.5}.transition-all{transition-property:all;transition-timing-function:cubic-bezier(.4,0,.2,1);transition-duration:.15s}.transition-colors{transition-property:color,background-color,border-color,text-decoration-color,fill,stroke;transition-timing-function:cubic-bezier(.4,0,.2,1);transition-duration:.15s}.hover\:border-accent\/50:hover{border-color:rgba(99,102,241,.5)}.hover\:bg-accent\/25:hover{background-color:rgba(99,102,241,.25)}.hover\:bg-bone:hover{background-color:#e4e4e7}.hover\:text-accent-light:hover{color:#818cf8}.hover\:text-white:hover{color:#fff}@media (min-width:768px){.md\:grid-cols-2{grid-template-columns:repeat(2,minmax(0,1fr))}.md\:grid-cols-3{grid-template-columns:repeat(3,minmax(0,1fr))}.md\:flex-row{flex-direction:row}.md\:gap-6{gap:1.5rem}.md\:text-2xl{font-size:1.5rem;line-height:2rem}.md\:text-4xl{font-size:2.25rem;line-height:2.5rem}.md\:text-5xl{font-size:3rem;line-height:1}.md\:text-7xl{font-size:4.5rem;line-height:1}}</style>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    body { -webkit-font-smoothing: antialiased; }
+    .gradient-text {
+      background: linear-gradient(135deg, #6366f1 0%, #818cf8 50%, #a78bfa 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .stat-card {
+      background: linear-gradient(145deg, rgba(99,102,241,0.08) 0%, rgba(39,39,42,0.5) 100%);
+      border: 1px solid rgba(99,102,241,0.15);
+    }
+    .stat-card:hover {
+      border-color: rgba(99,102,241,0.35);
+      transform: translateY(-2px);
+      transition: all 0.2s ease;
+    }
+    .pipeline-step {
+      position: relative;
+    }
+    .pipeline-step::after {
+      content: '\2192';
+      position: absolute;
+      right: -1.5rem;
+      top: 50%;
+      transform: translateY(-50%);
+      color: #6366f1;
+      font-size: 1.25rem;
+    }
+    .pipeline-step:last-child::after { content: ''; }
+    .code-block {
+      background: rgba(10,10,11,0.8);
+      border: 1px solid rgba(99,102,241,0.15);
+    }
+    @media (max-width: 768px) {
+      .pipeline-step::after {
+        content: '\2193';
+        right: 50%;
+        top: auto;
+        bottom: -1.5rem;
+        transform: translateX(50%);
+      }
+    }
+    a:focus-visible, button:focus-visible {
+      outline: 2px solid #6366f1;
+      outline-offset: 2px;
+    }
+    /* FAQ details styling */
+    details {
+      border: 1px solid #27272a;
+      border-radius: 0.5rem;
+      background: #18181b;
+      transition: all 0.2s ease;
+    }
+    details[open] {
+      border-color: rgba(99,102,241,0.3);
+    }
+    details summary {
+      cursor: pointer;
+      padding: 1rem 1.5rem;
+      font-weight: 600;
+      color: #e4e4e7;
+      list-style: none;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    details summary::-webkit-details-marker { display: none; }
+    details summary::after {
+      content: '+';
+      color: #6366f1;
+      font-size: 1.25rem;
+      font-weight: 700;
+      transition: transform 0.2s ease;
+    }
+    details[open] summary::after {
+      transform: rotate(45deg);
+    }
+    details .faq-answer {
+      padding: 0 1.5rem 1rem;
+      color: #a1a1aa;
+      line-height: 1.625;
+    }
+    /* Table styling */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    th {
+      text-align: left;
+      padding: 0.75rem 1rem;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #a1a1aa;
+      border-bottom: 1px solid #27272a;
+    }
+    td {
+      padding: 0.75rem 1rem;
+      font-size: 0.875rem;
+      color: #e4e4e7;
+      border-bottom: 1px solid rgba(39,39,42,0.5);
+    }
+    tr:last-child td { border-bottom: none; }
+    /* API param list */
+    .param-name { color: #818cf8; }
+    .param-type { color: #a1a1aa; font-style: italic; }
+    .param-default { color: rgba(161,161,170,0.6); }
+  </style>
+</head>
+<body class="bg-ink text-bone font-sans">
+
+  <!-- Nav -->
+  <nav class="fixed top-0 left-0 right-0 z-50 flex items-center gap-6 px-6 py-3 bg-ink/80 backdrop-blur-md border-b border-white/5">
+    <a href="../" class="font-bold text-white text-sm tracking-tight">hevc<span class="text-accent">.js</span></a>
+    <div class="flex gap-4 ml-auto">
+      <a href="../../demo/" class="text-silver/60 text-xs hover:text-white transition-colors">Core decoder</a>
+      <a href="../../demo/dash.html" class="text-silver/60 text-xs hover:text-white transition-colors">dash.js</a>
+      <a href="../../demo/shaka.html" class="text-silver/60 text-xs hover:text-white transition-colors">Shaka</a>
+      <a href="dashjs-plugin.html" class="text-silver/60 text-xs hover:text-white transition-colors">Docs</a>
+      <a href="comparison.html" class="text-accent-light text-xs font-medium">Compare</a>
+      <a href="https://github.com/privaloops/hevc.js" target="_blank" rel="noopener noreferrer" class="text-silver/60 text-xs hover:text-white transition-colors">GitHub</a>
+    </div>
+  </nav>
+
+  <!-- Hero -->
+  <header class="px-6 py-20 mt-12" aria-label="Introduction">
+    <div class="max-w-3xl mx-auto text-center">
+      <div class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-accent/10 border border-accent/20 text-accent-light text-sm font-medium mb-8">
+        <span class="w-2 h-2 rounded-full bg-accent animate-pulse" aria-hidden="true"></span>
+        Comparison
+      </div>
+
+      <h1 class="text-4xl md:text-5xl font-extrabold tracking-tight leading-[1.1] mb-6">
+        <span class="text-white">HEVC in the browser: </span><span class="gradient-text">four ways, compared</span>
+      </h1>
+
+      <p class="text-xl text-silver max-w-2xl mx-auto mb-4 leading-relaxed">
+        hevc.js vs libde265.js vs ffmpeg.wasm vs h265web.js — honestly.
+      </p>
+
+      <p class="text-lg text-silver/70 mb-4">
+        These four projects solve different problems. This page exists so you pick the right one —
+        including when that's not hevc.js.
+      </p>
+    </div>
+  </header>
+
+  <main>
+    <!-- Comparison table -->
+    <section class="px-6 py-12" aria-label="Comparison table">
+      <div class="max-w-5xl mx-auto">
+        <div class="code-block rounded-xl p-6 overflow-x-auto">
+          <table>
+            <thead>
+              <tr>
+                <th></th>
+                <th>hevc.js</th>
+                <th>libde265.js</th>
+                <th>ffmpeg.wasm</th>
+                <th>h265web.js</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="param-name">Built for</td>
+                <td>MSE streaming fallback for dash.js / Shaka Player</td>
+                <td>Raw HEVC decoding (proof of concept)</td>
+                <td>General A/V toolbox — file processing</td>
+                <td>Complete standalone player (live FLV/TS/HLS focus)</td>
+              </tr>
+              <tr>
+                <td class="param-name">WASM size</td>
+                <td class="text-accent-light font-semibold">236 KB</td>
+                <td>~2 MB</td>
+                <td>Tens of MB (core)</td>
+                <td>Multiple builds (incl. 256/512 MB memory variants)</td>
+              </tr>
+              <tr>
+                <td class="param-name">License</td>
+                <td class="text-accent-light font-semibold">MIT</td>
+                <td>LGPL-3.0</td>
+                <td>MIT wrapper — FFmpeg core LGPL/GPL per build</td>
+                <td>Custom (CYL_Free-1.0)</td>
+              </tr>
+              <tr>
+                <td class="param-name">COOP/COEP headers</td>
+                <td>Not required</td>
+                <td>Not required</td>
+                <td>Required for the multithreaded build (SharedArrayBuffer)</td>
+                <td>Depends on build</td>
+              </tr>
+              <tr>
+                <td class="param-name">Plugs into dash.js / Shaka</td>
+                <td class="text-green-400">Yes — drop-in plugins</td>
+                <td>No</td>
+                <td>No</td>
+                <td>No — it is its own player</td>
+              </tr>
+              <tr>
+                <td class="param-name">Output path</td>
+                <td>Real SourceBuffer fed with H.264 — the player keeps buffer, seek &amp; ABR control</td>
+                <td>Canvas</td>
+                <td>Files / buffers</td>
+                <td>Canvas / WebGL rendering</td>
+              </tr>
+              <tr>
+                <td class="param-name">Native HEVC passthrough</td>
+                <td class="text-green-400">Yes — SourceBuffer probe, dormant when native decode exists</td>
+                <td>—</td>
+                <td>—</td>
+                <td>Hardware decode via WebCodecs in its own pipeline</td>
+              </tr>
+              <tr>
+                <td class="param-name">CPU-aware quality control</td>
+                <td class="text-green-400">Yes — caps the host player's ABR when transcoding falls behind</td>
+                <td>—</td>
+                <td>—</td>
+                <td>—</td>
+              </tr>
+              <tr>
+                <td class="param-name">1080p decode (WASM, single-threaded)</td>
+                <td>~61 fps — 83% of libde265's speed at 1/8th the size</td>
+                <td>Baseline (faster, larger)</td>
+                <td>Depends on threads/build</td>
+                <td>Not published here — see their benchmarks</td>
+              </tr>
+              <tr>
+                <td class="param-name">Validation</td>
+                <td>Pixel-perfect vs ffmpeg on 128 bitstreams</td>
+                <td>Mature libde265 core, early JS port</td>
+                <td>FFmpeg itself</td>
+                <td>Production usage at large platforms</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="text-silver/50 text-sm mt-4 text-center">
+          Sizes, licenses and capabilities as published by each project (August 2026). Corrections welcome —
+          <a href="https://github.com/privaloops/hevc.js/issues" class="text-accent hover:text-accent-light" target="_blank" rel="noopener noreferrer">open an issue</a>.
+        </p>
+      </div>
+    </section>
+
+    <!-- When to pick what -->
+    <section class="px-6 py-20" aria-label="When to pick what">
+      <div class="max-w-4xl mx-auto">
+        <h2 class="text-3xl md:text-4xl font-bold text-white text-center mb-12">Which one should you use?</h2>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div class="stat-card rounded-xl p-6">
+            <h3 class="text-white font-bold mb-2">Pick <span class="text-accent-light">hevc.js</span> if…</h3>
+            <p class="text-silver leading-relaxed text-sm">
+              You already ship dash.js or Shaka Player and need HEVC streams to play on clients without
+              native HEVC decode — Chrome on Windows without an HEVC-capable GPU, Edge/Firefox without the
+              Microsoft codec extension, Linux fleets. One function call, MIT license, no server changes,
+              dormant when native decode exists.
+            </p>
+          </div>
+
+          <div class="stat-card rounded-xl p-6">
+            <h3 class="text-white font-bold mb-2">Pick <span class="text-accent-light">ffmpeg.wasm</span> if…</h3>
+            <p class="text-silver leading-relaxed text-sm">
+              You need general media processing in the browser — converting files, extracting frames,
+              transmuxing across dozens of codecs and containers. It's a toolbox, not a playback fallback:
+              no MSE pipeline, and the fast multithreaded build needs COOP/COEP headers.
+            </p>
+          </div>
+
+          <div class="stat-card rounded-xl p-6">
+            <h3 class="text-white font-bold mb-2">Pick <span class="text-accent-light">h265web.js</span> if…</h3>
+            <p class="text-silver leading-relaxed text-sm">
+              You want a complete, battle-tested standalone player — especially for live surveillance-style
+              workflows (HttpFLV, TS, WebSocket) — and its custom license works for your product. You adopt
+              its player UI and rendering pipeline rather than plugging into your own.
+            </p>
+          </div>
+
+          <div class="stat-card rounded-xl p-6">
+            <h3 class="text-white font-bold mb-2">Pick <span class="text-accent-light">libde265.js</span> if…</h3>
+            <p class="text-silver leading-relaxed text-sm">
+              You're experimenting with raw HEVC decoding and want the libde265 core in a browser context.
+              It's an early-stage port without a streaming pipeline — for production streaming you'll be
+              building the MSE layer yourself, and the LGPL license may matter for your distribution model.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- CTA -->
+    <section class="px-6 py-20" aria-label="Get started">
+      <div class="max-w-3xl mx-auto text-center">
+        <h2 class="text-3xl md:text-4xl font-bold text-white mb-6">See hevc.js run</h2>
+        <p class="text-silver mb-8">30-second HEVC ABR stream, transcoded to H.264 live in your browser.</p>
+        <div class="flex flex-wrap gap-4 justify-center">
+          <a href="../../demo/dash.html"
+             class="inline-flex items-center gap-2 px-6 py-3 bg-white text-ink font-semibold rounded-lg hover:bg-bone transition-colors">
+            Live demo
+          </a>
+          <a href="https://github.com/privaloops/hevc.js" target="_blank" rel="noopener noreferrer"
+             class="inline-flex items-center gap-2 px-6 py-3 bg-accent/15 text-accent-light font-semibold rounded-lg border border-accent/25 hover:bg-accent/25 transition-colors">
+            GitHub
+          </a>
+          <a href="dashjs-plugin.html"
+             class="inline-flex items-center gap-2 px-6 py-3 bg-smoke text-silver font-semibold rounded-lg border border-ash hover:text-white transition-colors">
+            dash.js plugin docs
+          </a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Footer -->
+  <footer class="px-6 py-12 border-t border-ash">
+    <div class="max-w-5xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
+      <div class="text-silver/50 text-sm">
+        <a href="../" class="text-silver hover:text-white">Home</a> &middot;
+        <a href="dashjs-plugin.html" class="text-silver hover:text-white">dash.js plugin</a> &middot;
+        <a href="shaka-plugin.html" class="text-silver hover:text-white">Shaka plugin</a> &middot;
+        <a href="https://github.com/privaloops/hevc.js" class="text-silver hover:text-white" rel="noopener noreferrer" target="_blank">GitHub</a>
+      </div>
+      <div class="text-silver/50 text-sm">
+        Built by <a href="https://www.developpement.ai" class="text-accent hover:text-accent-light" rel="noopener noreferrer" target="_blank">developpement.ai</a> &middot;
+        <a href="https://www.developpement.ai/blog/hevcjs-decodeur-h265-navigateur-wasm" class="text-silver hover:text-white" rel="noopener noreferrer" target="_blank">Case study</a>
+      </div>
+    </div>
+  </footer>
+
+<script data-goatcounter="https://privaloops.goatcounter.com/count"
+        async src="//gc.zgo.at/count.js"></script>
+</body>
+</html>

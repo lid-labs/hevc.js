@@ -10,15 +10,47 @@
 
 **让浏览器在没有原生支持的情况下播放 HEVC/H.265 视频。无需插件,无需安装,无需修改服务器配置。**
 
+![hevc.js 在浏览器中播放 HEVC DASH 流 — WASM 实时转码为 H.264,并实时显示每段转码速度](docs/assets/dashjs-demo.gif)
+
 一个用 C++17 从零开始编写的 HEVC 解码器,编译为 WebAssembly,并附带一个开箱即用的 dash.js 插件。在 Web Worker 中通过 WebCodecs 实时将 HEVC 转码为 H.264,完全在客户端完成。可在所有支持 WebCodecs H.264 编码的 Chrome、Edge 和 Firefox 上运行。
 
 1080p @ 60fps。WASM 体积仅 236KB。零依赖。无需特殊服务器标头。
 
 由一名开发者在 AI 协助下用 8 天构建完成 — [阅读完整故事](https://www.developpement.ai/blog/hevcjs-decodeur-h265-navigateur-wasm)。
 
+## 采用情况
+
+- **dash.js** — hevc.js 已作为官方 [HEVC 播放示例](https://github.com/Dash-Industry-Forum/dash.js/pull/5028) 收录于 dash.js(5.2.1+)。
+- **Shaka Player** — [Shaka 插件](https://www.npmjs.com/package/@hevcjs/shaka-plugin) 是应 Shaka Player 维护者的[请求](https://github.com/privaloops/hevc.js/issues/101)而开发的。
+
+后续计划见 [ROADMAP.md](ROADMAP.md)。
+
 ---
 
 ## JavaScript 插件
+
+### 30 秒快速体验(CDN,零构建)
+
+无需打包工具,无需复制文件 — 全部资源从公共 CDN 加载:
+
+```html
+<video id="player" controls></video>
+
+<script src="https://cdn.dashjs.org/latest/dash.all.min.js"></script>
+<script type="module">
+  import { attachHevcSupport } from 'https://esm.sh/@hevcjs/dashjs-plugin@1';
+
+  const player = dashjs.MediaPlayer().create();
+  await attachHevcSupport(player, {
+    wasmUrl:       'https://unpkg.com/@hevcjs/core@1/dist/wasm/hevc-decode.js',
+    wasmBinaryUrl: 'https://unpkg.com/@hevcjs/core@1/dist/wasm/hevc-decode.wasm',
+    workerUrl:     'https://unpkg.com/@hevcjs/core@1/dist/transcode-worker.js',
+  });
+  player.initialize(document.querySelector('#player'), 'https://example.com/manifest.mpd', true);
+</script>
+```
+
+跨域 Worker 与 WASM 加载会自动处理。生产环境建议使用下面的 npm 安装方式(自托管资源、锁定版本)。
 
 ### 安装
 
