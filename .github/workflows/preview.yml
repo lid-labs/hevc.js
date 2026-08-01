@@ -1,0 +1,86 @@
+name: PR Preview (Vercel)
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  VERCEL_ORG_ID: team_5UPjuYH4MM0WGn8XpFczVT6O
+  VERCEL_PROJECT_ID: prj_sHDUBtADHvKpwlA8DwSmUVGVz0x7
+
+jobs:
+  preview:
+    # Forks have no access to VERCEL_TOKEN — skip instead of failing.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Emscripten
+        uses: mymindstorm/setup-emsdk@4528d102f7230f0e7b276855c01ea1159be0e984 # v16
+        with:
+          version: 3.1.51
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build WASM
+        run: |
+          emcmake cmake -B build-wasm -DBUILD_WASM=ON -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF
+          cmake --build build-wasm --parallel
+
+      - name: Build JS packages
+        run: pnpm build:js
+
+      - name: Build demo bundles
+        run: pnpm build:demo
+
+      # Same assembly as pages.yml so the preview matches production exactly.
+      - name: Prepare site
+        run: |
+          mkdir -p _site/demo
+          cp -r site/* _site/
+          cp -r demo/* _site/demo/
+          sed -i 's|\.\./demo/|./demo/|g' _site/index.html
+          find _site/docs -name '*.html' -exec sed -i 's|\.\./\.\./demo/|\.\./demo/|g' {} +
+          find _site/demo -name '*.html' -exec sed -i 's|\.\./site/|\.\./|g' {} +
+
+      - name: Deploy preview to Vercel
+        id: deploy
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          if [ -z "$VERCEL_TOKEN" ]; then
+            echo "::error::VERCEL_TOKEN secret is not configured"; exit 1
+          fi
+          url=$(npx --yes vercel@58.0.0 deploy _site --token "$VERCEL_TOKEN" --yes | tail -1)
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "### Preview: $url" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Comment preview URL on the PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr comment ${{ github.event.pull_request.number }} \
+            --repo ${{ github.repository }} \
+            --edit-last --create-if-none \
+            --body "🔍 Preview deployed: ${{ steps.deploy.outputs.url }}"
