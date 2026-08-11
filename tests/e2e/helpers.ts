@@ -15,8 +15,8 @@ export function collectConsoleErrors(page: Page): string[] {
 /** Navigate to a demo page and wait for initial load */
 export async function loadDemoPage(page: Page, path: string) {
   const baseURL = page.context().browser()?.version
-    ? (process.env.LOCAL_DEMO === '1' ? 'http://localhost:8090' : 'https://privaloops.github.io/hevc.js/demo')
-    : 'https://privaloops.github.io/hevc.js/demo';
+    ? (process.env.LOCAL_DEMO === '1' ? 'http://localhost:8090' : 'https://hevcjs.dev/demo')
+    : 'https://hevcjs.dev/demo';
   await page.goto(`${baseURL}/${path}`, { waitUntil: 'networkidle' });
 }
 
