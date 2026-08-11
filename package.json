@@ -73,10 +73,10 @@
   "homepage": "https://hevcjs.dev",
   "repository": {
     "type": "git",
-    "url": "https://github.com/privaloops/hevc.js.git"
+    "url": "https://github.com/lid-labs/hevc.js.git"
   },
   "bugs": {
-    "url": "https://github.com/privaloops/hevc.js/issues"
+    "url": "https://github.com/lid-labs/hevc.js/issues"
   },
   "engines": {
     "node": ">=18"
