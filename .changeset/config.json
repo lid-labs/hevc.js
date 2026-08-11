@@ -2,7 +2,7 @@
   "$schema": "https://unpkg.com/@changesets/config@3.1.4/schema.json",
   "changelog": [
     "@changesets/changelog-github",
-    { "repo": "privaloops/hevc.js" }
+    { "repo": "lid-labs/hevc.js" }
   ],
   "commit": false,
   "fixed": [],
