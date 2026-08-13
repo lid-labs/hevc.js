@@ -6,7 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+- **`@hevcjs/hlsjs-plugin`**: hls.js plugin for HEVC playback via the shared MSE intercept. `attachHevcSupport(config)` — no player instance needed; supports fMP4 HLS with video-only or demuxed-audio renditions (master playlists + audio group validated end-to-end). Muxed A/V segments play video-only for now.
+- **Core `strictAppendProgress` intercept option**: updateend for a media append only fires once that segment's first transcoded chunk reached the SourceBuffer — satisfies hls.js's `bufferAppendNoProgress` watchdog. Off by default (dash.js/Shaka unchanged).
+- **Core: `SourceBuffer.changeType()` patched**: HEVC mimes map to their H.264 equivalent on codec switches.
+- **HLS demo page** (`demo/hls.html`) with the same four presets as the DASH demo (BBB 30s ABR + three test patterns), repackaged from the DASH streams by `tools/gen_hls_streams.sh` (`-c copy`, CODECS attribute injected from the DASH manifest, hvc1 tagging). E2E spec `tests/e2e/hls.spec.ts`.
+
+### Fixed
+- **Transcoded segments land at the wrong position after an out-of-buffer seek** (`segment-transcoder.ts`): mp4box.js continues its pre-seek clock; samples are now rebased onto the segment's tfdt (structurally parsed moof→traf→tfdt, strict on ambiguity). Affects any player that repositions without `abort()` — hls.js ≥1.6.6 in particular.
+- **`timestampOffset` seek heuristic** (`mse-intercept.ts`): flush only on a ≥0.5s jump with queued segments after a first init — no more pipeline resets on hls.js routine alignment writes or on playlists starting at `EXT-X-MEDIA-SEQUENCE > 0`.
 
 ## [1.1.0] - 2026-05-10
 

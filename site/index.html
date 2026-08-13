@@ -121,6 +121,7 @@
       <a href="../demo/" class="text-silver/60 text-xs hover:text-white transition-colors">Core decoder</a>
       <a href="../demo/dash.html" class="text-silver/60 text-xs hover:text-white transition-colors">dash.js</a>
       <a href="../demo/shaka.html" class="text-silver/60 text-xs hover:text-white transition-colors">Shaka</a>
+      <a href="../demo/hls.html" class="text-silver/60 text-xs hover:text-white transition-colors">hls.js</a>
       <a href="./docs/dashjs-plugin.html" class="text-silver/60 text-xs hover:text-white transition-colors">Docs</a>
       <a href="https://github.com/privaloops/hevc.js" target="_blank" rel="noopener noreferrer" class="text-silver/60 text-xs hover:text-white transition-colors">GitHub</a>
     </div>
@@ -321,13 +322,13 @@
     <!-- Plugins -->
     <section class="px-6 py-20" aria-label="Player plugins">
       <div class="max-w-5xl mx-auto">
-        <h2 class="text-3xl md:text-4xl font-bold text-white text-center mb-4">HEVC plugin for dash.js</h2>
+        <h2 class="text-3xl md:text-4xl font-bold text-white text-center mb-4">HEVC plugins for dash.js &amp; hls.js</h2>
         <p class="text-silver text-center max-w-2xl mx-auto mb-12">
-          HEVC playback for dash.js. 3 lines of code.
+          HEVC playback for your player. A few lines of code.
           <br><span class="text-silver/50">Activates only when native HEVC is unavailable.</span>
         </p>
 
-        <div class="max-w-md mx-auto">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-3xl mx-auto">
           <!-- dash.js -->
           <div class="code-block rounded-xl p-6">
             <div class="flex items-center gap-3 mb-4">
@@ -342,18 +343,39 @@
 
 <span class="text-accent">await</span> attachHevcSupport(player);</code></pre>
           </div>
+          <!-- hls.js -->
+          <div class="code-block rounded-xl p-6">
+            <div class="flex items-center gap-3 mb-4">
+              <div class="w-10 h-10 rounded-lg bg-accent/15 flex items-center justify-center text-accent font-bold text-sm" aria-hidden="true">HLS</div>
+              <div>
+                <h3 class="text-white font-semibold">hls.js</h3>
+                <div class="text-xs text-silver/50">@hevcjs/hlsjs-plugin</div>
+              </div>
+            </div>
+            <pre class="text-xs font-mono text-silver leading-relaxed"><code><span class="text-accent">import</span> { attachHevcSupport }
+  <span class="text-accent">from</span> <span class="text-green-400">'@hevcjs/hlsjs-plugin'</span>;
+
+<span class="text-accent">await</span> attachHevcSupport();  <span class="text-silver/50">// before new Hls()</span></code></pre>
+          </div>
         </div>
 
         <div class="flex flex-col items-center gap-2 mt-8">
           <code class="text-sm font-mono text-silver/60 bg-ash/50 px-4 py-2 rounded-lg">npm install @hevcjs/dashjs-plugin</code>
+          <code class="text-sm font-mono text-silver/60 bg-ash/50 px-4 py-2 rounded-lg">npm install @hevcjs/hlsjs-plugin</code>
         </div>
 
         <div class="flex flex-wrap gap-4 justify-center mt-8">
           <a href="../demo/dash.html" class="inline-flex items-center gap-2 px-4 py-2 bg-accent/10 text-accent-light text-sm font-medium rounded-lg border border-accent/20 hover:bg-accent/25 transition-colors">
             dash.js demo &rarr;
           </a>
+          <a href="../demo/hls.html" class="inline-flex items-center gap-2 px-4 py-2 bg-accent/10 text-accent-light text-sm font-medium rounded-lg border border-accent/20 hover:bg-accent/25 transition-colors">
+            hls.js demo &rarr;
+          </a>
           <a href="./docs/dashjs-plugin.html" class="inline-flex items-center gap-2 px-4 py-2 bg-smoke text-silver text-sm font-medium rounded-lg border border-ash hover:text-white transition-colors">
-            Full documentation &amp; API reference &rarr;
+            dash.js docs &amp; API reference &rarr;
+          </a>
+          <a href="./docs/hlsjs-plugin.html" class="inline-flex items-center gap-2 px-4 py-2 bg-smoke text-silver text-sm font-medium rounded-lg border border-ash hover:text-white transition-colors">
+            hls.js docs &amp; API reference &rarr;
           </a>
         </div>
       </div>

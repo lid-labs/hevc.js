@@ -55,7 +55,9 @@
 ### 安装
 
 ```bash
-npm install @hevcjs/dashjs-plugin
+npm install @hevcjs/dashjs-plugin   # dash.js
+npm install @hevcjs/shaka-plugin    # Shaka Player
+npm install @hevcjs/hlsjs-plugin    # hls.js
 ```
 
 ### 配置
@@ -86,6 +88,23 @@ const player = dashjs.MediaPlayer().create();
 attachHevcSupport(player, { workerUrl: './transcode-worker.js' });
 player.initialize(videoElement, 'https://example.com/manifest.mpd', true);
 ```
+
+### hls.js
+
+```js
+import Hls from 'hls.js';
+import { attachHevcSupport } from '@hevcjs/hlsjs-plugin';
+
+// 必须在 `new Hls()` 之前调用 — hls.js 在解析清单时
+// 会用 MediaSource.isTypeSupported 过滤清晰度层级。
+await attachHevcSupport({ workerUrl: './transcode-worker.js' });
+
+const hls = new Hls({ preferManagedMediaSource: false });
+hls.attachMedia(videoElement);
+hls.loadSource('https://example.com/playlist.m3u8');
+```
+
+目前支持 fMP4 HLS(纯视频或音视频分离的多码率流);音视频混装(muxed)的分片暂时只播放视频。详见[插件 README](packages/hlsjs-plugin/README.md)(英文)。
 
 ### 转码工作原理
 

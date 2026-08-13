@@ -3,24 +3,24 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Shaka Player HEVC Plugin — H.265 Browser Fallback via WebAssembly | hevc.js</title>
-  <meta name="description" content="Drop-in HEVC/H.265 plugin for Shaka Player. Registers a Shaka Transmuxer that transcodes HEVC to H.264 client-side via WebAssembly. npm install @hevcjs/shaka-plugin. Works with live & VOD.">
+  <title>hls.js HEVC Plugin — H.265 Browser Fallback via WebAssembly | hevc.js</title>
+  <meta name="description" content="Drop-in HEVC/H.265 plugin for hls.js. Browser fallback that transcodes HEVC to H.264 client-side via WebAssembly. npm install @hevcjs/hlsjs-plugin. Call once before new Hls().">
   <meta name="robots" content="index, follow">
   <meta name="theme-color" content="#0a0a0b">
-  <link rel="canonical" href="https://www.hevcjs.dev/docs/shaka-plugin.html">
+  <link rel="canonical" href="https://www.hevcjs.dev/docs/hlsjs-plugin.html">
 
   <!-- Open Graph -->
-  <meta property="og:title" content="Shaka Player HEVC Plugin — H.265 Browser Fallback via WebAssembly">
-  <meta property="og:description" content="Drop-in HEVC/H.265 plugin for Shaka Player. Registers a Shaka Transmuxer that transcodes HEVC to H.264 client-side via WebAssembly. Works with live & VOD.">
+  <meta property="og:title" content="hls.js HEVC Plugin — H.265 Browser Fallback via WebAssembly">
+  <meta property="og:description" content="Drop-in HEVC/H.265 plugin for hls.js. Browser fallback that transcodes HEVC to H.264 client-side via WebAssembly. Call once before new Hls().">
   <meta property="og:type" content="website">
-  <meta property="og:url" content="https://www.hevcjs.dev/docs/shaka-plugin.html">
+  <meta property="og:url" content="https://www.hevcjs.dev/docs/hlsjs-plugin.html">
   <meta property="og:site_name" content="hevc.js">
   <meta property="og:image" content="https://www.hevcjs.dev/og-image.png">
 
   <!-- Twitter Card -->
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Shaka Player HEVC Plugin — H.265 Browser Fallback via WebAssembly">
-  <meta name="twitter:description" content="Drop-in HEVC/H.265 plugin for Shaka Player. Registers a Shaka Transmuxer that transcodes HEVC to H.264 client-side via WebAssembly.">
+  <meta name="twitter:title" content="hls.js HEVC Plugin — H.265 Browser Fallback via WebAssembly">
+  <meta name="twitter:description" content="Drop-in HEVC/H.265 plugin for hls.js. Browser fallback that transcodes HEVC to H.264 client-side via WebAssembly.">
   <meta name="twitter:image" content="https://www.hevcjs.dev/og-image.png">
 
   <!-- Favicon -->
@@ -33,13 +33,13 @@
   {
     "@context": "https://schema.org",
     "@type": "SoftwareSourceCode",
-    "name": "@hevcjs/shaka-plugin",
-    "description": "Drop-in HEVC/H.265 plugin for Shaka Player. Transcodes HEVC to H.264 client-side via WebAssembly.",
+    "name": "@hevcjs/hlsjs-plugin",
+    "description": "Drop-in HEVC/H.265 plugin for hls.js. Transcodes HEVC to H.264 client-side via WebAssembly.",
     "codeRepository": "https://github.com/privaloops/hevc.js",
     "programmingLanguage": "TypeScript",
     "runtimePlatform": "Web Browser",
     "license": "https://opensource.org/licenses/MIT",
-    "url": "https://www.hevcjs.dev/docs/shaka-plugin.html"
+    "url": "https://www.hevcjs.dev/docs/hlsjs-plugin.html"
   }
   </script>
 
@@ -54,7 +54,7 @@
         "name": "Does it work with live streams?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "Yes. The transmuxer converts segments as Shaka requests them, so live (low-latency) and VOD streams both work. The only difference is that the first segment takes 2-3 seconds to transcode, which adds to the initial live edge latency."
+          "text": "Yes. The plugin intercepts segments as they arrive, so live (low-latency) and VOD streams both work. The only difference is that the first segment takes 2-3 seconds to transcode, which adds to the initial live edge latency."
         }
       },
       {
@@ -62,7 +62,7 @@
         "name": "What happens when native HEVC is available?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "Shaka plays HEVC natively and the transmuxer stays out of the way — Safari, any browser on macOS, Chrome 107+ on Windows with an HEVC-capable GPU, or Edge/Firefox on Windows with the Microsoft HEVC Video Extension installed. To force transcoding even when native HEVC is available, use Shaka's built-in player.configure({ mediaSource: { forceTransmux: true } })."
+          "text": "Nothing. The plugin probes native HEVC support at startup — by actually creating an HEVC SourceBuffer, not just calling isTypeSupported — and stays dormant when the browser can play HEVC directly. Zero overhead. To transcode anyway (for testing), pass forceTranscode: true."
         }
       },
       {
@@ -75,10 +75,18 @@
       },
       {
         "@type": "Question",
+        "name": "What about muxed audio+video segments?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Not yet supported. fMP4 segments that mux audio and video into a single audiovideo SourceBuffer would play video-only. Supported today: fMP4 streams with video-only or demuxed audio renditions — master playlists with an audio group work and are validated end-to-end. HEVC in MPEG-TS is untested."
+        }
+      },
+      {
+        "@type": "Question",
         "name": "How is this different from the dash.js plugin?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "The Shaka plugin registers a native Shaka Transmuxer for hev1/hvc1, so Shaka handles MIME routing itself. The dash.js plugin instead intercepts the MSE pipeline directly. Both share the same @hevcjs/core HEVC decoder and H.264 encoder."
+          "text": "Both share the same @hevcjs/core MSE intercept, HEVC decoder, and H.264 encoder. The difference: the hls.js plugin needs no player instance. It must be called BEFORE new Hls(), because hls.js filters levels against MediaSource.isTypeSupported at manifest parse time — the patched isTypeSupported keeps HEVC levels in the ladder."
         }
       }
     ]
@@ -210,7 +218,7 @@
       <a href="../../demo/dash.html" class="text-silver/60 text-xs hover:text-white transition-colors">dash.js</a>
       <a href="../../demo/shaka.html" class="text-silver/60 text-xs hover:text-white transition-colors">Shaka</a>
       <a href="../../demo/hls.html" class="text-silver/60 text-xs hover:text-white transition-colors">hls.js</a>
-      <a href="shaka-plugin.html" class="text-accent-light text-xs font-medium">Docs</a>
+      <a href="hlsjs-plugin.html" class="text-accent-light text-xs font-medium">Docs</a>
       <a href="https://github.com/privaloops/hevc.js" target="_blank" rel="noopener noreferrer" class="text-silver/60 text-xs hover:text-white transition-colors">GitHub</a>
     </div>
   </nav>
@@ -220,28 +228,28 @@
     <div class="max-w-3xl mx-auto text-center">
       <div class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-accent/10 border border-accent/20 text-accent-light text-sm font-medium mb-8">
         <span class="w-2 h-2 rounded-full bg-accent animate-pulse" aria-hidden="true"></span>
-        @hevcjs/shaka-plugin
+        @hevcjs/hlsjs-plugin
       </div>
 
       <h1 class="text-4xl md:text-5xl font-extrabold tracking-tight leading-[1.1] mb-6">
-        <span class="text-white">HEVC Plugin for </span><span class="gradient-text">Shaka Player</span>
+        <span class="text-white">HEVC Plugin for </span><span class="gradient-text">hls.js</span>
       </h1>
 
       <p class="text-xl md:text-2xl text-silver max-w-2xl mx-auto mb-4 leading-relaxed">
-        Play H.265 streams in every browser. <span class="text-white font-semibold">One registration call.</span>
+        Play H.265 HLS streams in every browser. <span class="text-white font-semibold">One call before <code class="font-mono">new Hls()</code>.</span>
       </p>
 
       <p class="text-lg text-silver/70 mb-12">
-        Registers a Shaka <code class="font-mono text-accent-light">Transmuxer</code> that transcodes HEVC to H.264 client-side via WebAssembly.
-        <br>When native HEVC is available, Shaka plays it directly.
+        Transparently transcodes HEVC to H.264 client-side via WebAssembly.
+        <br>When native HEVC is available, the plugin does nothing.
       </p>
 
       <div class="flex flex-wrap gap-4 justify-center">
-        <a href="https://www.npmjs.com/package/@hevcjs/shaka-plugin" target="_blank" rel="noopener noreferrer"
+        <a href="https://www.npmjs.com/package/@hevcjs/hlsjs-plugin" target="_blank" rel="noopener noreferrer"
            class="inline-flex items-center gap-2 px-6 py-3 bg-white text-ink font-semibold rounded-lg hover:bg-bone transition-colors">
           npm install
         </a>
-        <a href="../../demo/shaka.html"
+        <a href="../../demo/hls.html"
            class="inline-flex items-center gap-2 px-6 py-3 bg-accent/15 text-accent-light font-semibold rounded-lg border border-accent/25 hover:bg-accent/25 transition-colors">
           Live demo
         </a>
@@ -255,7 +263,7 @@
       <div class="max-w-3xl mx-auto">
         <h2 class="text-3xl md:text-4xl font-bold text-white text-center mb-4">Quick start</h2>
         <p class="text-silver text-center max-w-2xl mx-auto mb-12">
-          Install the package, register the transmuxer, load your stream.
+          Install the package, call one function <span class="text-white font-medium">before</span> creating the <code class="font-mono">Hls</code> instance.
         </p>
 
         <!-- Install -->
@@ -266,27 +274,65 @@
             <div class="w-3 h-3 rounded-full bg-green-500/60"></div>
             <span class="text-xs text-silver/50 ml-2 font-mono">terminal</span>
           </div>
-          <pre class="text-sm font-mono leading-relaxed overflow-x-auto"><code><span class="text-silver/50">$</span> <span class="text-accent">npm install</span> @hevcjs/shaka-plugin shaka-player</code></pre>
+          <pre class="text-sm font-mono leading-relaxed overflow-x-auto"><code><span class="text-silver/50">$</span> <span class="text-accent">npm install</span> @hevcjs/hlsjs-plugin hls.js</code></pre>
         </div>
 
-        <!-- Usage -->
-        <div class="code-block rounded-xl p-6">
+        <!-- Usage (bundled) -->
+        <div class="code-block rounded-xl p-6 mb-6">
           <div class="flex items-center gap-2 mb-4" aria-hidden="true">
             <div class="w-3 h-3 rounded-full bg-red-500/60"></div>
             <div class="w-3 h-3 rounded-full bg-yellow-500/60"></div>
             <div class="w-3 h-3 rounded-full bg-green-500/60"></div>
-            <span class="text-xs text-silver/50 ml-2 font-mono">app.js</span>
+            <span class="text-xs text-silver/50 ml-2 font-mono">app.js — bundled (Vite, Webpack, etc.)</span>
           </div>
-          <pre class="text-sm font-mono leading-relaxed overflow-x-auto"><code><span class="text-accent">import</span> shaka <span class="text-accent">from</span> <span class="text-green-400">'shaka-player'</span>;
-<span class="text-accent">import</span> { registerHevcTransmuxer } <span class="text-accent">from</span> <span class="text-green-400">'@hevcjs/shaka-plugin'</span>;
-
-<span class="text-silver/50">// Register once — Shaka routes hev1/hvc1 through the transmuxer</span>
-registerHevcTransmuxer(shaka);
+          <pre class="text-sm font-mono leading-relaxed overflow-x-auto"><code><span class="text-accent">import</span> Hls <span class="text-accent">from</span> <span class="text-green-400">'hls.js'</span>;
+<span class="text-accent">import</span> { attachHevcSupport } <span class="text-accent">from</span> <span class="text-green-400">'@hevcjs/hlsjs-plugin'</span>;
 
 <span class="text-accent">const</span> video = document.querySelector(<span class="text-green-400">'video'</span>);
-<span class="text-accent">const</span> player = <span class="text-accent">new</span> shaka.Player();
-<span class="text-accent">await</span> player.attach(video);
-<span class="text-accent">await</span> player.load(<span class="text-green-400">'https://example.com/stream/manifest.mpd'</span>);</code></pre>
+
+<span class="text-silver/50">// Must run BEFORE `new Hls()` — hls.js filters levels against</span>
+<span class="text-silver/50">// MediaSource.isTypeSupported at manifest parse time.</span>
+<span class="text-accent">await</span> attachHevcSupport({
+  workerUrl: <span class="text-green-400">'/transcode-worker.js'</span>,
+  wasmUrl: <span class="text-green-400">'/hevc-decode.js'</span>,
+});
+
+<span class="text-accent">const</span> hls = <span class="text-accent">new</span> Hls({ preferManagedMediaSource: <span class="text-accent">false</span> });
+hls.attachMedia(video);
+hls.loadSource(<span class="text-green-400">'https://example.com/stream/playlist.m3u8'</span>);</code></pre>
+        </div>
+
+        <div class="px-4 py-3 rounded-lg bg-smoke border border-ash text-sm text-silver mb-6">
+          <span class="text-white font-medium">Static assets:</span> copy <code class="font-mono">transcode-worker.js</code>, <code class="font-mono">hevc-decode.js</code> and <code class="font-mono">hevc-decode.wasm</code> from <code class="font-mono">node_modules/@hevcjs/core/dist/</code> to your public directory.
+        </div>
+
+        <!-- Usage (CDN) -->
+        <div class="code-block rounded-xl p-6 mb-6">
+          <div class="flex items-center gap-2 mb-4" aria-hidden="true">
+            <div class="w-3 h-3 rounded-full bg-red-500/60"></div>
+            <div class="w-3 h-3 rounded-full bg-yellow-500/60"></div>
+            <div class="w-3 h-3 rounded-full bg-green-500/60"></div>
+            <span class="text-xs text-silver/50 ml-2 font-mono">index.html — from a CDN (zero build)</span>
+          </div>
+          <pre class="text-sm font-mono leading-relaxed overflow-x-auto"><code>&lt;<span class="text-accent">script</span> type=<span class="text-green-400">"module"</span>&gt;
+  <span class="text-accent">import</span> { attachHevcSupport } <span class="text-accent">from</span> <span class="text-green-400">'https://esm.sh/@hevcjs/hlsjs-plugin@0'</span>;
+
+  <span class="text-accent">const</span> video = document.querySelector(<span class="text-green-400">'video'</span>);
+
+  <span class="text-accent">await</span> attachHevcSupport({
+    workerUrl:     <span class="text-green-400">'https://unpkg.com/@hevcjs/core@1/dist/transcode-worker.js'</span>,
+    wasmUrl:       <span class="text-green-400">'https://unpkg.com/@hevcjs/core@1/dist/wasm/hevc-decode.js'</span>,
+    wasmBinaryUrl: <span class="text-green-400">'https://unpkg.com/@hevcjs/core@1/dist/wasm/hevc-decode.wasm'</span>,
+  });
+
+  <span class="text-accent">const</span> hls = <span class="text-accent">new</span> Hls({ preferManagedMediaSource: <span class="text-accent">false</span> });
+  hls.attachMedia(video);
+  hls.loadSource(<span class="text-green-400">'https://example.com/stream/playlist.m3u8'</span>);
+&lt;/<span class="text-accent">script</span>&gt;</code></pre>
+        </div>
+
+        <div class="px-4 py-3 rounded-lg bg-smoke border border-ash text-sm text-silver">
+          <span class="text-white font-medium"><code class="font-mono">preferManagedMediaSource: false</code></span> keeps hls.js on classic <code class="font-mono">MediaSource</code>, which the transcoding path requires. Browsers where only <code class="font-mono">ManagedMediaSource</code> exists (iPhone Safari) play HEVC natively, so nothing is lost there.
         </div>
       </div>
     </section>
@@ -296,18 +342,18 @@ registerHevcTransmuxer(shaka);
       <div class="max-w-5xl mx-auto">
         <h2 class="text-3xl md:text-4xl font-bold text-white text-center mb-4">How it works</h2>
         <p class="text-silver text-center max-w-2xl mx-auto mb-12">
-          A native Shaka Transmuxer. Shaka handles MIME routing — the plugin only converts bytes.
+          The plugin intercepts the MSE pipeline. hls.js never knows HEVC was involved.
         </p>
 
         <!-- Pipeline diagram -->
-        <div class="flex flex-col md:flex-row items-center justify-center gap-3 md:gap-6 mb-12" role="img" aria-label="Shaka transmuxer pipeline: register transmuxer for hev1/hvc1, Shaka feeds HEVC segments, decode via WASM, encode H.264, mux fMP4, return to Shaka">
+        <div class="flex flex-col md:flex-row items-center justify-center gap-3 md:gap-6 mb-12" role="img" aria-label="MSE intercept pipeline: patch isTypeSupported so hls.js keeps HEVC levels, intercept addSourceBuffer, demux HEVC, decode via WASM, encode H.264, mux fMP4, append to real SourceBuffer">
           <div class="pipeline-step code-block rounded-lg px-4 py-3 text-center">
-            <div class="text-xs text-accent font-mono mb-1">register</div>
-            <div class="text-sm text-silver">Transmuxer (hev1/hvc1)</div>
+            <div class="text-xs text-accent font-mono mb-1">patch</div>
+            <div class="text-sm text-silver">isTypeSupported</div>
           </div>
           <div class="pipeline-step code-block rounded-lg px-4 py-3 text-center">
-            <div class="text-xs text-accent font-mono mb-1">Shaka calls</div>
-            <div class="text-sm text-silver">transmux(segment)</div>
+            <div class="text-xs text-accent font-mono mb-1">intercept</div>
+            <div class="text-sm text-silver">addSourceBuffer</div>
           </div>
           <div class="pipeline-step code-block rounded-lg px-4 py-3 text-center">
             <div class="text-xs text-accent font-mono mb-1">demux + decode</div>
@@ -318,8 +364,8 @@ registerHevcTransmuxer(shaka);
             <div class="text-sm text-silver">YUV &rarr; H.264 fMP4</div>
           </div>
           <div class="code-block rounded-lg px-4 py-3 text-center border-accent/30">
-            <div class="text-xs text-accent font-mono mb-1">return</div>
-            <div class="text-sm text-white font-medium">H.264 to Shaka</div>
+            <div class="text-xs text-accent font-mono mb-1">append</div>
+            <div class="text-sm text-white font-medium">Real SourceBuffer</div>
           </div>
         </div>
 
@@ -328,49 +374,49 @@ registerHevcTransmuxer(shaka);
           <div class="flex gap-4 items-start px-4 py-3 rounded-lg bg-smoke">
             <span class="text-accent font-mono text-sm font-bold mt-0.5">1</span>
             <div>
-              <span class="text-white text-sm font-medium">Registers a <code class="font-mono text-accent-light">shaka.transmuxer.TransmuxerEngine</code></span>
-              <span class="text-silver text-sm"> &mdash; for <code class="font-mono">video/mp4; codecs="hev1"</code> and <code class="font-mono">hvc1</code></span>
+              <span class="text-white text-sm font-medium">Runs <em>before</em> <code class="font-mono text-accent-light">new Hls()</code></span>
+              <span class="text-silver text-sm"> &mdash; hls.js filters levels against <code class="font-mono">MediaSource.isTypeSupported</code> at manifest parse time, so the intercept has to be in place first</span>
             </div>
           </div>
           <div class="flex gap-4 items-start px-4 py-3 rounded-lg bg-smoke">
             <span class="text-accent font-mono text-sm font-bold mt-0.5">2</span>
             <div>
-              <span class="text-white text-sm font-medium">Exposes the standard <code class="font-mono text-accent-light">isSupported</code> / <code class="font-mono text-accent-light">convertCodecs</code> hooks</span>
-              <span class="text-silver text-sm"> &mdash; Shaka handles HEVC MIME routing natively</span>
+              <span class="text-white text-sm font-medium">Probes native HEVC support</span>
+              <span class="text-silver text-sm"> &mdash; by actually creating an HEVC SourceBuffer, not just <code class="font-mono">isTypeSupported</code>. Native support &rarr; the plugin does nothing</span>
             </div>
           </div>
           <div class="flex gap-4 items-start px-4 py-3 rounded-lg bg-smoke">
             <span class="text-accent font-mono text-sm font-bold mt-0.5">3</span>
             <div>
-              <span class="text-white text-sm font-medium">On the init segment, calls <code class="font-mono text-accent-light">SegmentTranscoder.prepareInit()</code></span>
-              <span class="text-silver text-sm"> &mdash; returns a matching H.264 fMP4 init segment by warming up the encoder with a single black frame</span>
+              <span class="text-white text-sm font-medium">Checks WebCodecs H.264 encoding</span>
+              <span class="text-silver text-sm"> &mdash; before installing anything, so unsupported browsers degrade cleanly</span>
             </div>
           </div>
           <div class="flex gap-4 items-start px-4 py-3 rounded-lg bg-smoke">
             <span class="text-accent font-mono text-sm font-bold mt-0.5">4</span>
             <div>
-              <span class="text-white text-sm font-medium">On each media segment, <code class="font-mono text-accent-light">transmux()</code></span>
-              <span class="text-silver text-sm"> &mdash; demux, decode HEVC (WASM), encode H.264 (WebCodecs), mux fMP4, return to Shaka</span>
+              <span class="text-white text-sm font-medium">Patches <code class="font-mono text-accent-light">isTypeSupported</code> and intercepts <code class="font-mono text-accent-light">addSourceBuffer()</code></span>
+              <span class="text-silver text-sm"> &mdash; hls.js keeps HEVC levels in its ladder; a Proxy wraps the H.264 SourceBuffer</span>
             </div>
           </div>
           <div class="flex gap-4 items-start px-4 py-3 rounded-lg bg-smoke">
             <span class="text-accent font-mono text-sm font-bold mt-0.5">5</span>
             <div>
-              <span class="text-white text-sm font-medium">Optional Web Worker (<code class="font-mono text-accent-light">workerUrl</code>)</span>
-              <span class="text-silver text-sm"> &mdash; runs the decode + encode pipeline off the main thread (recommended for 4K / high-bitrate)</span>
+              <span class="text-white text-sm font-medium">Proxy intercepts <code class="font-mono text-accent-light">appendBuffer()</code></span>
+              <span class="text-silver text-sm"> &mdash; demux, decode HEVC (WASM), encode H.264 (WebCodecs), mux fMP4, append to real SourceBuffer</span>
             </div>
           </div>
           <div class="flex gap-4 items-start px-4 py-3 rounded-lg bg-smoke">
             <span class="text-accent font-mono text-sm font-bold mt-0.5">6</span>
             <div>
-              <span class="text-white text-sm font-medium">Force transcoding when needed</span>
-              <span class="text-silver text-sm"> &mdash; <code class="font-mono">player.configure({ mediaSource: { forceTransmux: true } })</code> routes HEVC through the transmuxer even where the browser supports HEVC natively</span>
+              <span class="text-white text-sm font-medium">Strict append progress</span>
+              <span class="text-silver text-sm"> &mdash; <code class="font-mono">updateend</code> waits for the first transcoded chunk to land, so hls.js's <code class="font-mono">bufferAppendNoProgress</code> watchdog stays quiet</span>
             </div>
           </div>
         </div>
 
         <div class="max-w-3xl mx-auto mt-8 px-4 py-3 rounded-lg bg-smoke border border-ash text-sm text-silver">
-          <span class="text-white font-medium">Audio &amp; subtitles</span> pass through untouched. Only the HEVC video track is transcoded.
+          <span class="text-white font-medium">No player instance needed.</span> Unlike the dash.js plugin, <code class="font-mono">attachHevcSupport()</code> takes no player argument &mdash; hls.js keeps HEVC levels as long as the (patched) <code class="font-mono">isTypeSupported</code> accepts them. Demuxed audio renditions pass through untouched.
         </div>
       </div>
     </section>
@@ -398,19 +444,19 @@ registerHevcTransmuxer(shaka);
               <tr>
                 <td class="text-white font-medium">Safari 13+ <span class="text-silver/50 text-xs">(macOS/iOS)</span></td>
                 <td><span class="text-green-400">Yes</span> (VideoToolbox)</td>
-                <td>No &mdash; native</td>
+                <td>No &mdash; bypassed</td>
                 <td class="text-silver/50">&mdash;</td>
               </tr>
               <tr>
                 <td class="text-white font-medium">Chrome/Edge/Firefox <span class="text-silver/50 text-xs">(Mac)</span></td>
                 <td><span class="text-green-400">Yes</span> (VideoToolbox)</td>
-                <td>No &mdash; native</td>
+                <td>No &mdash; bypassed</td>
                 <td class="text-silver/50">&mdash;</td>
               </tr>
               <tr>
                 <td class="text-white font-medium">Chrome 107+ <span class="text-silver/50 text-xs">(Win, HEVC-capable GPU)</span></td>
                 <td><span class="text-green-400">Yes</span> (D3D11VA)</td>
-                <td>No &mdash; native</td>
+                <td>No &mdash; bypassed</td>
                 <td class="text-silver/50">&mdash;</td>
               </tr>
               <tr>
@@ -422,7 +468,7 @@ registerHevcTransmuxer(shaka);
               <tr>
                 <td class="text-white font-medium">Edge <span class="text-silver/50 text-xs">(Win, with HEVC Video Extension)</span></td>
                 <td><span class="text-green-400">Yes</span> (MFT)</td>
-                <td>No &mdash; native</td>
+                <td>No &mdash; bypassed</td>
                 <td class="text-silver/50">&mdash;</td>
               </tr>
               <tr>
@@ -434,14 +480,14 @@ registerHevcTransmuxer(shaka);
               <tr>
                 <td class="text-white font-medium">Firefox 133+ <span class="text-silver/50 text-xs">(Win, with HEVC Video Extension)</span></td>
                 <td><span class="text-green-400">Yes</span> (MFT)</td>
-                <td>No &mdash; native</td>
+                <td>No &mdash; bypassed</td>
                 <td class="text-silver/50">&mdash;</td>
               </tr>
               <tr>
-                <td class="text-white font-medium">Firefox 133+ <span class="text-silver/50 text-xs">(Win, no extension — use forceTransmux)</span></td>
+                <td class="text-white font-medium">Firefox 133+ <span class="text-silver/50 text-xs">(Win, no extension)</span></td>
                 <td><span class="text-yellow-400">Reported but fake</span></td>
                 <td class="text-accent font-medium">Yes</td>
-                <td><span class="text-green-400">Yes</span> (force via player.configure)</td>
+                <td><span class="text-green-400">Yes</span> (SourceBuffer probe catches false positive)</td>
               </tr>
               <tr>
                 <td class="text-white font-medium">Chrome/Edge 94&ndash;106</td>
@@ -484,7 +530,7 @@ registerHevcTransmuxer(shaka);
             <span class="px-3 py-1 rounded-full bg-accent/10 border border-accent/20 text-accent-light text-xs font-medium">Web Workers</span>
             <span class="px-3 py-1 rounded-full bg-accent/10 border border-accent/20 text-accent-light text-xs font-medium">Secure Context (HTTPS)</span>
             <span class="px-3 py-1 rounded-full bg-accent/10 border border-accent/20 text-accent-light text-xs font-medium">WebCodecs VideoEncoder</span>
-            <span class="px-3 py-1 rounded-full bg-accent/10 border border-accent/20 text-accent-light text-xs font-medium">shaka-player &ge; 4.0.0</span>
+            <span class="px-3 py-1 rounded-full bg-accent/10 border border-accent/20 text-accent-light text-xs font-medium">hls.js 1.7.x (tested)</span>
           </div>
         </div>
       </div>
@@ -495,15 +541,16 @@ registerHevcTransmuxer(shaka);
       <div class="max-w-3xl mx-auto">
         <h2 class="text-3xl md:text-4xl font-bold text-white text-center mb-4">API reference</h2>
         <p class="text-silver text-center max-w-2xl mx-auto mb-12">
-          One function to register, one function to tear down.
+          One function to set up, one function to tear down.
         </p>
 
-        <!-- registerHevcTransmuxer -->
+        <!-- attachHevcSupport -->
         <div class="code-block rounded-xl p-6 mb-8">
-          <h3 class="text-xl font-bold text-white mb-4"><code class="font-mono">registerHevcTransmuxer(shaka, config?)</code></h3>
+          <h3 class="text-xl font-bold text-white mb-4"><code class="font-mono">attachHevcSupport(config?)</code></h3>
           <p class="text-silver text-sm mb-6">
-            Registers the Shaka transmuxer for HEVC mime types.
-            Returns a <code class="font-mono text-accent-light">cleanup()</code> function that unregisters it.
+            Probes native HEVC support (by actually creating an HEVC SourceBuffer, not just <code class="font-mono">isTypeSupported</code>), checks WebCodecs H.264 encoding, then installs the MSE intercept.
+            Returns a <code class="font-mono text-accent-light">Promise</code> resolving to a <code class="font-mono text-accent-light">cleanup()</code> function that reverses all patches.
+            No player instance is needed &mdash; but it must run <span class="text-white font-medium">before</span> <code class="font-mono">new Hls()</code>.
           </p>
 
           <div class="flex items-center gap-2 mb-4" aria-hidden="true">
@@ -512,16 +559,16 @@ registerHevcTransmuxer(shaka);
             <div class="w-3 h-3 rounded-full bg-green-500/60"></div>
             <span class="text-xs text-silver/50 ml-2 font-mono">signature</span>
           </div>
-          <pre class="text-sm font-mono leading-relaxed overflow-x-auto mb-6"><code><span class="text-accent">const</span> cleanup = registerHevcTransmuxer(shaka, {
+          <pre class="text-sm font-mono leading-relaxed overflow-x-auto mb-6"><code><span class="text-accent">const</span> cleanup = <span class="text-accent">await</span> attachHevcSupport({
   <span class="param-name">workerUrl</span>:     <span class="text-green-400">'/transcode-worker.js'</span>,   <span class="text-silver/50">// Web Worker URL</span>
   <span class="param-name">wasmUrl</span>:       <span class="text-green-400">'/hevc-decode.js'</span>,         <span class="text-silver/50">// WASM glue location</span>
   <span class="param-name">wasmBinaryUrl</span>: <span class="text-green-400">'/hevc-decode.wasm'</span>,       <span class="text-silver/50">// WASM binary location</span>
 });
 
-<span class="text-silver/50">// Force the transmuxer even on browsers with native HEVC</span>
-player.configure({ mediaSource: { forceTransmux: <span class="text-accent">true</span> } });
+<span class="text-silver/50">// Then create the player</span>
+<span class="text-accent">const</span> hls = <span class="text-accent">new</span> Hls({ preferManagedMediaSource: <span class="text-accent">false</span> });
 
-<span class="text-silver/50">// Unregister when done</span>
+<span class="text-silver/50">// Remove all patches when done</span>
 cleanup();</code></pre>
 
           <h4 class="text-sm font-semibold text-white uppercase tracking-wider mb-4">Options</h4>
@@ -531,38 +578,61 @@ cleanup();</code></pre>
                 <code class="param-name font-mono text-sm">workerUrl</code>
                 <span class="param-type text-xs ml-2">string</span>
               </div>
-              <p class="text-silver text-sm">URL of the Web Worker script for off-main-thread transcoding. Recommended for 4K and high-bitrate streams. If omitted, transcoding runs on the main thread.</p>
+              <p class="text-silver text-sm">URL of the Web Worker script for off-main-thread transcoding (recommended). If omitted, transcoding runs on the main thread.</p>
             </div>
             <div class="flex gap-4 items-start px-4 py-3 rounded-lg bg-ash/50">
               <div>
                 <code class="param-name font-mono text-sm">wasmUrl</code>
                 <span class="param-type text-xs ml-2">string</span>
               </div>
-              <p class="text-silver text-sm">Path to the WASM glue JS file. Auto-detected from the package if omitted.</p>
+              <p class="text-silver text-sm">URL of the Emscripten glue script (<code class="font-mono">hevc-decode.js</code>). Auto-detected from the package if omitted.</p>
             </div>
             <div class="flex gap-4 items-start px-4 py-3 rounded-lg bg-ash/50">
               <div>
                 <code class="param-name font-mono text-sm">wasmBinaryUrl</code>
                 <span class="param-type text-xs ml-2">string</span>
               </div>
-              <p class="text-silver text-sm">Path to the WASM binary. Useful when serving the decoder from a custom path or CDN. Forwarded to the underlying <code class="font-mono">SegmentTranscoder</code>.</p>
+              <p class="text-silver text-sm">URL of the <code class="font-mono">.wasm</code> binary &mdash; required when assets live on a different origin than the page (CDN setups). Emscripten otherwise resolves the <code class="font-mono">.wasm</code> relative to the worker's <code class="font-mono">blob:</code> URL and fails.</p>
             </div>
             <div class="flex gap-4 items-start px-4 py-3 rounded-lg bg-ash/50">
               <div>
-                <code class="param-name font-mono text-sm">forceTransmux</code>
-                <span class="param-type text-xs ml-2">Shaka config</span>
+                <code class="param-name font-mono text-sm">forceTranscode</code>
+                <span class="param-type text-xs ml-2">boolean</span>
+                <span class="param-default text-xs ml-2">default: false</span>
               </div>
-              <p class="text-silver text-sm">Not a plugin option — use Shaka's built-in <code class="font-mono">player.configure({ mediaSource: { forceTransmux: true } })</code> to route HEVC through the transmuxer even when the browser supports HEVC natively.</p>
+              <p class="text-silver text-sm">Transcode even when native HEVC is available. Useful for testing.</p>
+            </div>
+            <div class="flex gap-4 items-start px-4 py-3 rounded-lg bg-ash/50">
+              <div>
+                <code class="param-name font-mono text-sm">logLevel</code>
+                <span class="param-type text-xs ml-2">string</span>
+              </div>
+              <p class="text-silver text-sm"><code class="font-mono">'debug' | 'info' | 'warn' | 'error' | 'silent'</code>.</p>
+            </div>
+            <div class="flex gap-4 items-start px-4 py-3 rounded-lg bg-ash/50">
+              <div>
+                <code class="param-name font-mono text-sm">fps</code>
+                <span class="param-type text-xs ml-2">number</span>
+                <span class="param-default text-xs ml-2">default: 25</span>
+              </div>
+              <p class="text-silver text-sm">Target framerate for H.264 encoding, inherited from the core transcoder config. Should match the source stream.</p>
+            </div>
+            <div class="flex gap-4 items-start px-4 py-3 rounded-lg bg-ash/50">
+              <div>
+                <code class="param-name font-mono text-sm">bitrate</code>
+                <span class="param-type text-xs ml-2">number</span>
+              </div>
+              <p class="text-silver text-sm">H.264 encode bitrate in bits/second, inherited from the core transcoder config. If omitted, WebCodecs chooses automatically.</p>
             </div>
           </div>
         </div>
 
         <!-- Compute-aware ABR -->
         <div class="code-block rounded-xl p-6 mb-8">
-          <h3 class="text-xl font-bold text-white mb-4"><code class="font-mono">adaptiveCompute</code> — compute-aware ABR <span class="text-xs font-normal text-green-400 ml-2">on by default</span></h3>
+          <h3 class="text-xl font-bold text-white mb-4"><code class="font-mono">subscribeSegmentStat</code> — build your own compute-aware ABR</h3>
           <p class="text-silver text-sm mb-6">
-            Feedback loop that caps Shaka variants when the device can't sustain transcoding at real-time. Shaka's bandwidth-based ABR keeps choosing freely — we only narrow the ceiling it's allowed to pick from.
-            Useful on devices where WASM HEVC decode + WebCodecs H.264 encode runs slower than playback (typical on low-end Windows boxes at 1080p+). <strong class="text-white">On by default</strong> — pass <code class="font-mono">adaptiveCompute: false</code> to opt out.
+            Automatic compute-aware level capping (as shipped for dash.js and Shaka) is <span class="text-white font-medium">not wired for hls.js yet</span>.
+            <code class="font-mono">subscribeSegmentStat</code> is re-exported so you can observe per-segment transcode stats and drive <code class="font-mono">hls.autoLevelCapping</code> yourself.
           </p>
 
           <div class="flex items-center gap-2 mb-4" aria-hidden="true">
@@ -571,91 +641,37 @@ cleanup();</code></pre>
             <div class="w-3 h-3 rounded-full bg-green-500/60"></div>
             <span class="text-xs text-silver/50 ml-2 font-mono">compute-aware.js</span>
           </div>
-          <pre class="text-sm font-mono leading-relaxed overflow-x-auto mb-6"><code><span class="text-silver/50">// Default — adaptiveCompute is ON, defaults are sensible</span>
-<span class="text-accent">const</span> handle = registerHevcTransmuxer(shaka, {
-  <span class="param-name">workerUrl</span>: <span class="text-green-400">'/transcode-worker.js'</span>,
-});
+          <pre class="text-sm font-mono leading-relaxed overflow-x-auto"><code><span class="text-accent">import</span> { subscribeSegmentStat } <span class="text-accent">from</span> <span class="text-green-400">'@hevcjs/hlsjs-plugin'</span>;
 
-<span class="text-silver/50">// To tune knobs:</span>
-<span class="text-silver/50">// registerHevcTransmuxer(shaka, { adaptiveCompute: { targetSpeedX: 1.5 } })</span>
-<span class="text-silver/50">// To opt out:</span>
-<span class="text-silver/50">// registerHevcTransmuxer(shaka, { adaptiveCompute: false })</span>
-
-<span class="text-accent">const</span> player = <span class="text-accent">new</span> shaka.Player();
-<span class="text-accent">const</span> detach = handle.attachComputeAware(player); <span class="text-silver/50">// after player exists</span>
-<span class="text-accent">await</span> player.load(manifestUrl);
-
-<span class="text-silver/50">// Cleanup</span>
-detach();    <span class="text-silver/50">// stop observing</span>
-handle();    <span class="text-silver/50">// unregister transmuxer + detach</span></code></pre>
-
-          <h4 class="text-sm font-semibold text-white uppercase tracking-wider mb-4">Tuning knobs</h4>
-          <div class="space-y-4">
-            <div class="flex gap-4 items-start px-4 py-3 rounded-lg bg-ash/50">
-              <div>
-                <code class="param-name font-mono text-sm">targetSpeedX</code>
-                <span class="param-type text-xs ml-2">number, default 1.3</span>
-              </div>
-              <p class="text-silver text-sm">Required headroom over real-time before the cap is allowed to rise. <code class="font-mono">1.3</code> means the rolling average must show transcode at 1.3× real-time before we let the host ABR pick a higher variant.</p>
-            </div>
-            <div class="flex gap-4 items-start px-4 py-3 rounded-lg bg-ash/50">
-              <div>
-                <code class="param-name font-mono text-sm">measureWindow</code>
-                <span class="param-type text-xs ml-2">number, default 2</span>
-              </div>
-              <p class="text-silver text-sm">Rolling-window size for smoothing. Default is intentionally small — the cost of staying too long at an unreachable quality (buffer underrun, frozen playback) is much worse than the cost of a brief unnecessary dip.</p>
-            </div>
-            <div class="flex gap-4 items-start px-4 py-3 rounded-lg bg-ash/50">
-              <div>
-                <code class="param-name font-mono text-sm">lowerAfter</code>
-                <span class="param-type text-xs ml-2">number, default 1</span>
-              </div>
-              <p class="text-silver text-sm">Consecutive windows averaging below 1.0× before lowering the cap one notch. Default <code class="font-mono">1</code> — react on the first confirmed low window.</p>
-            </div>
-            <div class="flex gap-4 items-start px-4 py-3 rounded-lg bg-ash/50">
-              <div>
-                <code class="param-name font-mono text-sm">raiseAfter</code>
-                <span class="param-type text-xs ml-2">number, default 6</span>
-              </div>
-              <p class="text-silver text-sm">Consecutive windows averaging above <code class="font-mono">targetSpeedX</code> before raising the cap one notch. Wider than <code class="font-mono">lowerAfter</code> by design — hysteresis prevents yo-yo between two adjacent variants.</p>
-            </div>
-            <div class="flex gap-4 items-start px-4 py-3 rounded-lg bg-ash/50">
-              <div>
-                <code class="param-name font-mono text-sm">onObservation</code>
-                <span class="param-type text-xs ml-2">(stat, avg, cap) =&gt; void</span>
-              </div>
-              <p class="text-silver text-sm">Optional telemetry sink called for every segment (not just cap changes). Handy for plotting <code class="font-mono">speedX</code> over time in a demo or admin panel.</p>
-            </div>
-          </div>
-
-          <p class="text-silver text-sm mt-6">
-            Caps are applied via Shaka's public <code class="font-mono">player.configure({ abr: { restrictions: { maxHeight, maxBandwidth } } })</code> — no fork of the ABR controller, no reach into private APIs.
-          </p>
+<span class="text-accent">const</span> unsubscribe = subscribeSegmentStat((stat) =&gt; {
+  <span class="text-silver/50">// stat.speedX &lt; 1 → transcoding slower than real-time</span>
+  <span class="text-accent">if</span> (stat.speedX &lt; <span class="text-accent">1</span>) {
+    hls.autoLevelCapping = Math.max(<span class="text-accent">0</span>, hls.currentLevel - <span class="text-accent">1</span>);
+  }
+});</code></pre>
         </div>
 
-        <!-- Lower-level API -->
+        <!-- Scope -->
         <div class="code-block rounded-xl p-6">
-          <h3 class="text-xl font-bold text-white mb-4">Lower-level API</h3>
-          <p class="text-silver text-sm mb-6">
-            For advanced use cases — direct transcoding without Shaka, via <code class="font-mono">@hevcjs/core</code>.
-          </p>
-          <div class="flex items-center gap-2 mb-4" aria-hidden="true">
-            <div class="w-3 h-3 rounded-full bg-red-500/60"></div>
-            <div class="w-3 h-3 rounded-full bg-yellow-500/60"></div>
-            <div class="w-3 h-3 rounded-full bg-green-500/60"></div>
-            <span class="text-xs text-silver/50 ml-2 font-mono">advanced.js</span>
+          <h3 class="text-xl font-bold text-white mb-4">Scope &amp; compatibility</h3>
+          <div class="space-y-4">
+            <div class="flex gap-4 items-start px-4 py-3 rounded-lg bg-ash/50">
+              <span class="text-green-400 mt-0.5" aria-hidden="true">&#10003;</span>
+              <p class="text-silver text-sm">Tested against <span class="text-white font-medium">hls.js 1.7.x</span>. The declared peer range <code class="font-mono">&gt;=1.4.0</code> is not fully exercised &mdash; 1.6.6 changed how hls.js drives <code class="font-mono">SourceBuffer.timestampOffset</code>, and this plugin is designed for the current behavior.</p>
+            </div>
+            <div class="flex gap-4 items-start px-4 py-3 rounded-lg bg-ash/50">
+              <span class="text-green-400 mt-0.5" aria-hidden="true">&#10003;</span>
+              <p class="text-silver text-sm">Supported today: HLS <span class="text-white font-medium">fMP4</span> streams with video-only or demuxed audio renditions. Master playlists with an audio group work &mdash; validated end-to-end.</p>
+            </div>
+            <div class="flex gap-4 items-start px-4 py-3 rounded-lg bg-ash/50">
+              <span class="text-red-400 mt-0.5" aria-hidden="true">&#10007;</span>
+              <p class="text-silver text-sm">Not yet supported: muxed audio+video fMP4 segments (single <code class="font-mono">audiovideo</code> SourceBuffer) &mdash; playback would be video-only. HEVC-in-MPEG-TS is untested.</p>
+            </div>
+            <div class="flex gap-4 items-start px-4 py-3 rounded-lg bg-ash/50">
+              <span class="text-red-400 mt-0.5" aria-hidden="true">&#10007;</span>
+              <p class="text-silver text-sm">Compute-aware ABR (automatic level capping when the device can't transcode in real time) is not wired for hls.js yet &mdash; see <code class="font-mono">subscribeSegmentStat</code> above.</p>
+            </div>
           </div>
-          <pre class="text-sm font-mono leading-relaxed overflow-x-auto"><code><span class="text-accent">import</span> { SegmentTranscoder }
-  <span class="text-accent">from</span> <span class="text-green-400">'@hevcjs/core'</span>;
-
-<span class="text-accent">const</span> transcoder = <span class="text-accent">new</span> SegmentTranscoder({ fps: <span class="text-accent">25</span> });
-<span class="text-accent">await</span> transcoder.init();
-
-<span class="text-silver/50">// Synthesize a matching H.264 init segment up-front</span>
-<span class="text-accent">const</span> init = <span class="text-accent">await</span> transcoder.prepareInit(hevcInitBytes);
-
-<span class="text-silver/50">// Then transcode media segments</span>
-<span class="text-accent">const</span> h264Segment = <span class="text-accent">await</span> transcoder.processMediaSegment(mediaSegmentBytes);</code></pre>
         </div>
       </div>
     </section>
@@ -687,7 +703,7 @@ handle();    <span class="text-silver/50">// unregister transmuxer + detach</spa
         </div>
 
         <div class="max-w-3xl mx-auto mt-8 px-4 py-3 rounded-lg bg-smoke border border-ash text-sm text-silver">
-          <span class="text-white font-medium">Tradeoff:</span> the first segment takes 2-3s to transcode (vs instant with native hardware decode). Once buffered, playback is smooth. Use <code class="font-mono">workerUrl</code> to keep the pipeline off the main thread for 4K and high-bitrate streams.
+          <span class="text-white font-medium">Tradeoff:</span> the first segment takes 2-3s to transcode (vs instant with native hardware decode). Once buffered, playback is smooth. When native HEVC is available, the plugin detects it and does nothing &mdash; zero overhead.
         </div>
       </div>
     </section>
@@ -701,14 +717,14 @@ handle();    <span class="text-silver/50">// unregister transmuxer + detach</spa
           <details>
             <summary>Does it work with live streams?</summary>
             <div class="faq-answer">
-              <p>Yes. The transmuxer converts segments as Shaka requests them, so live (low-latency) and VOD streams both work. The only difference is that the first segment takes 2-3 seconds to transcode, which adds to the initial live edge latency.</p>
+              <p>Yes. The plugin intercepts segments as they arrive, so live (low-latency) and VOD streams both work. The only difference is that the first segment takes 2-3 seconds to transcode, which adds to the initial live edge latency.</p>
             </div>
           </details>
 
           <details>
             <summary>What happens when native HEVC is available?</summary>
             <div class="faq-answer">
-              <p>Shaka plays HEVC natively and the transmuxer stays out of the way &mdash; Safari, any browser on macOS, Chrome 107+ on Windows with an HEVC-capable GPU, or Edge/Firefox on Windows with the Microsoft HEVC Video Extension installed. To force transcoding anyway, use Shaka's built-in <code class="font-mono text-accent-light">player.configure({ mediaSource: { forceTransmux: true } })</code>.</p>
+              <p>Nothing. The plugin probes native HEVC support at startup &mdash; by actually creating an HEVC SourceBuffer, not just calling <code class="font-mono text-accent-light">isTypeSupported</code> &mdash; and stays dormant when the browser can play HEVC directly. Zero overhead. To transcode anyway (for testing), pass <code class="font-mono text-accent-light">forceTranscode: true</code>.</p>
             </div>
           </details>
 
@@ -720,9 +736,16 @@ handle();    <span class="text-silver/50">// unregister transmuxer + detach</spa
           </details>
 
           <details>
+            <summary>What about muxed audio+video segments?</summary>
+            <div class="faq-answer">
+              <p>Not yet supported. fMP4 segments that mux audio and video into a single <code class="font-mono text-accent-light">audiovideo</code> SourceBuffer would play video-only. Supported today: fMP4 streams with video-only or demuxed audio renditions &mdash; master playlists with an audio group work and are validated end-to-end. HEVC in MPEG-TS is untested.</p>
+            </div>
+          </details>
+
+          <details>
             <summary>How is this different from the dash.js plugin?</summary>
             <div class="faq-answer">
-              <p>The Shaka plugin registers a native Shaka <code class="font-mono text-accent-light">Transmuxer</code> for <code class="font-mono">hev1</code>/<code class="font-mono">hvc1</code>, so Shaka handles MIME routing itself. The <a href="dashjs-plugin.html" class="text-accent hover:text-accent-light">dash.js plugin</a> instead intercepts the MSE pipeline directly. Both share the same <code class="font-mono text-accent-light">@hevcjs/core</code> HEVC decoder and H.264 encoder.</p>
+              <p>Both share the same <code class="font-mono text-accent-light">@hevcjs/core</code> MSE intercept, HEVC decoder, and H.264 encoder. The difference: the hls.js plugin needs no player instance &mdash; but it must be called <span class="text-white">before</span> <code class="font-mono text-accent-light">new Hls()</code>, because hls.js filters levels against <code class="font-mono">MediaSource.isTypeSupported</code> at manifest parse time. The <a href="dashjs-plugin.html" class="text-accent hover:text-accent-light">dash.js plugin</a> instead takes the player instance and registers a capabilities filter.</p>
             </div>
           </details>
         </div>
@@ -735,10 +758,10 @@ handle();    <span class="text-silver/50">// unregister transmuxer + detach</spa
         <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">Get started</h2>
         <p class="text-silver mb-8">Install the package and start playing HEVC in every browser.</p>
 
-        <code class="text-sm font-mono text-silver/60 bg-ash/50 px-4 py-2 rounded-lg">npm install @hevcjs/shaka-plugin</code>
+        <code class="text-sm font-mono text-silver/60 bg-ash/50 px-4 py-2 rounded-lg">npm install @hevcjs/hlsjs-plugin</code>
 
         <div class="flex flex-wrap gap-4 justify-center mt-8">
-          <a href="https://www.npmjs.com/package/@hevcjs/shaka-plugin" target="_blank" rel="noopener noreferrer"
+          <a href="https://www.npmjs.com/package/@hevcjs/hlsjs-plugin" target="_blank" rel="noopener noreferrer"
              class="inline-flex items-center gap-2 px-6 py-3 bg-white text-ink font-semibold rounded-lg hover:bg-bone transition-colors">
             npm
           </a>
@@ -747,7 +770,7 @@ handle();    <span class="text-silver/50">// unregister transmuxer + detach</spa
             <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
             GitHub
           </a>
-          <a href="../../demo/shaka.html"
+          <a href="../../demo/hls.html"
              class="inline-flex items-center gap-2 px-6 py-3 bg-accent/15 text-accent-light font-semibold rounded-lg border border-accent/25 hover:bg-accent/25 transition-colors">
             Live demo
           </a>
@@ -755,9 +778,9 @@ handle();    <span class="text-silver/50">// unregister transmuxer + detach</spa
              class="inline-flex items-center gap-2 px-6 py-3 bg-smoke text-silver font-semibold rounded-lg border border-ash hover:text-white transition-colors">
             dash.js plugin docs
           </a>
-          <a href="hlsjs-plugin.html"
+          <a href="shaka-plugin.html"
              class="inline-flex items-center gap-2 px-6 py-3 bg-smoke text-silver font-semibold rounded-lg border border-ash hover:text-white transition-colors">
-            hls.js plugin docs
+            Shaka plugin docs
           </a>
         </div>
       </div>
@@ -770,10 +793,10 @@ handle();    <span class="text-silver/50">// unregister transmuxer + detach</spa
       <div class="text-silver/50 text-sm">
         <a href="../" class="text-silver hover:text-white">Home</a> &middot;
         <a href="dashjs-plugin.html" class="text-silver hover:text-white">dash.js plugin</a> &middot;
-        <a href="hlsjs-plugin.html" class="text-silver hover:text-white">hls.js plugin</a> &middot;
+        <a href="shaka-plugin.html" class="text-silver hover:text-white">Shaka plugin</a> &middot;
         <a href="comparison.html" class="text-silver hover:text-white">vs alternatives</a> &middot;
         <a href="https://github.com/privaloops/hevc.js" class="text-silver hover:text-white" rel="noopener noreferrer" target="_blank">GitHub</a> &middot;
-        <a href="https://www.npmjs.com/package/@hevcjs/shaka-plugin" class="text-silver hover:text-white" rel="noopener noreferrer" target="_blank">npm</a>
+        <a href="https://www.npmjs.com/package/@hevcjs/hlsjs-plugin" class="text-silver hover:text-white" rel="noopener noreferrer" target="_blank">npm</a>
       </div>
       <div class="text-silver/50 text-sm">
         Built by <a href="https://www.developpement.ai" class="text-accent hover:text-accent-light" rel="noopener noreferrer" target="_blank">developpement.ai</a> &middot;
