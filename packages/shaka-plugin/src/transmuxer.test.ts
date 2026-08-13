@@ -12,7 +12,9 @@ interface MockTranscoder {
 
 let mockTranscoder: MockTranscoder;
 
-vi.mock("@hevcjs/core", () => ({
+vi.mock("@hevcjs/core", async (importOriginal) => ({
+  // Real implementations for the pure helpers the transmuxer guards rely on
+  ...(await importOriginal<typeof import("@hevcjs/core")>()),
   SegmentTranscoder: vi.fn().mockImplementation(function () { return mockTranscoder; }),
   hevcMimeToH264Codec: vi.fn((mime: string) => {
     if (mime.includes("L120")) return "avc1.64002a";
@@ -265,5 +267,14 @@ describe("HevcTransmuxer", () => {
       await t.transmux(FTYP_HEADER, {}, {}, 0, "video");
       expect(mockTranscoder.init).toHaveBeenCalledTimes(2);
     });
+  });
+});
+
+describe("muxed A/V HEVC refusal", () => {
+  it("isSupported answers false for muxed codec lists (audio would be dropped)", () => {
+    const t = new HevcTransmuxer('video/mp4; codecs="hvc1"');
+    expect(t.isSupported('video/mp4; codecs="hvc1.1.6.L120.90,mp4a.40.2"')).toBe(false);
+    expect(t.isSupported('video/mp4; codecs="hev1.1.6.L93.B0,mp4a.40.2"')).toBe(false);
+    expect(t.isSupported('video/mp4; codecs="hvc1.1.6.L120.90"')).toBe(true);
   });
 });

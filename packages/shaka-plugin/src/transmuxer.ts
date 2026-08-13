@@ -13,6 +13,7 @@ import {
   SegmentTranscoder,
   TranscodeWorkerClient,
   hevcMimeToH264Codec,
+  isMuxedHevcMime,
 } from "@hevcjs/core";
 import type { SegmentTranscoderConfig } from "@hevcjs/core";
 
@@ -106,6 +107,10 @@ export class HevcTransmuxer {
   }
 
   isSupported(mimeType: string, _contentType?: string): boolean {
+    // Muxed A/V HEVC (e.g. HLS fMP4 with codecs="hvc1...,mp4a..."): the
+    // transcode pipeline is video-only — transmuxing would silently drop
+    // the audio track. Report unsupported so Shaka surfaces a clear error.
+    if (isMuxedHevcMime(mimeType)) return false;
     return HEVC_MIME_PATTERN.test(mimeType);
   }
 
