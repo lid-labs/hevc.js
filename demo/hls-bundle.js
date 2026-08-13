@@ -10965,8 +10965,17 @@ var HevcHls = (() => {
     return new Worker(blobUrl);
   }
   var HEVC_DETECT_RE = /hev1|hvc1/i;
-  var HEVC_CODEC_RE = /hev1[^"']*|hvc1[^"']*/gi;
+  var HEVC_CODEC_RE = /hev1[^"',]*|hvc1[^"',]*/gi;
   var TS_OFFSET_FLUSH_THRESHOLD_S = 0.5;
+  var AUDIO_CODEC_PREFIXES = ["mp4a", "ac-3", "ec-3", "opus", "mp3", "alac", "flac", "vorbis"];
+  function isMuxedHevcMime(mimeType) {
+    if (!HEVC_DETECT_RE.test(mimeType)) return false;
+    const m = /codecs\s*=\s*(?:"([^"]*)"|([^;]*))/i.exec(mimeType);
+    const list = (m?.[1] ?? m?.[2] ?? "").split(",").map((c) => c.trim().toLowerCase());
+    const hasHevc = list.some((c) => c.startsWith("hev1") || c.startsWith("hvc1"));
+    const hasAudio = list.some((c) => AUDIO_CODEC_PREFIXES.some((a) => c.startsWith(a)));
+    return hasHevc && hasAudio;
+  }
   function getMediaSourceConstructor() {
     const g = globalThis;
     return g.MediaSource ?? g.ManagedMediaSource ?? null;
@@ -10994,6 +11003,10 @@ var HevcHls = (() => {
     };
     MediaSource.isTypeSupported = function(mimeType) {
       if (HEVC_DETECT_RE.test(mimeType)) {
+        if (isMuxedHevcMime(mimeType)) {
+          log.info(`isTypeSupported("${mimeType}") \u2192 false (muxed A/V HEVC is not supported \u2014 audio would be lost)`);
+          return false;
+        }
         const h264Codec = hevcMimeToH264Codec(mimeType);
         const h264Mime = mimeType.replace(HEVC_CODEC_RE, h264Codec);
         const result = originalIsTypeSupported.call(MediaSource, h264Mime);
@@ -11007,6 +11020,10 @@ var HevcHls = (() => {
       interceptState.originalDecodingInfo = originalDecodingInfo;
       navigator.mediaCapabilities.decodingInfo = async function(cfg) {
         if (cfg.video?.contentType && HEVC_DETECT_RE.test(cfg.video.contentType)) {
+          if (isMuxedHevcMime(cfg.video.contentType)) {
+            log.info(`decodingInfo("${cfg.video.contentType}") \u2192 unsupported (muxed A/V HEVC \u2014 audio would be lost)`);
+            return { supported: false, smooth: false, powerEfficient: false };
+          }
           const h264Codec = hevcMimeToH264Codec(cfg.video.contentType);
           const h264Type = cfg.video.contentType.replace(HEVC_CODEC_RE, h264Codec);
           const h264Config = { ...cfg, video: { ...cfg.video, contentType: h264Type } };
@@ -11017,6 +11034,12 @@ var HevcHls = (() => {
     }
     MediaSource.prototype.addSourceBuffer = function(mimeType) {
       if (!HEVC_DETECT_RE.test(mimeType)) {
+        return originalAddSourceBuffer.call(this, mimeType);
+      }
+      if (isMuxedHevcMime(mimeType)) {
+        log.error(
+          `addSourceBuffer("${mimeType}") \u2014 muxed audio+video HEVC segments are not supported (the transcode pipeline is video-only and the audio track would be dropped). Repackage the stream with demuxed audio renditions.`
+        );
         return originalAddSourceBuffer.call(this, mimeType);
       }
       const h264Codec = hevcMimeToH264Codec(mimeType);
@@ -11339,6 +11362,174 @@ var HevcHls = (() => {
     }
     return new Uint8Array(data);
   }
+  var DEFAULTS = {
+    targetSpeedX: 1.3,
+    raiseAfter: 6,
+    lowerAfter: 1,
+    measureWindow: 2
+  };
+  var ComputeAwareDecider = class {
+    constructor(config = {}) {
+      this.window = [];
+      this.consecutiveLow = 0;
+      this.consecutiveHigh = 0;
+      this.capIndex_ = null;
+      this.ladderSize_ = 0;
+      this.prevCapIndex_ = null;
+      this.prevWindow_ = [];
+      this.prevConsecutiveLow_ = 0;
+      this.prevConsecutiveHigh_ = 0;
+      this.hasRevertablePoint_ = false;
+      this.cfg = {
+        targetSpeedX: config.targetSpeedX ?? DEFAULTS.targetSpeedX,
+        raiseAfter: config.raiseAfter ?? DEFAULTS.raiseAfter,
+        lowerAfter: config.lowerAfter ?? DEFAULTS.lowerAfter,
+        measureWindow: config.measureWindow ?? DEFAULTS.measureWindow
+      };
+      if (this.cfg.targetSpeedX <= 1) {
+        throw new Error("targetSpeedX must be > 1.0 (need headroom over real-time to raise)");
+      }
+      if (this.cfg.measureWindow < 1) throw new Error("measureWindow must be >= 1");
+      if (this.cfg.raiseAfter < 1 || this.cfg.lowerAfter < 1) {
+        throw new Error("raiseAfter / lowerAfter must be >= 1");
+      }
+    }
+    /** Set or update the number of available variants. Must be called at least once before observe(). */
+    setLadderSize(n) {
+      if (n < 1) throw new Error("ladderSize must be >= 1");
+      this.ladderSize_ = n;
+      if (this.capIndex_ != null && this.capIndex_ >= n) {
+        this.capIndex_ = n - 1;
+      }
+    }
+    get currentCap() {
+      return this.capIndex_;
+    }
+    get ladderSize() {
+      return this.ladderSize_;
+    }
+    /**
+     * Feed one speedX measurement plus the player's currently-active variant
+     * index (used as the starting point on first activation, per the
+     * "subtractive only on first activation" rule).
+     *
+     * Returns the decision: a `capIndex` plus the reason. The adapter applies
+     * the cap to the player only when `reason` is "lower" or "raise".
+     */
+    observe(speedX, currentVariantIdx) {
+      if (this.ladderSize_ === 0) {
+        return { capIndex: this.capIndex_, avgSpeedX: speedX, reason: "init" };
+      }
+      this.window.push(speedX);
+      if (this.window.length > this.cfg.measureWindow) this.window.shift();
+      if (this.window.length < this.cfg.measureWindow) {
+        return { capIndex: this.capIndex_, avgSpeedX: avg(this.window), reason: "init" };
+      }
+      const avgSpeed = avg(this.window);
+      if (avgSpeed < 1) {
+        this.consecutiveLow++;
+        this.consecutiveHigh = 0;
+        if (this.consecutiveLow >= this.cfg.lowerAfter) {
+          const base = this.capIndex_ ?? clamp(currentVariantIdx, 0, this.ladderSize_ - 1);
+          if (base > 0) {
+            this.snapshotForRevert();
+            this.capIndex_ = base - 1;
+            this.resetAfterChange();
+            return { capIndex: this.capIndex_, avgSpeedX: avgSpeed, reason: "lower" };
+          }
+          this.consecutiveLow = 0;
+        }
+      } else if (avgSpeed > this.cfg.targetSpeedX) {
+        this.consecutiveHigh++;
+        this.consecutiveLow = 0;
+        if (this.consecutiveHigh >= this.cfg.raiseAfter) {
+          if (this.capIndex_ != null && this.capIndex_ < this.ladderSize_ - 1) {
+            this.snapshotForRevert();
+            this.capIndex_ = this.capIndex_ + 1;
+            this.resetAfterChange();
+            return { capIndex: this.capIndex_, avgSpeedX: avgSpeed, reason: "raise" };
+          }
+          this.consecutiveHigh = 0;
+        }
+      } else {
+        this.consecutiveLow = 0;
+        this.consecutiveHigh = 0;
+      }
+      return { capIndex: this.capIndex_, avgSpeedX: avgSpeed, reason: "hold" };
+    }
+    /**
+     * Roll back the most recent "lower" or "raise" decision. Adapters call
+     * this when applying the cap to the host player throws — so the decider
+     * state stays in sync with what's actually configured on the player.
+     * Safe to call when no decision has happened yet (no-op).
+     */
+    revertLastDecision() {
+      if (!this.hasRevertablePoint_) return;
+      this.capIndex_ = this.prevCapIndex_;
+      this.window = [...this.prevWindow_];
+      this.consecutiveLow = this.prevConsecutiveLow_;
+      this.consecutiveHigh = this.prevConsecutiveHigh_;
+      this.hasRevertablePoint_ = false;
+    }
+    /** Test/debug — reset everything except the configured thresholds. */
+    reset() {
+      this.window = [];
+      this.consecutiveLow = 0;
+      this.consecutiveHigh = 0;
+      this.capIndex_ = null;
+      this.hasRevertablePoint_ = false;
+    }
+    snapshotForRevert() {
+      this.prevCapIndex_ = this.capIndex_;
+      this.prevWindow_ = [...this.window];
+      this.prevConsecutiveLow_ = this.consecutiveLow;
+      this.prevConsecutiveHigh_ = this.consecutiveHigh;
+      this.hasRevertablePoint_ = true;
+    }
+    resetAfterChange() {
+      this.window = [];
+      this.consecutiveLow = 0;
+      this.consecutiveHigh = 0;
+    }
+  };
+  function avg(arr) {
+    if (arr.length === 0) return 0;
+    let sum = 0;
+    for (const v of arr) sum += v;
+    return sum / arr.length;
+  }
+  function clamp(n, lo, hi) {
+    return Math.max(lo, Math.min(hi, n));
+  }
+
+  // packages/hlsjs-plugin/src/compute-aware.ts
+  function attachHlsComputeAware(hls, options = {}) {
+    const { onObservation, ...deciderConfig } = options;
+    const decider = new ComputeAwareDecider(deciderConfig);
+    const unsubscribe = subscribeSegmentStat((stat) => {
+      const levels = hls?.levels ?? [];
+      if (levels.length === 0) return;
+      decider.setLadderSize(levels.length);
+      const currentIdx = typeof hls.currentLevel === "number" && hls.currentLevel >= 0 ? hls.currentLevel : levels.length - 1;
+      const decision = decider.observe(stat.speedX, currentIdx);
+      if (onObservation) {
+        try {
+          onObservation(stat, decision.avgSpeedX, decision.capIndex, decision.reason);
+        } catch {
+        }
+      }
+      if (decision.reason === "lower" || decision.reason === "raise") {
+        if (decision.capIndex == null) return;
+        try {
+          hls.autoLevelCapping = decision.capIndex;
+        } catch (err) {
+          decider.revertLastDecision();
+          console.warn("[hevc.js/hls] applying autoLevelCapping failed, reverted decider:", err);
+        }
+      }
+    });
+    return unsubscribe;
+  }
 
   // packages/hlsjs-plugin/src/plugin.ts
   async function hasNativeHevcSupport() {
@@ -11381,40 +11572,71 @@ var HevcHls = (() => {
   async function attachHevcSupport(config = {}) {
     if (!config.forceTranscode && await hasNativeHevcSupport()) {
       console.log("[hevc.js/hls] Native HEVC support detected \u2014 transcoding not needed");
-      return () => {
-      };
+      return makeHandle(() => {
+      }, config.adaptiveCompute);
     }
     if (typeof MediaSource === "undefined") {
       console.warn(
         "[hevc.js/hls] Classic MediaSource is not available in this browser \u2014 HEVC transcoding disabled."
       );
-      return () => {
-      };
+      return makeHandle(() => {
+      }, config.adaptiveCompute);
     }
     if (!H264Encoder.isSupported()) {
       console.warn(
         "[hevc.js/hls] WebCodecs VideoEncoder not available. HEVC transcoding requires Chrome 94+ or equivalent."
       );
-      return () => {
-      };
+      return makeHandle(() => {
+      }, config.adaptiveCompute);
     }
     const canEncode = await H264Encoder.checkSupport();
     if (!canEncode) {
       console.warn(
         "[hevc.js/hls] VideoEncoder exists but H.264 encoding is not supported. HEVC transcoding is not available in this browser."
       );
-      return () => {
-      };
+      return makeHandle(() => {
+      }, config.adaptiveCompute);
     }
-    console.log("[hevc.js/hls] No native HEVC support \u2014 installing WASM transcoder");
-    const { forceTranscode: _forceTranscode, ...mseConfig } = config;
+    console.log(
+      config.forceTranscode ? "[hevc.js/hls] forceTranscode \u2014 installing WASM transcoder" : "[hevc.js/hls] No native HEVC support \u2014 installing WASM transcoder"
+    );
+    if (typeof globalThis.ManagedMediaSource !== "undefined") {
+      console.warn(
+        "[hevc.js/hls] ManagedMediaSource detected: pass `preferManagedMediaSource: false` to the Hls constructor, or hls.js will bypass the transcoding intercept."
+      );
+    }
+    const { forceTranscode: _forceTranscode, adaptiveCompute, ...mseConfig } = config;
     installMSEIntercept({
       ...mseConfig,
       strictAppendProgress: true
     });
-    return () => {
+    return makeHandle(() => {
       uninstallMSEIntercept();
+    }, adaptiveCompute);
+  }
+  function makeHandle(uninstall, adaptive) {
+    let activeDetach = null;
+    const tearDown = () => {
+      activeDetach?.();
+      activeDetach = null;
+      uninstall();
     };
+    const fn = (() => tearDown());
+    fn.uninstall = tearDown;
+    fn.attachComputeAware = (hls, runtimeOpts) => {
+      if (adaptive === false) return () => {
+      };
+      activeDetach?.();
+      const attachOpts = typeof adaptive === "object" ? adaptive : {};
+      const opts = { ...attachOpts, ...runtimeOpts ?? {} };
+      const detach = attachHlsComputeAware(hls, opts);
+      activeDetach = detach;
+      return () => {
+        detach();
+        if (activeDetach === detach) activeDetach = null;
+      };
+    };
+    return fn;
   }
   return __toCommonJS(hls_entry_exports);
 })();

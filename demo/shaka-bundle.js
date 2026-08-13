@@ -10962,6 +10962,16 @@ var HevcShaka = (() => {
     );
     return new Worker(blobUrl);
   }
+  var HEVC_DETECT_RE = /hev1|hvc1/i;
+  var AUDIO_CODEC_PREFIXES = ["mp4a", "ac-3", "ec-3", "opus", "mp3", "alac", "flac", "vorbis"];
+  function isMuxedHevcMime(mimeType) {
+    if (!HEVC_DETECT_RE.test(mimeType)) return false;
+    const m = /codecs\s*=\s*(?:"([^"]*)"|([^;]*))/i.exec(mimeType);
+    const list = (m?.[1] ?? m?.[2] ?? "").split(",").map((c) => c.trim().toLowerCase());
+    const hasHevc = list.some((c) => c.startsWith("hev1") || c.startsWith("hvc1"));
+    const hasAudio = list.some((c) => AUDIO_CODEC_PREFIXES.some((a) => c.startsWith(a)));
+    return hasHevc && hasAudio;
+  }
   var DEFAULTS = {
     targetSpeedX: 1.3,
     raiseAfter: 6,
@@ -11154,6 +11164,7 @@ var HevcShaka = (() => {
       this.cachedH264Init_ = null;
     }
     isSupported(mimeType, _contentType) {
+      if (isMuxedHevcMime(mimeType)) return false;
       return HEVC_MIME_PATTERN.test(mimeType);
     }
     /**

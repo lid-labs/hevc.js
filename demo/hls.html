@@ -36,6 +36,7 @@
     <button class="demo-btn" onclick="loadM3U8('streams/hls_720p/master.m3u8')">720p (10s)</button>
     <button class="demo-btn" onclick="loadM3U8('streams/hls_1080p/master.m3u8')">1080p (5s)</button>
     <button class="demo-btn" onclick="loadM3U8('streams/hls_4k/master.m3u8')">4K (5s)</button>
+    <button class="demo-btn" onclick="loadM3U8('streams/hls_muxed/playlist.m3u8')">Muxed A/V (unsupported)</button>
   </div>
 
   <div class="demo-toggle">
@@ -47,7 +48,9 @@
   <div id="status" class="demo-status">Loading...</div>
   <div id="perf-overlay" class="demo-status" style="font-family:monospace;font-size:13px;">
     <span id="perf-quality">quality: —</span> ·
-    <span id="perf-speed">speedX: —</span>
+    <span id="perf-speed">speedX: —</span> ·
+    <span id="perf-cap">cap: —</span> ·
+    <span id="perf-reason">reason: —</span>
   </div>
   <textarea id="log" class="demo-log" readonly></textarea>
 
@@ -66,6 +69,7 @@ hls.<span class="fn">loadSource</span>(m3u8Url);</div>
 </footer>
 
 <!-- WASM decoder -->
+<script src="demo-utils.js"></script>
 <script src="hevc-decode.js"></script>
 <!-- hls.js -->
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1.7.0/dist/hls.min.js"></script>
@@ -136,7 +140,7 @@ async function loadM3U8(presetUrl) {
   // Off-main-thread by default — same transcode-worker.js bundle as the
   // dash.js/Shaka demos. Override with ?workerUrl=... ; pass
   // ?workerUrl=off to keep transcoding on the main thread (debugging).
-  const workerUrlParam = qp.get('workerUrl');
+  const workerUrlParam = qp.get('workerUrl') === 'off' ? 'off' : hevcDemo.safeAssetUrl(qp.get('workerUrl'), 'workerUrl');
   const workerUrl = workerUrlParam === 'off'
     ? undefined
     : (workerUrlParam || './transcode-worker.js');
@@ -145,8 +149,8 @@ async function loadM3U8(presetUrl) {
 
   console.log('[demo] attachHevcSupport');
   cleanup = await HevcHls.attachHevcSupport({
-    wasmUrl: qp.get('wasmUrl') || undefined,
-    wasmBinaryUrl: qp.get('wasmBinaryUrl') || undefined,
+    wasmUrl: hevcDemo.safeAssetUrl(qp.get('wasmUrl'), 'wasmUrl'),
+    wasmBinaryUrl: hevcDemo.safeAssetUrl(qp.get('wasmBinaryUrl'), 'wasmBinaryUrl'),
     workerUrl,
     forceTranscode,
     logLevel: qp.get('logLevel') || undefined,
@@ -159,6 +163,18 @@ async function loadM3U8(presetUrl) {
     preferManagedMediaSource: false,
     debug: qp.get('debug') === '1',
   });
+
+  // Compute-aware ABR: caps hls.autoLevelCapping when the device can't
+  // transcode the current level in real time. ?adaptiveCompute=off to opt out.
+  if (qp.get('adaptiveCompute') !== 'off') {
+    cleanup.attachComputeAware(hls, {
+      onObservation: (stat, avg, cap, reason) => {
+        document.getElementById('perf-cap').textContent =
+          'cap: ' + (cap == null ? 'none' : 'idx ' + cap);
+        document.getElementById('perf-reason').textContent = 'reason: ' + reason;
+      },
+    });
+  }
 
   hls.on(Hls.Events.ERROR, (_evt, data) => {
     console.error('[demo] hls.js error', data.type, data.details, data.fatal ? '(fatal)' : '',

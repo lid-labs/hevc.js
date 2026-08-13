@@ -97,14 +97,15 @@ import { attachHevcSupport } from '@hevcjs/hlsjs-plugin';
 
 // 必须在 `new Hls()` 之前调用 — hls.js 在解析清单时
 // 会用 MediaSource.isTypeSupported 过滤清晰度层级。
-await attachHevcSupport({ workerUrl: './transcode-worker.js' });
+const handle = await attachHevcSupport({ workerUrl: './transcode-worker.js' });
 
 const hls = new Hls({ preferManagedMediaSource: false });
+handle.attachComputeAware(hls);          // 计算感知 ABR(默认开启)
 hls.attachMedia(videoElement);
 hls.loadSource('https://example.com/playlist.m3u8');
 ```
 
-目前支持 fMP4 HLS(纯视频或音视频分离的多码率流);音视频混装(muxed)的分片暂时只播放视频。详见[插件 README](packages/hlsjs-plugin/README.md)(英文)。
+目前支持 fMP4 HLS(纯视频或音视频分离的多码率流);音视频混装(muxed)的分片会被明确拒绝并给出清晰的错误提示,而不是无声播放。详见[插件 README](packages/hlsjs-plugin/README.md)(英文)。
 
 ### 转码工作原理
 

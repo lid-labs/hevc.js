@@ -78,7 +78,7 @@
         "name": "What about muxed audio+video segments?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "Not yet supported. fMP4 segments that mux audio and video into a single audiovideo SourceBuffer would play video-only. Supported today: fMP4 streams with video-only or demuxed audio renditions — master playlists with an audio group work and are validated end-to-end. HEVC in MPEG-TS is untested."
+          "text": "Not yet supported — and refused safely. The transcode pipeline is video-only, so a muxed rendition is reported unsupported and creating its combined SourceBuffer logs a clear error: hls.js fails fast with a fatal bufferAddCodecError instead of silently playing without audio. Validated end-to-end with a muxed test stream. Supported today: fMP4 streams with video-only or demuxed audio renditions — master playlists with an audio group work and are validated end-to-end. HEVC in MPEG-TS is untested."
         }
       },
       {
@@ -629,10 +629,9 @@ cleanup();</code></pre>
 
         <!-- Compute-aware ABR -->
         <div class="code-block rounded-xl p-6 mb-8">
-          <h3 class="text-xl font-bold text-white mb-4"><code class="font-mono">subscribeSegmentStat</code> — build your own compute-aware ABR</h3>
+          <h3 class="text-xl font-bold text-white mb-4">Compute-aware ABR — <code class="font-mono">handle.attachComputeAware(hls)</code></h3>
           <p class="text-silver text-sm mb-6">
-            Automatic compute-aware level capping (as shipped for dash.js and Shaka) is <span class="text-white font-medium">not wired for hls.js yet</span>.
-            <code class="font-mono">subscribeSegmentStat</code> is re-exported so you can observe per-segment transcode stats and drive <code class="font-mono">hls.autoLevelCapping</code> yourself.
+            <span class="text-white font-medium">On by default.</span> The handle returned by <code class="font-mono">attachHevcSupport</code> exposes <code class="font-mono">attachComputeAware(hls)</code>: it observes per-segment transcode <code class="font-mono">speedX</code> and caps <code class="font-mono">hls.autoLevelCapping</code> when the device can't transcode the current level in real time — hls.js's own ABR keeps choosing freely below that ceiling. Pass <code class="font-mono">adaptiveCompute: false</code> at attach time to opt out, or an object to tune the decider. <code class="font-mono">subscribeSegmentStat</code> stays re-exported for custom telemetry.
           </p>
 
           <div class="flex items-center gap-2 mb-4" aria-hidden="true">
@@ -643,12 +642,10 @@ cleanup();</code></pre>
           </div>
           <pre class="text-sm font-mono leading-relaxed overflow-x-auto"><code><span class="text-accent">import</span> { subscribeSegmentStat } <span class="text-accent">from</span> <span class="text-green-400">'@hevcjs/hlsjs-plugin'</span>;
 
-<span class="text-accent">const</span> unsubscribe = subscribeSegmentStat((stat) =&gt; {
-  <span class="text-silver/50">// stat.speedX &lt; 1 → transcoding slower than real-time</span>
-  <span class="text-accent">if</span> (stat.speedX &lt; <span class="text-accent">1</span>) {
-    hls.autoLevelCapping = Math.max(<span class="text-accent">0</span>, hls.currentLevel - <span class="text-accent">1</span>);
-  }
-});</code></pre>
+<span class="text-accent">const</span> handle = <span class="text-accent">await</span> attachHevcSupport({ workerUrl: <span class="text-green-400">'./transcode-worker.js'</span> });
+
+<span class="text-accent">const</span> hls = <span class="text-accent">new</span> Hls({ preferManagedMediaSource: <span class="text-accent">false</span> });
+handle.attachComputeAware(hls);  <span class="text-silver/50">// caps hls.autoLevelCapping under compute pressure</span></code></pre>
         </div>
 
         <!-- Scope -->
@@ -665,11 +662,11 @@ cleanup();</code></pre>
             </div>
             <div class="flex gap-4 items-start px-4 py-3 rounded-lg bg-ash/50">
               <span class="text-red-400 mt-0.5" aria-hidden="true">&#10007;</span>
-              <p class="text-silver text-sm">Not yet supported: muxed audio+video fMP4 segments (single <code class="font-mono">audiovideo</code> SourceBuffer) &mdash; playback would be video-only. HEVC-in-MPEG-TS is untested.</p>
+              <p class="text-silver text-sm">Not yet supported: muxed audio+video fMP4 segments (single <code class="font-mono">audiovideo</code> SourceBuffer) &mdash; refused with a clear error (fatal <code class="font-mono">bufferAddCodecError</code>) rather than playing without audio. HEVC-in-MPEG-TS is untested.</p>
             </div>
             <div class="flex gap-4 items-start px-4 py-3 rounded-lg bg-ash/50">
-              <span class="text-red-400 mt-0.5" aria-hidden="true">&#10007;</span>
-              <p class="text-silver text-sm">Compute-aware ABR (automatic level capping when the device can't transcode in real time) is not wired for hls.js yet &mdash; see <code class="font-mono">subscribeSegmentStat</code> above.</p>
+              <span class="text-green-400 mt-0.5" aria-hidden="true">&#10003;</span>
+              <p class="text-silver text-sm">Compute-aware ABR is wired via <code class="font-mono">handle.attachComputeAware(hls)</code> &mdash; on by default, caps <code class="font-mono">hls.autoLevelCapping</code> under compute pressure.</p>
             </div>
           </div>
         </div>
@@ -738,7 +735,7 @@ cleanup();</code></pre>
           <details>
             <summary>What about muxed audio+video segments?</summary>
             <div class="faq-answer">
-              <p>Not yet supported. fMP4 segments that mux audio and video into a single <code class="font-mono text-accent-light">audiovideo</code> SourceBuffer would play video-only. Supported today: fMP4 streams with video-only or demuxed audio renditions &mdash; master playlists with an audio group work and are validated end-to-end. HEVC in MPEG-TS is untested.</p>
+              <p>Not yet supported &mdash; and refused safely. The transcode pipeline is video-only, so a muxed rendition is reported unsupported and creating its combined SourceBuffer logs a clear error: hls.js fails fast with a fatal <code class="font-mono text-accent-light">bufferAddCodecError</code> instead of silently playing without audio. Validated end-to-end with a muxed test stream. Supported today: fMP4 streams with video-only or demuxed audio renditions &mdash; master playlists with an audio group work and are validated end-to-end. HEVC in MPEG-TS is untested.</p>
             </div>
           </details>
 

@@ -68,6 +68,7 @@
 </footer>
 
 <!-- WASM decoder -->
+<script src="demo-utils.js"></script>
 <script src="hevc-decode.js"></script>
 <!-- Shaka Player -->
 <script src="https://cdn.jsdelivr.net/npm/shaka-player@4.11.4/dist/shaka-player.compiled.js"></script>
@@ -153,7 +154,7 @@ async function loadMPD(presetUrl) {
   // bundle that's already used by the dash.js demo. Override with
   // ?workerUrl=... ; pass ?workerUrl=off explicitly to keep transcoding
   // on the main thread (useful for debugging).
-  const workerUrlParam = qp.get('workerUrl');
+  const workerUrlParam = qp.get('workerUrl') === 'off' ? 'off' : hevcDemo.safeAssetUrl(qp.get('workerUrl'), 'workerUrl');
   const workerUrl = workerUrlParam === 'off'
     ? undefined
     : (workerUrlParam || './transcode-worker.js');
@@ -163,8 +164,8 @@ async function loadMPD(presetUrl) {
   // adaptiveCompute is ON by default — pass ?adaptiveCompute=off to opt out.
   const adaptiveCompute = qp.get('adaptiveCompute') === 'off' ? false : undefined;
   cleanup = HevcShaka.registerHevcTransmuxer(shaka, {
-    wasmUrl: qp.get('wasmUrl') || undefined,
-    wasmBinaryUrl: qp.get('wasmBinaryUrl') || undefined,
+    wasmUrl: hevcDemo.safeAssetUrl(qp.get('wasmUrl'), 'wasmUrl'),
+    wasmBinaryUrl: hevcDemo.safeAssetUrl(qp.get('wasmBinaryUrl'), 'wasmBinaryUrl'),
     workerUrl,
     adaptiveCompute,
   });

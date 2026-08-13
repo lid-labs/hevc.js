@@ -121,9 +121,33 @@ gen_mire() {
   echo "✓ hls_${name} ← dash_${name} ($(du -sh "$dir" | cut -f1))"
 }
 
+
+# --- hls_muxed: a MUXED audio+video HEVC stream (single audiovideo track) ----
+# Deliberately unsupported: the transcode pipeline is video-only, so this
+# exists to prove the plugin refuses muxed renditions cleanly (clear error,
+# no silent audio-less playback) rather than to be played. Encoded from
+# lavfi so it stays small and self-contained.
+gen_muxed() {
+  local dir="$STREAMS/hls_muxed"
+  rm -rf "$dir" && mkdir -p "$dir"
+
+  ffmpeg -y -loglevel error \
+    -f lavfi -i "testsrc2=size=640x360:rate=25:duration=6" \
+    -f lavfi -i "sine=frequency=1000:sample_rate=48000:duration=6" \
+    -c:v libx265 -preset ultrafast -x265-params "keyint=25:min-keyint=25:scenecut=0" \
+    -pix_fmt yuv420p -tag:v hvc1 -c:a aac -b:a 128k \
+    -map 0:v -map 1:a \
+    -f hls -hls_time 2 -hls_playlist_type vod -hls_segment_type fmp4 \
+    -hls_fmp4_init_filename init.mp4 -hls_segment_filename "$dir/seg_%03d.m4s" \
+    "$dir/playlist.m3u8"
+
+  echo "✓ hls_muxed (muxed A/V, unsupported by design) — $(du -sh "$dir" | cut -f1)"
+}
+
 gen_abr
 gen_mire 720p 2
 gen_mire 1080p 1
 gen_mire 4k 1
+gen_muxed
 
 echo "Done. Entry points: $STREAMS/hls_*/master.m3u8"

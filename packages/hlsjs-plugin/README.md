@@ -64,9 +64,9 @@ hls.loadSource('https://example.com/stream/playlist.m3u8');
 
 ## API
 
-### `attachHevcSupport(config?): Promise<() => void>`
+### `attachHevcSupport(config?): Promise<HevcHlsPluginHandle>`
 
-Probes native HEVC support (by actually creating an HEVC SourceBuffer, not just `isTypeSupported`), checks WebCodecs H.264 encoding, then installs the MSE intercept. Returns a cleanup function.
+Probes native HEVC support (by actually creating an HEVC SourceBuffer, not just `isTypeSupported`), checks WebCodecs H.264 encoding, then installs the MSE intercept. Returns a callable handle: invoke it (or `handle.uninstall()`) to tear everything down; `handle.attachComputeAware(hls)` wires the compute-aware ABR feedback loop (caps `hls.autoLevelCapping` when the device can't transcode the current level in real time — on by default, pass `adaptiveCompute: false` to opt out).
 
 Unlike the dash.js plugin, no player instance is needed: hls.js keeps HEVC levels in its ladder as long as the (patched) `MediaSource.isTypeSupported` accepts them.
 
@@ -76,14 +76,15 @@ Unlike the dash.js plugin, no player instance is needed: hls.js keeps HEVC level
 | `wasmUrl` | `string` | URL of the Emscripten glue script (`hevc-decode.js`). |
 | `wasmBinaryUrl` | `string` | URL of the `.wasm` binary — needed for cross-origin/CDN setups. |
 | `forceTranscode` | `boolean` | Transcode even when native HEVC is available (testing). Default `false`. |
+| `adaptiveCompute` | `boolean \| object` | Compute-aware ABR: `true`/omitted = on, object = decider tuning, `false` = off. |
 | `logLevel` | `string` | `'debug' \| 'info' \| 'warn' \| 'error' \| 'silent'`. |
 
 ## Scope and compatibility
 
 - Tested against **hls.js 1.7.x** (the declared peer range `>=1.4.0` is not fully exercised — 1.6.6 changed how hls.js drives `SourceBuffer.timestampOffset`, and this plugin is designed for the current behavior).
 - Supported today: HLS **fMP4** streams with video-only or demuxed audio renditions.
-- Not yet supported: muxed audio+video fMP4 segments (single `audiovideo` SourceBuffer) — playback would be video-only; HEVC-in-MPEG-TS is untested.
-- Compute-aware ABR (automatic level capping when the device can't transcode in real time) is not wired for hls.js yet; `subscribeSegmentStat` is re-exported for consumers who want to drive `hls.autoLevelCapping` themselves.
+- Not yet supported: muxed audio+video fMP4 segments (single `audiovideo` SourceBuffer). The pipeline is video-only, so these are refused: `isTypeSupported`/`decodingInfo` report unsupported and creating the combined SourceBuffer logs a clear error, so hls.js fails fast with a fatal `bufferAddCodecError` instead of silently playing without audio. Validated end-to-end with a muxed test stream. HEVC-in-MPEG-TS is untested.
+- Compute-aware ABR is wired via `handle.attachComputeAware(hls)` — on by default.
 
 ## License
 
