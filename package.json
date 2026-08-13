@@ -68,7 +68,9 @@
     "dash",
     "dashjs",
     "shaka",
-    "shaka-player"
+    "shaka-player",
+    "hls",
+    "hlsjs"
   ],
   "license": "MIT",
   "author": "Thibaut Lion",

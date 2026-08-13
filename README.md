@@ -6,6 +6,7 @@
 [![npm downloads core](https://img.shields.io/npm/dw/@hevcjs/core?label=core)](https://www.npmjs.com/package/@hevcjs/core)
 [![npm downloads dashjs-plugin](https://img.shields.io/npm/dw/@hevcjs/dashjs-plugin?label=dashjs-plugin)](https://www.npmjs.com/package/@hevcjs/dashjs-plugin)
 [![npm downloads shaka-plugin](https://img.shields.io/npm/dw/@hevcjs/shaka-plugin?label=shaka-plugin)](https://www.npmjs.com/package/@hevcjs/shaka-plugin)
+[![npm downloads hlsjs-plugin](https://img.shields.io/npm/dw/@hevcjs/hlsjs-plugin?label=hlsjs-plugin)](https://www.npmjs.com/package/@hevcjs/hlsjs-plugin)
 
 ##### English | [简体中文](./README.zh_CN.md)
 
@@ -58,6 +59,7 @@ Cross-origin Worker and WASM loading are handled automatically. For production, 
 ```bash
 npm install @hevcjs/dashjs-plugin   # dash.js
 npm install @hevcjs/shaka-plugin    # Shaka Player
+npm install @hevcjs/hlsjs-plugin    # hls.js
 ```
 
 ### Setup
@@ -106,6 +108,23 @@ await player.load('https://example.com/manifest.mpd');
 `registerHevcTransmuxer` registers a Shaka `Transmuxer` for `hev1`/`hvc1`, so Shaka handles MIME routing natively. To force transcoding even where HEVC is supported natively, use Shaka's built-in `player.configure({ mediaSource: { forceTransmux: true } })`.
 
 `handle.attachComputeAware(player)` is what enables compute-aware quality control (see below). It's a separate call because Shaka's player instance doesn't exist at register time. Pass `adaptiveCompute: false` in the register config to opt out.
+
+### hls.js
+
+```js
+import Hls from 'hls.js';
+import { attachHevcSupport } from '@hevcjs/hlsjs-plugin';
+
+// Before `new Hls()` — hls.js filters levels against
+// MediaSource.isTypeSupported at manifest parse time.
+await attachHevcSupport({ workerUrl: './transcode-worker.js' });
+
+const hls = new Hls({ preferManagedMediaSource: false });
+hls.attachMedia(videoElement);
+hls.loadSource('https://example.com/playlist.m3u8');
+```
+
+No player instance needed: hls.js keeps HEVC levels in its ladder as long as the (patched) `MediaSource.isTypeSupported` accepts them. Supported today: fMP4 HLS with video-only or demuxed-audio renditions; muxed A/V segments play video-only for now. See the [plugin README](packages/hlsjs-plugin/README.md) for details.
 
 ### How the transcoding works
 
@@ -326,9 +345,10 @@ hevc.js/
 ├── packages/
 │   ├── core/               @hevcjs/core — WASM decoder + transcoding pipeline
 │   ├── dashjs-plugin/      @hevcjs/dashjs-plugin — dash.js plugin
-│   └── shaka-plugin/       @hevcjs/shaka-plugin — Shaka Player plugin
+│   ├── shaka-plugin/       @hevcjs/shaka-plugin — Shaka Player plugin
+│   └── hlsjs-plugin/       @hevcjs/hlsjs-plugin — hls.js plugin
 │
-├── demo/                   Browser demos (DASH)
+├── demo/                   Browser demos (DASH + HLS)
 └── tests/                  Unit tests + 128 oracle tests (pixel-perfect vs ffmpeg)
 ```
 
@@ -341,8 +361,9 @@ hevc.js/
 | [Decoder](https://hevcjs.dev/demo/) | Raw WASM decoder — drop a .265 file, frame-by-frame playback |
 | [dash.js](https://hevcjs.dev/demo/dash.html) | HEVC DASH streams via dash.js + WASM transcoding |
 | [Shaka](https://hevcjs.dev/demo/shaka.html) | HEVC DASH streams via Shaka Player + WASM transcoding |
+| [hls.js](https://hevcjs.dev/demo/hls.html) | HEVC HLS streams (ABR + audio) via hls.js + WASM transcoding |
 
-**Docs:** [dash.js plugin](https://hevcjs.dev/docs/dashjs-plugin.html) · [Shaka plugin](https://hevcjs.dev/docs/shaka-plugin.html)
+**Docs:** [dash.js plugin](https://hevcjs.dev/docs/dashjs-plugin.html) · [Shaka plugin](https://hevcjs.dev/docs/shaka-plugin.html) · [hls.js plugin](https://hevcjs.dev/docs/hlsjs-plugin.html)
 
 Each demo includes a **"Force transcoding"** toggle to bypass native HEVC detection — useful for testing the WASM pipeline on browsers that already support HEVC.
 

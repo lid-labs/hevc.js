@@ -9,6 +9,10 @@ you'd like to influence it — real-world usage reports carry the most weight.
 - **Fix micro-stalls on 1080p+ ABR (Shaka)** — batched transmuxer output can
   starve the buffer on quality switches. Tracked in
   [#126](https://github.com/privaloops/hevc.js/issues/126).
+- **hls.js plugin — next steps** — `@hevcjs/hlsjs-plugin` shipped with
+  fMP4 support (video-only and demuxed-audio renditions). Still open:
+  muxed A/V segments (plays video-only today), compute-aware ABR wiring
+  for hls.js, HEVC-in-TS validation.
 - **Broader JS test coverage** — extend the vitest setup from
   `@hevcjs/core` to the plugin packages.
 
@@ -20,7 +24,3 @@ you'd like to influence it — real-world usage reports carry the most weight.
   handling, RBSP extraction) identified during profiling, not yet exploited.
 
 ## Exploring — tell us if you need this
-
-- **hls.js plugin** — same software-fallback approach for HLS/fMP4. Not
-  started; will be prioritized if demand shows up. 👍 or comment in
-  Discussions if this would unblock you.
