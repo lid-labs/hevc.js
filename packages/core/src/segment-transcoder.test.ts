@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { SegmentTranscoder } from "./segment-transcoder.js";
+import { SegmentTranscoder, rebaseSamplesToTfdt } from "./segment-transcoder.js";
 
 /**
  * Re-calling prepareInit() must reset the per-stream runtime state.
@@ -61,4 +61,44 @@ describe("SegmentTranscoder.prepareInit re-call", () => {
     expect((t as any)._initResult).toBeNull();
   });
   /* eslint-enable @typescript-eslint/no-explicit-any */
+});
+
+describe("rebaseSamplesToTfdt", () => {
+  const mk = (dts: number[], gap = 0) =>
+    dts.map((d) => ({ dts: d, pts: d + gap }));
+
+  it("is a no-op during continuous playback (dts matches tfdt)", () => {
+    const samples = mk([9000, 9600, 10200]);
+    const base = rebaseSamplesToTfdt(samples, 9000);
+    expect(base).toBe(9000);
+    expect(samples.map((s) => s.dts)).toEqual([9000, 9600, 10200]);
+  });
+
+  it("shifts samples onto the tfdt after an out-of-buffer seek", () => {
+    // mp4box continues the pre-seek clock (5.33s) while the segment's
+    // tfdt says 18.08s — the seek scenario hls.js >=1.6.6 exposes.
+    const samples = mk([128000, 128600, 129200], 100);
+    const base = rebaseSamplesToTfdt(samples, 434000);
+    expect(base).toBe(434000);
+    expect(samples.map((s) => s.dts)).toEqual([434000, 434600, 435200]);
+    // pts keeps its composition offset relative to dts
+    expect(samples.map((s) => s.pts)).toEqual([434100, 434700, 435300]);
+  });
+
+  it("also corrects backward drift (seek back)", () => {
+    const samples = mk([434000, 434600]);
+    expect(rebaseSamplesToTfdt(samples, 128000)).toBe(128000);
+    expect(samples.map((s) => s.dts)).toEqual([128000, 128600]);
+  });
+
+  it("falls back to the first sample dts when there is no tfdt", () => {
+    const samples = mk([9000, 9600]);
+    expect(rebaseSamplesToTfdt(samples, null)).toBe(9000);
+    expect(samples[0].dts).toBe(9000);
+  });
+
+  it("handles empty sample lists", () => {
+    expect(rebaseSamplesToTfdt([], 42)).toBe(42);
+    expect(rebaseSamplesToTfdt([], null)).toBe(0);
+  });
 });

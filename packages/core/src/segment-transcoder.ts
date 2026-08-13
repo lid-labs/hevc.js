@@ -227,7 +227,7 @@ export class SegmentTranscoder {
     const tDemuxEnd = performance.now();
 
     // Extract absolute base decode time from tfdt box (mp4box.js DTS breaks after seek)
-    const segmentBaseTime = extractTfdt(data) ?? samples[0]!.dts;
+    const segmentBaseTime = rebaseSamplesToTfdt(samples, extractTfdt(data));
 
     // Auto-detect fps from first sample duration (DASH/HLS are CFR, so representative)
     if (!this._fpsAutoDetected && !this._config.fps && samples[0]!.duration > 0) {
@@ -402,7 +402,7 @@ export class SegmentTranscoder {
     if (samples.length === 0) return;
     const tDemuxEnd = performance.now();
 
-    const segmentBaseTime = extractTfdt(data) ?? samples[0]!.dts;
+    const segmentBaseTime = rebaseSamplesToTfdt(samples, extractTfdt(data));
 
     if (!this._fpsAutoDetected && !this._config.fps && samples[0]!.duration > 0) {
       this._fps = this._timescale / samples[0]!.duration;
@@ -630,6 +630,35 @@ function extractParameterSetsFromInit(data: Uint8Array): Uint8Array[] {
  * Parses: moof → traf → tfdt → baseMediaDecodeTime.
  * Returns the absolute decode time in timescale units, or null if not found.
  */
+/**
+ * Rebase demuxed samples onto the segment's tfdt (baseMediaDecodeTime).
+ *
+ * mp4box.js keeps a cumulative internal timeline: after an out-of-buffer
+ * seek (no abort, no re-init — hls.js >=1.6.6 relies purely on the
+ * segment's own timestamps to position it), parsed samples continue the
+ * pre-seek clock while the tfdt carries the true media position. Shifting
+ * every pts/dts by (samples[0].dts - tfdt) makes the transcoded output
+ * land where the source segment says. Continuous playback is untouched:
+ * the drift is 0 and relative durations are preserved either way.
+ *
+ * Returns the base decode time to use for the segment. Exported for tests.
+ */
+export function rebaseSamplesToTfdt(
+  samples: { pts: number; dts: number }[],
+  tfdt: number | null,
+): number {
+  if (samples.length === 0) return tfdt ?? 0;
+  if (tfdt === null) return samples[0]!.dts;
+  const drift = samples[0]!.dts - tfdt;
+  if (drift !== 0) {
+    for (const s of samples) {
+      s.dts -= drift;
+      s.pts -= drift;
+    }
+  }
+  return tfdt;
+}
+
 function extractTfdt(data: Uint8Array): number | null {
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
   const len = data.byteLength;
