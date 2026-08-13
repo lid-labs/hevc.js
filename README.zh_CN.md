@@ -105,7 +105,7 @@ hls.attachMedia(videoElement);
 hls.loadSource('https://example.com/playlist.m3u8');
 ```
 
-目前支持 fMP4 HLS(纯视频或音视频分离的多码率流);音视频混装(muxed)的分片会被明确拒绝并给出清晰的错误提示,而不是无声播放。详见[插件 README](packages/hlsjs-plugin/README.md)(英文)。
+目前支持 fMP4 HLS:纯视频、音视频分离,以及音视频混装(muxed)的多码率流。对于混装轨道(单个 audiovideo 轨),HEVC 视频会被转码,AAC 音频直接透传,再重新封装为一个合并分片(主线程路径,仅支持 AAC)。详见[插件 README](packages/hlsjs-plugin/README.md)(英文)。
 
 ### 转码工作原理
 
