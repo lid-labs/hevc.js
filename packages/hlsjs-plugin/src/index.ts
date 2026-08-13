@@ -1,5 +1,7 @@
 export { attachHevcSupport } from "./plugin.js";
-export type { HevcHlsPluginConfig } from "./plugin.js";
+export type { HevcHlsPluginConfig, HevcHlsPluginHandle } from "./plugin.js";
+export { attachHlsComputeAware } from "./compute-aware.js";
+export type { HlsComputeAwareOptions } from "./compute-aware.js";
 
 // Re-export shared MSE utilities from core
 export { installMSEIntercept, uninstallMSEIntercept, SegmentTranscoder } from "@hevcjs/core";
