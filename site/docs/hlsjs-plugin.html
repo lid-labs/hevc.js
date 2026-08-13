@@ -78,7 +78,7 @@
         "name": "What about muxed audio+video segments?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "Not yet supported — and refused safely. hls.js probes the video codec alone, so a muxed rendition is caught when hls.js creates the combined SourceBuffer: the plugin logs a clear error and that playback fails, instead of silently playing without audio. Supported today: fMP4 streams with video-only or demuxed audio renditions — master playlists with an audio group work and are validated end-to-end. HEVC in MPEG-TS is untested."
+          "text": "Not yet supported — and refused safely. The transcode pipeline is video-only, so a muxed rendition is reported unsupported and creating its combined SourceBuffer logs a clear error: hls.js fails fast with a fatal bufferAddCodecError instead of silently playing without audio. Validated end-to-end with a muxed test stream. Supported today: fMP4 streams with video-only or demuxed audio renditions — master playlists with an audio group work and are validated end-to-end. HEVC in MPEG-TS is untested."
         }
       },
       {
@@ -662,7 +662,7 @@ handle.attachComputeAware(hls);  <span class="text-silver/50">// caps hls.autoLe
             </div>
             <div class="flex gap-4 items-start px-4 py-3 rounded-lg bg-ash/50">
               <span class="text-red-400 mt-0.5" aria-hidden="true">&#10007;</span>
-              <p class="text-silver text-sm">Not yet supported: muxed audio+video fMP4 segments (single <code class="font-mono">audiovideo</code> SourceBuffer) &mdash; caught when hls.js creates the combined SourceBuffer, with a clear error, rather than playing without audio. HEVC-in-MPEG-TS is untested.</p>
+              <p class="text-silver text-sm">Not yet supported: muxed audio+video fMP4 segments (single <code class="font-mono">audiovideo</code> SourceBuffer) &mdash; refused with a clear error (fatal <code class="font-mono">bufferAddCodecError</code>) rather than playing without audio. HEVC-in-MPEG-TS is untested.</p>
             </div>
             <div class="flex gap-4 items-start px-4 py-3 rounded-lg bg-ash/50">
               <span class="text-green-400 mt-0.5" aria-hidden="true">&#10003;</span>
@@ -735,7 +735,7 @@ handle.attachComputeAware(hls);  <span class="text-silver/50">// caps hls.autoLe
           <details>
             <summary>What about muxed audio+video segments?</summary>
             <div class="faq-answer">
-              <p>Not yet supported &mdash; and refused safely. hls.js splits the <code class="font-mono text-accent-light">CODECS</code> attribute and probes the video codec alone, so a muxed rendition isn't filtered at manifest parse; it's caught when hls.js creates the combined SourceBuffer &mdash; the plugin logs a clear error and that playback fails, instead of silently playing without audio. (Players that probe the combined mime, like dash.js, filter it upfront.) Supported today: fMP4 streams with video-only or demuxed audio renditions &mdash; master playlists with an audio group work and are validated end-to-end. HEVC in MPEG-TS is untested.</p>
+              <p>Not yet supported &mdash; and refused safely. The transcode pipeline is video-only, so a muxed rendition is reported unsupported and creating its combined SourceBuffer logs a clear error: hls.js fails fast with a fatal <code class="font-mono text-accent-light">bufferAddCodecError</code> instead of silently playing without audio. Validated end-to-end with a muxed test stream. Supported today: fMP4 streams with video-only or demuxed audio renditions &mdash; master playlists with an audio group work and are validated end-to-end. HEVC in MPEG-TS is untested.</p>
             </div>
           </details>
 

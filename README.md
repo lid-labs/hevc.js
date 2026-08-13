@@ -125,7 +125,7 @@ hls.attachMedia(videoElement);
 hls.loadSource('https://example.com/playlist.m3u8');
 ```
 
-No player instance needed: hls.js keeps HEVC levels in its ladder as long as the (patched) `MediaSource.isTypeSupported` accepts them. Supported today: fMP4 HLS with video-only or demuxed-audio renditions. Muxed audio+video renditions aren't supported: hls.js probes the video codec alone, so the muxed segment is caught when its SourceBuffer is created — the plugin logs a clear error and that playback fails, rather than silently playing without audio. See the [plugin README](packages/hlsjs-plugin/README.md) for details.
+No player instance needed: hls.js keeps HEVC levels in its ladder as long as the (patched) `MediaSource.isTypeSupported` accepts them. Supported today: fMP4 HLS with video-only or demuxed-audio renditions. Muxed audio+video renditions aren't supported (the pipeline is video-only): they're reported unsupported and refused with a clear error — playback fails fast rather than silently dropping the audio track. Validated end-to-end with a muxed test stream. See the [plugin README](packages/hlsjs-plugin/README.md) for details.
 
 ### How the transcoding works
 
