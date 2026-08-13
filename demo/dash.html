@@ -109,6 +109,20 @@ busDetach = HevcDash.subscribeSegmentStat((stat) => {
     'frames=' + stat.frames);
 });
 
+// Only allow transcoder asset overrides (?workerUrl= etc.) from safe
+// locations: same-origin paths or well-known CDNs. Blocks turning the demo
+// into a script-loading gadget via ?workerUrl=https://evil.example/w.js.
+const ASSET_HOST_ALLOWLIST = ['cdn.jsdelivr.net', 'unpkg.com'];
+function safeAssetUrl(value, name) {
+  if (!value) return undefined;
+  try {
+    const u = new URL(value, location.href);
+    if (u.origin === location.origin) return value;
+    if (u.protocol === 'https:' && ASSET_HOST_ALLOWLIST.includes(u.hostname)) return value;
+  } catch (_) { /* malformed URL falls through to the warning */ }
+  console.warn('[demo] ignoring ' + name + '=' + value + ' (origin not in the allowlist)');
+  return undefined;
+}
 async function loadMPD(presetUrl) {
   const url = presetUrl || document.getElementById('mpd-url').value.trim();
   if (!url) return;
@@ -126,7 +140,7 @@ async function loadMPD(presetUrl) {
   const qp = new URLSearchParams(location.search);
   // adaptiveCompute is ON by default — pass ?adaptiveCompute=off to opt out.
   const adaptiveOff = qp.get('adaptiveCompute') === 'off';
-  const workerUrl = qp.get('workerUrl') || './transcode-worker.js';
+  const workerUrl = safeAssetUrl(qp.get('workerUrl'), 'workerUrl') || './transcode-worker.js';
   console.log('[demo] forceTranscode =', forceTranscode);
   console.log('[demo] workerUrl =', workerUrl);
   console.log('[demo] adaptiveCompute =', adaptiveOff ? 'off' : 'on (default)');
@@ -134,8 +148,8 @@ async function loadMPD(presetUrl) {
   try {
     cleanup = await HevcDash.attachHevcSupport(player, {
       workerUrl,
-      wasmUrl: qp.get('wasmUrl') || undefined,
-      wasmBinaryUrl: qp.get('wasmBinaryUrl') || undefined,
+      wasmUrl: safeAssetUrl(qp.get('wasmUrl'), 'wasmUrl'),
+      wasmBinaryUrl: safeAssetUrl(qp.get('wasmBinaryUrl'), 'wasmBinaryUrl'),
       forceTranscode,
       adaptiveCompute: adaptiveOff
         ? false

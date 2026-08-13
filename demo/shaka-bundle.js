@@ -10962,6 +10962,12 @@ var HevcShaka = (() => {
     );
     return new Worker(blobUrl);
   }
+  var HEVC_DETECT_RE = /hev1|hvc1/i;
+  function isMuxedHevcMime(mimeType) {
+    if (!HEVC_DETECT_RE.test(mimeType)) return false;
+    const codecs = /codecs\s*=\s*"?([^"]*)"?/i.exec(mimeType)?.[1] ?? "";
+    return codecs.includes(",");
+  }
   var DEFAULTS = {
     targetSpeedX: 1.3,
     raiseAfter: 6,
@@ -11154,6 +11160,7 @@ var HevcShaka = (() => {
       this.cachedH264Init_ = null;
     }
     isSupported(mimeType, _contentType) {
+      if (isMuxedHevcMime(mimeType)) return false;
       return HEVC_MIME_PATTERN.test(mimeType);
     }
     /**

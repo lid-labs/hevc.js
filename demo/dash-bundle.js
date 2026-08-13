@@ -10965,8 +10965,13 @@ var HevcDash = (() => {
     return new Worker(blobUrl);
   }
   var HEVC_DETECT_RE = /hev1|hvc1/i;
-  var HEVC_CODEC_RE = /hev1[^"']*|hvc1[^"']*/gi;
+  var HEVC_CODEC_RE = /hev1[^"',]*|hvc1[^"',]*/gi;
   var TS_OFFSET_FLUSH_THRESHOLD_S = 0.5;
+  function isMuxedHevcMime(mimeType) {
+    if (!HEVC_DETECT_RE.test(mimeType)) return false;
+    const codecs = /codecs\s*=\s*"?([^"]*)"?/i.exec(mimeType)?.[1] ?? "";
+    return codecs.includes(",");
+  }
   function getMediaSourceConstructor() {
     const g = globalThis;
     return g.MediaSource ?? g.ManagedMediaSource ?? null;
@@ -10994,6 +10999,10 @@ var HevcDash = (() => {
     };
     MediaSource.isTypeSupported = function(mimeType) {
       if (HEVC_DETECT_RE.test(mimeType)) {
+        if (isMuxedHevcMime(mimeType)) {
+          log.info(`isTypeSupported("${mimeType}") \u2192 false (muxed A/V HEVC is not supported \u2014 audio would be lost)`);
+          return false;
+        }
         const h264Codec = hevcMimeToH264Codec(mimeType);
         const h264Mime = mimeType.replace(HEVC_CODEC_RE, h264Codec);
         const result = originalIsTypeSupported.call(MediaSource, h264Mime);
@@ -11007,6 +11016,9 @@ var HevcDash = (() => {
       interceptState.originalDecodingInfo = originalDecodingInfo;
       navigator.mediaCapabilities.decodingInfo = async function(cfg) {
         if (cfg.video?.contentType && HEVC_DETECT_RE.test(cfg.video.contentType)) {
+          if (isMuxedHevcMime(cfg.video.contentType)) {
+            return { supported: false, smooth: false, powerEfficient: false };
+          }
           const h264Codec = hevcMimeToH264Codec(cfg.video.contentType);
           const h264Type = cfg.video.contentType.replace(HEVC_CODEC_RE, h264Codec);
           const h264Config = { ...cfg, video: { ...cfg.video, contentType: h264Type } };
@@ -11017,6 +11029,12 @@ var HevcDash = (() => {
     }
     MediaSource.prototype.addSourceBuffer = function(mimeType) {
       if (!HEVC_DETECT_RE.test(mimeType)) {
+        return originalAddSourceBuffer.call(this, mimeType);
+      }
+      if (isMuxedHevcMime(mimeType)) {
+        log.error(
+          `addSourceBuffer("${mimeType}") \u2014 muxed audio+video HEVC segments are not supported (the transcode pipeline is video-only and the audio track would be dropped). Repackage the stream with demuxed audio renditions.`
+        );
         return originalAddSourceBuffer.call(this, mimeType);
       }
       const h264Codec = hevcMimeToH264Codec(mimeType);

@@ -117,14 +117,15 @@ import { attachHevcSupport } from '@hevcjs/hlsjs-plugin';
 
 // Before `new Hls()` — hls.js filters levels against
 // MediaSource.isTypeSupported at manifest parse time.
-await attachHevcSupport({ workerUrl: './transcode-worker.js' });
+const handle = await attachHevcSupport({ workerUrl: './transcode-worker.js' });
 
 const hls = new Hls({ preferManagedMediaSource: false });
+handle.attachComputeAware(hls);          // wire compute-aware ABR (on by default)
 hls.attachMedia(videoElement);
 hls.loadSource('https://example.com/playlist.m3u8');
 ```
 
-No player instance needed: hls.js keeps HEVC levels in its ladder as long as the (patched) `MediaSource.isTypeSupported` accepts them. Supported today: fMP4 HLS with video-only or demuxed-audio renditions; muxed A/V segments play video-only for now. See the [plugin README](packages/hlsjs-plugin/README.md) for details.
+No player instance needed: hls.js keeps HEVC levels in its ladder as long as the (patched) `MediaSource.isTypeSupported` accepts them. Supported today: fMP4 HLS with video-only or demuxed-audio renditions; muxed A/V renditions are refused with a clear error rather than playing without audio. See the [plugin README](packages/hlsjs-plugin/README.md) for details.
 
 ### How the transcoding works
 

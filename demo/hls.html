@@ -47,7 +47,9 @@
   <div id="status" class="demo-status">Loading...</div>
   <div id="perf-overlay" class="demo-status" style="font-family:monospace;font-size:13px;">
     <span id="perf-quality">quality: —</span> ·
-    <span id="perf-speed">speedX: —</span>
+    <span id="perf-speed">speedX: —</span> ·
+    <span id="perf-cap">cap: —</span> ·
+    <span id="perf-reason">reason: —</span>
   </div>
   <textarea id="log" class="demo-log" readonly></textarea>
 
@@ -108,6 +110,20 @@ busDetach = HevcHls.subscribeSegmentStat((stat) => {
     'frames=' + stat.frames);
 });
 
+// Only allow transcoder asset overrides (?workerUrl= etc.) from safe
+// locations: same-origin paths or well-known CDNs. Blocks turning the demo
+// into a script-loading gadget via ?workerUrl=https://evil.example/w.js.
+const ASSET_HOST_ALLOWLIST = ['cdn.jsdelivr.net', 'unpkg.com'];
+function safeAssetUrl(value, name) {
+  if (!value) return undefined;
+  try {
+    const u = new URL(value, location.href);
+    if (u.origin === location.origin) return value;
+    if (u.protocol === 'https:' && ASSET_HOST_ALLOWLIST.includes(u.hostname)) return value;
+  } catch (_) { /* malformed URL falls through to the warning */ }
+  console.warn('[demo] ignoring ' + name + '=' + value + ' (origin not in the allowlist)');
+  return undefined;
+}
 async function loadM3U8(presetUrl) {
   const url = presetUrl || document.getElementById('m3u8-url').value.trim();
   if (!url) return;
@@ -136,7 +152,7 @@ async function loadM3U8(presetUrl) {
   // Off-main-thread by default — same transcode-worker.js bundle as the
   // dash.js/Shaka demos. Override with ?workerUrl=... ; pass
   // ?workerUrl=off to keep transcoding on the main thread (debugging).
-  const workerUrlParam = qp.get('workerUrl');
+  const workerUrlParam = qp.get('workerUrl') === 'off' ? 'off' : safeAssetUrl(qp.get('workerUrl'), 'workerUrl');
   const workerUrl = workerUrlParam === 'off'
     ? undefined
     : (workerUrlParam || './transcode-worker.js');
@@ -145,8 +161,8 @@ async function loadM3U8(presetUrl) {
 
   console.log('[demo] attachHevcSupport');
   cleanup = await HevcHls.attachHevcSupport({
-    wasmUrl: qp.get('wasmUrl') || undefined,
-    wasmBinaryUrl: qp.get('wasmBinaryUrl') || undefined,
+    wasmUrl: safeAssetUrl(qp.get('wasmUrl'), 'wasmUrl'),
+    wasmBinaryUrl: safeAssetUrl(qp.get('wasmBinaryUrl'), 'wasmBinaryUrl'),
     workerUrl,
     forceTranscode,
     logLevel: qp.get('logLevel') || undefined,
@@ -159,6 +175,18 @@ async function loadM3U8(presetUrl) {
     preferManagedMediaSource: false,
     debug: qp.get('debug') === '1',
   });
+
+  // Compute-aware ABR: caps hls.autoLevelCapping when the device can't
+  // transcode the current level in real time. ?adaptiveCompute=off to opt out.
+  if (qp.get('adaptiveCompute') !== 'off') {
+    cleanup.attachComputeAware(hls, {
+      onObservation: (stat, avg, cap, reason) => {
+        document.getElementById('perf-cap').textContent =
+          'cap: ' + (cap == null ? 'none' : 'idx ' + cap);
+        document.getElementById('perf-reason').textContent = 'reason: ' + reason;
+      },
+    });
+  }
 
   hls.on(Hls.Events.ERROR, (_evt, data) => {
     console.error('[demo] hls.js error', data.type, data.details, data.fatal ? '(fatal)' : '',
