@@ -10433,6 +10433,7 @@
       const encodeMs = tEncodeEnd - tDecodeEnd;
       const segDurTicks = samples.reduce((sum, s) => sum + s.duration, 0);
       const segDurMs = segDurTicks / this._timescale * 1e3;
+      this._baseDecodeTime = segmentBaseTime + segDurTicks;
       this.lastPerfStats = {
         demuxMs,
         decodeMs,
@@ -10558,6 +10559,7 @@
       const encodeMs = tEncodeEnd - tEncode0;
       const segDurTicks = samples.reduce((sum, s) => sum + s.duration, 0);
       const segDurMs = segDurTicks / this._timescale * 1e3;
+      this._baseDecodeTime = segmentBaseTime + segDurTicks;
       this.lastPerfStats = {
         demuxMs,
         decodeMs,
@@ -10660,19 +10662,37 @@
   function extractTfdt(data) {
     const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
     const len = data.byteLength;
-    for (let i = 0; i + 8 <= len; i++) {
-      if (view.getUint32(i + 4) !== 1952867444) continue;
-      const version = data[i + 8];
-      if (version === 1 && i + 20 <= len) {
-        const hi = view.getUint32(i + 12);
-        const lo = view.getUint32(i + 16);
-        return hi * 4294967296 + lo;
+    const eachBox = (from, to, visit) => {
+      let i = from;
+      while (i + 8 <= to) {
+        const size = view.getUint32(i);
+        if (size < 8 || i + size > to) return;
+        visit(view.getUint32(i + 4), i + 8, i + size);
+        i += size;
       }
-      if (i + 16 <= len) {
-        return view.getUint32(i + 12);
-      }
-    }
-    return null;
+    };
+    let tfdt = null;
+    let trafCount = 0;
+    eachBox(0, len, (type, start2, end) => {
+      if (type !== 1836019558) return;
+      eachBox(start2, end, (childType, childStart, childEnd) => {
+        if (childType !== 1953653094) return;
+        trafCount++;
+        eachBox(childStart, childEnd, (boxType, boxStart, boxEnd) => {
+          if (boxType !== 1952867444) return;
+          const version = data[boxStart];
+          if (version === 1 && boxStart + 12 <= boxEnd) {
+            const hi = view.getUint32(boxStart + 4);
+            const lo = view.getUint32(boxStart + 8);
+            const value = hi * 4294967296 + lo;
+            tfdt = Number.isSafeInteger(value) ? value : null;
+          } else if (version === 0 && boxStart + 8 <= boxEnd) {
+            tfdt = view.getUint32(boxStart + 4);
+          }
+        });
+      });
+    });
+    return trafCount === 1 ? tfdt : null;
   }
 
   // packages/core/src/transcode-worker.ts

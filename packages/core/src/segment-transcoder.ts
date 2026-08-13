@@ -355,6 +355,9 @@ export class SegmentTranscoder {
     // (robust to VFR and to truncated last segments, unlike `n * fps`).
     const segDurTicks = samples.reduce((sum, s) => sum + s.duration, 0);
     const segDurMs = (segDurTicks / this._timescale) * 1000;
+    // Keep the flush() clock (_baseDecodeTime) on the segment timeline so a
+    // trailing flush muxes after the last segment, not at a stale position.
+    this._baseDecodeTime = segmentBaseTime + segDurTicks;
     this.lastPerfStats = {
       demuxMs,
       decodeMs,
@@ -513,6 +516,9 @@ export class SegmentTranscoder {
     const encodeMs = tEncodeEnd - tEncode0;
     const segDurTicks = samples.reduce((sum, s) => sum + s.duration, 0);
     const segDurMs = (segDurTicks / this._timescale) * 1000;
+    // Keep the flush() clock (_baseDecodeTime) on the segment timeline so a
+    // trailing flush muxes after the last segment, not at a stale position.
+    this._baseDecodeTime = segmentBaseTime + segDurTicks;
     this.lastPerfStats = {
       demuxMs,
       decodeMs,
@@ -626,11 +632,6 @@ function extractParameterSetsFromInit(data: Uint8Array): Uint8Array[] {
 }
 
 /**
- * Extract baseMediaDecodeTime from the tfdt box in an fMP4 media segment.
- * Parses: moof → traf → tfdt → baseMediaDecodeTime.
- * Returns the absolute decode time in timescale units, or null if not found.
- */
-/**
  * Rebase demuxed samples onto the segment's tfdt (baseMediaDecodeTime).
  *
  * mp4box.js keeps a cumulative internal timeline: after an out-of-buffer
@@ -641,7 +642,12 @@ function extractParameterSetsFromInit(data: Uint8Array): Uint8Array[] {
  * land where the source segment says. Continuous playback is untouched:
  * the drift is 0 and relative durations are preserved either way.
  *
- * Returns the base decode time to use for the segment. Exported for tests.
+ * Invariant: `samples` must all belong to the segment the tfdt was read
+ * from (mp4box holds samples back only on truncated mdat, which the MSE
+ * append path never produces — players append whole segments).
+ *
+ * @param samples mutated in place (pts/dts shifted by the drift)
+ * @returns the base decode time to use for the segment. Exported for tests.
  */
 export function rebaseSamplesToTfdt(
   samples: { pts: number; dts: number }[],
@@ -659,25 +665,63 @@ export function rebaseSamplesToTfdt(
   return tfdt;
 }
 
-function extractTfdt(data: Uint8Array): number | null {
+/**
+ * Extract baseMediaDecodeTime by structurally walking moof → traf → tfdt.
+ *
+ * Strict on purpose — a wrong tfdt now shifts every sample of the segment
+ * (see rebaseSamplesToTfdt), so any ambiguity disables the rebase instead
+ * of corrupting it. Returns null when:
+ *  - the moof holds more than one traf (muxed A/V segment: the first tfdt
+ *    could be the audio track's, in a different timescale);
+ *  - the tfdt box is truncated or has an unknown version;
+ *  - the 64-bit value exceeds Number.MAX_SAFE_INTEGER.
+ * Only box headers are inspected — mdat payloads are never scanned, so a
+ * stray 'tfdt' byte pattern inside media data can't produce a false hit.
+ * Exported for tests.
+ */
+export function extractTfdt(data: Uint8Array): number | null {
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
   const len = data.byteLength;
 
-  // Scan for 'tfdt' box type (0x74666474)
-  for (let i = 0; i + 8 <= len; i++) {
-    if (view.getUint32(i + 4) !== 0x74666474) continue;
-    // Found tfdt — it's a FullBox: version(1) + flags(3) + payload
-    const version = data[i + 8];
-    if (version === 1 && i + 20 <= len) {
-      // 64-bit baseMediaDecodeTime
-      const hi = view.getUint32(i + 12);
-      const lo = view.getUint32(i + 16);
-      return hi * 0x100000000 + lo;
+  // Iterate boxes at one nesting level, calling visit(type, start, end)
+  // where start is the payload offset (after the 8-byte header).
+  const eachBox = (
+    from: number,
+    to: number,
+    visit: (type: number, start: number, end: number) => void,
+  ): void => {
+    let i = from;
+    while (i + 8 <= to) {
+      const size = view.getUint32(i);
+      if (size < 8 || i + size > to) return; // malformed/truncated — stop
+      visit(view.getUint32(i + 4), i + 8, i + size);
+      i += size;
     }
-    if (i + 16 <= len) {
-      // 32-bit baseMediaDecodeTime
-      return view.getUint32(i + 12);
-    }
-  }
-  return null;
+  };
+
+  let tfdt: number | null = null;
+  let trafCount = 0;
+
+  eachBox(0, len, (type, start, end) => {
+    if (type !== 0x6d6f6f66) return; // 'moof'
+    eachBox(start, end, (childType, childStart, childEnd) => {
+      if (childType !== 0x74726166) return; // 'traf'
+      trafCount++;
+      eachBox(childStart, childEnd, (boxType, boxStart, boxEnd) => {
+        if (boxType !== 0x74666474) return; // 'tfdt'
+        const version = data[boxStart];
+        if (version === 1 && boxStart + 12 <= boxEnd) {
+          const hi = view.getUint32(boxStart + 4);
+          const lo = view.getUint32(boxStart + 8);
+          const value = hi * 0x100000000 + lo;
+          tfdt = Number.isSafeInteger(value) ? value : null;
+        } else if (version === 0 && boxStart + 8 <= boxEnd) {
+          tfdt = view.getUint32(boxStart + 4);
+        }
+        // unknown version or truncated box → leave tfdt as-is (null)
+      });
+    });
+  });
+
+  return trafCount === 1 ? tfdt : null;
 }
