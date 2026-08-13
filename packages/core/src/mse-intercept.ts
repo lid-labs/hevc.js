@@ -16,6 +16,8 @@ import { TranscodeWorkerClient } from "./transcode-worker-client.js";
 
 const HEVC_DETECT_RE = /hev1|hvc1/i;                // Detect HEVC in a string
 const HEVC_CODEC_RE = /hev1[^"']*|hvc1[^"']*/gi;   // Match full HEVC codec string (hev1.2.4.L123.B0)
+// timestampOffset jump below which a write is routine alignment, not a seek
+const TS_OFFSET_FLUSH_THRESHOLD_S = 0.5;
 
 /**
  * The MSE constructor available in this browser: classic `MediaSource`,
@@ -37,6 +39,18 @@ export interface MSEInterceptConfig extends SegmentTranscoderConfig {
   onTranscodeStart?: () => void;
   /** Called when video transcoding ends — use to resume player buffering. */
   onTranscodeEnd?: () => void;
+  /**
+   * Only fire updateend for a media append once transcoded data has actually
+   * reached the SourceBuffer (first chunk). Required for hls.js, whose
+   * watchdog flags updateend without buffered-range growth as
+   * `bufferAppendNoProgress`. Default false: dash.js relies on the eager
+   * release to create its audio SourceBuffer during video transcode.
+   *
+   * Throughput trade-off: since the player only hands over the next segment
+   * after updateend, strict mode limits pipeline overlap to the tail of the
+   * current segment (chunks after the first) instead of a full segment.
+   */
+  strictAppendProgress?: boolean;
   /** Log verbosity: 'debug' | 'info' | 'warn' (default) | 'error' | 'silent'. */
   logLevel?: LogLevel;
 }
@@ -141,6 +155,35 @@ export function uninstallMSEIntercept(): void {
 }
 
 /**
+ * Decide whether a timestampOffset write means "the player repositioned
+ * without calling abort" (→ flush the transcode pipeline) or is a routine
+ * write that must pass through. Exported for unit tests.
+ *
+ * A flush is warranted only when ALL hold:
+ *  - the jump is large (small deltas are per-append alignment writes);
+ *  - segments are QUEUED behind the current one — they were handed over
+ *    for the old position and would land misplaced. The segment currently
+ *    mid-transcode is deliberately not a trigger: hls.js executes the next
+ *    buffer operation synchronously from our updateend dispatch, so
+ *    `processing` is still true at that point and using it would flush on
+ *    every routine op-boundary offset write;
+ *  - a first init segment has been parsed (before that, playback hasn't
+ *    started — the write is the player mapping media time to presentation
+ *    time, and flushing would discard the queued init).
+ *
+ * dash.js is unaffected by the narrower trigger: it calls abort() on seek,
+ * which flushes the pipeline through the abort patch — this trap only backs
+ * up players that reposition without aborting.
+ */
+export function shouldFlushOnTimestampOffset(
+  delta: number,
+  hasQueuedSegments: boolean,
+  initParsed: boolean,
+): boolean {
+  return Math.abs(delta) >= TS_OFFSET_FLUSH_THRESHOLD_S && hasQueuedSegments && initParsed;
+}
+
+/**
  * Create a proxy SourceBuffer that transcodes HEVC→H.264.
  *
  * Key behavior:
@@ -197,6 +240,7 @@ function createTranscodingProxy(
   const listeners = new Map<string, Set<EventListenerOrEventListenerObject>>();
 
   function dispatchOnSB(type: string): void {
+    log.debug(`dispatch "${type}" (listeners: ${listeners.get(type)?.size ?? 0}, queue: ${queue.length}, processing: ${processing})`);
     // Fire to listeners registered via our intercepted addEventListener
     const set = listeners.get(type);
     if (set) {
@@ -229,13 +273,16 @@ function createTranscodingProxy(
   Object.defineProperty(realSB, "appendBuffer", {
     value: function (data: BufferSource): void {
       const bytes = toUint8Array(data);
+      log.debug(`appendBuffer(${bytes.byteLength}B) queued (queue: ${queue.length})`);
       queue.push(bytes);
 
       fakeUpdating = true;
       dispatchOnSB("updatestart");
 
-      // Release backpressure immediately if queue is shallow enough
-      if (queue.length < MAX_QUEUE_BEFORE_BACKPRESSURE) {
+      // Release backpressure immediately if queue is shallow enough.
+      // strictAppendProgress defers the release to the first transcoded
+      // chunk (or queue drain) so updateend implies real buffered growth.
+      if (queue.length < MAX_QUEUE_BEFORE_BACKPRESSURE && !config.strictAppendProgress) {
         fakeUpdating = false;
         dispatchOnSB("update");
         dispatchOnSB("updateend");
@@ -290,19 +337,45 @@ function createTranscodingProxy(
     writable: true, configurable: true,
   });
 
+  // Patch changeType() — hls.js queues it on codec switches with the HEVC
+  // mime (e.g. `video/mp4;codecs=hvc1.1.6.L120.90`). Passing that through
+  // would throw NotSupportedError on any browser without native HEVC.
+  // changeType is synchronous — no updateend to relay.
+  const realChangeType = (realSB as SourceBuffer & { changeType?: (type: string) => void })
+    .changeType?.bind(realSB);
+  if (realChangeType) {
+    Object.defineProperty(realSB, "changeType", {
+      value: function (mimeType: string): void {
+        if (HEVC_DETECT_RE.test(mimeType)) {
+          const h264Mime = `video/mp4; codecs="${hevcMimeToH264Codec(mimeType)}"`;
+          log.debug(`changeType("${mimeType}") → "${h264Mime}"`);
+          realChangeType(h264Mime);
+          return;
+        }
+        realChangeType(mimeType);
+      },
+      writable: true, configurable: true,
+    });
+  }
+
   // Intercept 'updating' getter — include our fake state
   Object.defineProperty(realSB, "updating", {
     get() { return fakeUpdating || updatingGetter.call(realSB); },
     configurable: true,
   });
 
-  // Intercept timestampOffset setter — detect seek (hls.js doesn't call abort)
+  // Intercept timestampOffset setter — a large jump while segments are in
+  // flight means the player repositioned (seek without abort): flush.
+  // Not a seek: small alignment deltas (hls.js >=1.6.6 writes them in its
+  // nominal append path, tolerance 1e-6) and the initial offset written
+  // before the first init segment is parsed (e.g. a media playlist starting
+  // at EXT-X-MEDIA-SEQUENCE > 0 maps media time to presentation 0).
   const tsOffsetDesc = Object.getOwnPropertyDescriptor(SourceBuffer.prototype, "timestampOffset");
   Object.defineProperty(realSB, "timestampOffset", {
     get() { return tsOffsetDesc!.get!.call(realSB); },
     set(value: number) {
       const old = tsOffsetDesc!.get!.call(realSB);
-      if (value !== old && (queue.length > 0 || processing)) {
+      if (shouldFlushOnTimestampOffset(value - old, queue.length > 0, initParsed)) {
         log.debug(`timestampOffset changed (${old} → ${value}) — flushing queue`);
         abortGeneration++;
         queue.length = 0;
@@ -315,6 +388,8 @@ function createTranscodingProxy(
           dispatchOnSB("update");
           dispatchOnSB("updateend");
         }
+      } else if (value !== old) {
+        log.debug(`timestampOffset ${old} → ${value} (pass-through)`);
       }
       tsOffsetDesc!.set!.call(realSB, value);
     },
@@ -423,10 +498,15 @@ function createTranscodingProxy(
           await waitForRealUpdateEnd();
           chunkCount++;
 
-          // Release backpressure after first chunk (player sees content faster)
+          // Release backpressure after first chunk (player sees content
+          // faster). In strict mode this is THE acknowledgment of the
+          // current segment's append — data from this very segment is now
+          // buffered, so the player's progress watchdog is satisfied —
+          // and it fires regardless of queue depth.
           if (!firstChunkEmitted) {
             firstChunkEmitted = true;
-            if (fakeUpdating && queue.length < MAX_QUEUE_BEFORE_BACKPRESSURE) {
+            if (fakeUpdating &&
+                (config.strictAppendProgress || queue.length < MAX_QUEUE_BEFORE_BACKPRESSURE)) {
               fakeUpdating = false;
               dispatchOnSB("update");
               dispatchOnSB("updateend");
@@ -443,7 +523,12 @@ function createTranscodingProxy(
 
         // Release backpressure if queue dropped below threshold.
         // Guard: fakeUpdating may already be false (released in appendBuffer).
-        if (fakeUpdating && queue.length < MAX_QUEUE_BEFORE_BACKPRESSURE) {
+        // Skipped in strict mode: a pending fakeUpdating here belongs to the
+        // NEXT queued segment — acknowledging it off the back of THIS
+        // segment's completion is exactly the misaligned updateend the mode
+        // exists to prevent. Its ack comes from its own first chunk.
+        if (fakeUpdating && !config.strictAppendProgress &&
+            queue.length < MAX_QUEUE_BEFORE_BACKPRESSURE) {
           fakeUpdating = false;
           dispatchOnSB("update");
           dispatchOnSB("updateend");

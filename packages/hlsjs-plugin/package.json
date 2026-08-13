@@ -1,0 +1,71 @@
+{
+  "name": "@hevcjs/hlsjs-plugin",
+  "version": "0.0.0",
+  "description": "hls.js plugin for HEVC/H.265 playback — transparently intercepts MSE to decode HEVC streams via @hevcjs/core",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist/",
+    "README.md"
+  ],
+  "keywords": [
+    "hevc",
+    "h265",
+    "h.265",
+    "webassembly",
+    "wasm",
+    "codec",
+    "video",
+    "browser",
+    "streaming",
+    "hlsjs",
+    "hls.js",
+    "hls",
+    "plugin",
+    "transcoding",
+    "mse",
+    "mediasource",
+    "ott",
+    "media-source-extensions"
+  ],
+  "author": "privaloops",
+  "license": "MIT",
+  "homepage": "https://hevcjs.dev",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lid-labs/hevc.js.git",
+    "directory": "packages/hlsjs-plugin"
+  },
+  "bugs": {
+    "url": "https://github.com/lid-labs/hevc.js/issues"
+  },
+  "scripts": {
+    "build": "tsup && tsc -p tsconfig.build.json",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hevcjs/core": "workspace:*"
+  },
+  "peerDependencies": {
+    "hls.js": ">=1.4.0"
+  },
+  "peerDependenciesMeta": {
+    "hls.js": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "hls.js": "^1.7.0",
+    "tsup": "^8.0.0",
+    "typescript": "^7.0.2"
+  }
+}
