@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>hevc.js — hls.js HEVC Playback</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="demo.css">
+</head>
+<body>
+
+<nav class="demo-nav">
+  <a href="../site/" class="demo-nav-brand">hevc<span>.js</span></a>
+  <div class="demo-nav-links">
+    <a href="./">Core decoder</a>
+    <a href="dash.html">dash.js</a>
+    <a href="shaka.html">Shaka</a>
+    <a href="hls.html" class="active">hls.js</a>
+    <a href="../site/docs/dashjs-plugin.html">Docs</a>
+    <a href="https://github.com/privaloops/hevc.js" target="_blank" rel="noopener">GitHub</a>
+  </div>
+</nav>
+
+<main class="demo-main">
+  <h1 class="demo-title">hls.js HEVC Playback</h1>
+  <p class="demo-subtitle">HEVC HLS streams played via hls.js + WASM transcoding (HEVC &rarr; H.264)</p>
+
+  <div class="demo-controls">
+    <input type="text" id="m3u8-url" class="demo-input" placeholder="Enter HEVC m3u8 URL...">
+    <button class="demo-btn demo-btn-primary" onclick="loadM3U8()">Load</button>
+  </div>
+  <div class="demo-presets">
+    <button class="demo-btn" onclick="loadM3U8('streams/bbb720/playlist.m3u8')">720p (7s)</button>
+    <button class="demo-btn" onclick="loadM3U8('streams/bbb1080/playlist.m3u8')">1080p (5s)</button>
+    <button class="demo-btn" onclick="loadM3U8('streams/bbb4k/playlist.m3u8')">4K (4s)</button>
+  </div>
+
+  <div class="demo-toggle">
+    <input type="checkbox" id="force-transcode" class="demo-toggle-switch">
+    <label for="force-transcode" class="demo-toggle-label">Force transcoding (bypass native HEVC detection)</label>
+  </div>
+
+  <video id="player" class="demo-video" controls></video>
+  <div id="status" class="demo-status">Loading...</div>
+  <div id="perf-overlay" class="demo-status" style="font-family:monospace;font-size:13px;">
+    <span id="perf-quality">quality: —</span> ·
+    <span id="perf-speed">speedX: —</span>
+  </div>
+  <textarea id="log" class="demo-log" readonly></textarea>
+
+  <div class="demo-code"><span class="cm">// Zero build — load everything from a CDN.</span>
+<span class="kw">import</span> { <span class="fn">attachHevcSupport</span> } <span class="kw">from</span> <span class="str">'https://esm.sh/@hevcjs/hlsjs-plugin@0'</span>;
+
+<span class="kw">await</span> <span class="fn">attachHevcSupport</span>();
+
+<span class="kw">const</span> hls = <span class="kw">new</span> <span class="fn">Hls</span>();
+hls.<span class="fn">attachMedia</span>(videoElement);
+hls.<span class="fn">loadSource</span>(m3u8Url);</div>
+</main>
+
+<footer class="demo-footer">
+  <a href="https://hevcjs.dev">hevc.js</a> &middot; <a href="https://github.com/privaloops/hevc.js">GitHub</a> &middot; MIT License
+</footer>
+
+<!-- WASM decoder -->
+<script src="hevc-decode.js"></script>
+<!-- hls.js -->
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1.7.0/dist/hls.min.js"></script>
+<!-- hevc.js/hls bundle -->
+<script src="hls-bundle.js"></script>
+
+<script>
+const logEl = document.getElementById('log');
+function log(...args) {
+  const line = args.map(a => {
+    if (a instanceof Error) return `${a.name}: ${a.message}`;
+    if (typeof a === 'object') return JSON.stringify(a);
+    return String(a);
+  }).join(' ');
+  logEl.value += line + '\n';
+  logEl.scrollTop = logEl.scrollHeight;
+}
+const _log = console.log, _warn = console.warn, _err = console.error;
+console.log = (...a) => { _log(...a); log('[log]', ...a); };
+console.warn = (...a) => { _warn(...a); log('[warn]', ...a); };
+console.error = (...a) => { _err(...a); log('[ERROR]', ...a); };
+
+let hls = null;
+let cleanup = null;
+let busDetach = null;
+let busHits = 0;
+
+// Raw subscription to the perf-bus: if this fires, HEVC segments are
+// being routed through the transcoder.
+busDetach = HevcHls.subscribeSegmentStat((stat) => {
+  busHits++;
+  document.getElementById('perf-quality').textContent =
+    'quality: ' + stat.width + 'x' + stat.height;
+  document.getElementById('perf-speed').textContent =
+    'speedX: ' + stat.speedX.toFixed(2);
+  console.log('[demo/perf-bus]', '#' + busHits,
+    stat.width + 'x' + stat.height,
+    'speedX=' + stat.speedX.toFixed(2),
+    'totalMs=' + stat.totalMs.toFixed(0),
+    'frames=' + stat.frames);
+});
+
+async function loadM3U8(presetUrl) {
+  const url = presetUrl || document.getElementById('m3u8-url').value.trim();
+  if (!url) return;
+  document.getElementById('m3u8-url').value = url;
+
+  console.log('[demo] loadM3U8', url);
+
+  if (cleanup) { cleanup(); cleanup = null; }
+  if (hls) { hls.destroy(); hls = null; }
+
+  const video = document.getElementById('player');
+
+  if (typeof Hls === 'undefined' || !Hls.isSupported()) {
+    document.getElementById('status').textContent = 'hls.js failed to load or MSE is unavailable.';
+    return;
+  }
+
+  if (typeof VideoEncoder === 'undefined') {
+    document.getElementById('status').textContent =
+      'This browser does not support WebCodecs. HEVC transcoding is not available. Try Chrome or Edge 94+.';
+    return;
+  }
+
+  const qp = new URLSearchParams(location.search);
+  const forceTranscode = document.getElementById('force-transcode').checked;
+  // Off-main-thread by default — same transcode-worker.js bundle as the
+  // dash.js/Shaka demos. Override with ?workerUrl=... ; pass
+  // ?workerUrl=off to keep transcoding on the main thread (debugging).
+  const workerUrlParam = qp.get('workerUrl');
+  const workerUrl = workerUrlParam === 'off'
+    ? undefined
+    : (workerUrlParam || './transcode-worker.js');
+  console.log('[demo] forceTranscode =', forceTranscode);
+  console.log('[demo] workerUrl =', workerUrl || '(none — main thread)');
+
+  console.log('[demo] attachHevcSupport');
+  cleanup = await HevcHls.attachHevcSupport({
+    wasmUrl: qp.get('wasmUrl') || undefined,
+    wasmBinaryUrl: qp.get('wasmBinaryUrl') || undefined,
+    workerUrl,
+    forceTranscode,
+    logLevel: qp.get('logLevel') || undefined,
+  });
+
+  // preferManagedMediaSource: false — the transcoding path needs classic
+  // MediaSource; browsers where only ManagedMediaSource exists (iPhone
+  // Safari) play HEVC natively anyway.
+  hls = new Hls({
+    preferManagedMediaSource: false,
+    debug: qp.get('debug') === '1',
+  });
+
+  hls.on(Hls.Events.ERROR, (_evt, data) => {
+    console.error('[demo] hls.js error', data.type, data.details, data.fatal ? '(fatal)' : '',
+      'sn=' + (data.frag ? data.frag.sn : '?'),
+      'count=' + (data.appendsWithoutProgress ?? '?'));
+    if (data.fatal) {
+      document.getElementById('status').textContent =
+        'Error: ' + data.type + ' / ' + data.details;
+    }
+  });
+  hls.on(Hls.Events.MANIFEST_PARSED, (_evt, data) => {
+    console.log('[demo] manifest parsed —', data.levels.length, 'level(s)');
+    document.getElementById('status').textContent = 'Playing via hls.js + hevc.js';
+  });
+
+  console.log('[demo] hls.attachMedia() + loadSource()');
+  hls.attachMedia(video);
+  hls.loadSource(url);
+  video.play().catch((e) => console.warn('[demo] video.play() blocked', e?.message));
+  document.getElementById('status').textContent = 'Loaded — playback should start';
+}
+
+document.getElementById('status').textContent = 'Ready — choose a preset or enter an m3u8 URL';
+</script>
+<script data-goatcounter="https://privaloops.goatcounter.com/count"
+        async src="//gc.zgo.at/count.js"></script>
+</body>
+</html>
