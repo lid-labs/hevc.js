@@ -18,7 +18,7 @@ import sys
 class CORSHandler(http.server.SimpleHTTPRequestHandler):
     def end_headers(self):
         self.send_header("Access-Control-Allow-Origin", "*")
-        if "/streams/" in self.path:
+        if self.path.split("?", 1)[0].startswith("/streams/"):
             self.send_header("Cache-Control", "no-store")
         super().end_headers()
 
