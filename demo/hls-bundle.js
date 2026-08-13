@@ -10357,7 +10357,7 @@ var HevcHls = (() => {
       const samples = this._demuxer.parseSegment(data);
       if (samples.length === 0) return null;
       const tDemuxEnd = performance.now();
-      const segmentBaseTime = extractTfdt(data) ?? samples[0].dts;
+      const segmentBaseTime = rebaseSamplesToTfdt(samples, extractTfdt(data));
       if (!this._fpsAutoDetected && !this._config.fps && samples[0].duration > 0) {
         this._fps = this._timescale / samples[0].duration;
         this._fpsAutoDetected = true;
@@ -10484,7 +10484,7 @@ var HevcHls = (() => {
       const samples = this._demuxer.parseSegment(data);
       if (samples.length === 0) return;
       const tDemuxEnd = performance.now();
-      const segmentBaseTime = extractTfdt(data) ?? samples[0].dts;
+      const segmentBaseTime = rebaseSamplesToTfdt(samples, extractTfdt(data));
       if (!this._fpsAutoDetected && !this._config.fps && samples[0].duration > 0) {
         this._fps = this._timescale / samples[0].duration;
         this._fpsAutoDetected = true;
@@ -10660,6 +10660,18 @@ var HevcHls = (() => {
       break;
     }
     return sets;
+  }
+  function rebaseSamplesToTfdt(samples, tfdt) {
+    if (samples.length === 0) return tfdt ?? 0;
+    if (tfdt === null) return samples[0].dts;
+    const drift = samples[0].dts - tfdt;
+    if (drift !== 0) {
+      for (const s of samples) {
+        s.dts -= drift;
+        s.pts -= drift;
+      }
+    }
+    return tfdt;
   }
   function extractTfdt(data) {
     const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
