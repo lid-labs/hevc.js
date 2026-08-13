@@ -15,6 +15,7 @@ import { log } from "./log.js";
 import { H264Encoder } from "./h264-encoder.js";
 import type { EncodedChunk } from "./h264-encoder.js";
 import { FMP4Muxer } from "./fmp4-muxer.js";
+import type { MuxerAudioConfig } from "./fmp4-muxer.js";
 import { publishSegmentStat } from "./perf-bus.js";
 import type { HEVCFrame } from "./types.js";
 import type { DecoderOptions } from "./types.js";
@@ -51,6 +52,13 @@ export class SegmentTranscoder {
   private _height = 0;
   private _paramSetsFed = false;
   private _paramSetsBuffer: Uint8Array | null = null;
+  // Audio pass-through (muxed A/V segments): captured from the init segment.
+  private _audioConfig: MuxerAudioConfig | null = null;
+
+  /** Whether the source carries a muxed audio track we pass through. */
+  get hasMuxedAudio(): boolean {
+    return this._audioConfig !== null;
+  }
 
   constructor(config: SegmentTranscoderConfig = {}) {
     this._config = config;
@@ -96,6 +104,18 @@ export class SegmentTranscoder {
       this._width = track.width;
       this._height = track.height;
     }
+
+    // Muxed A/V: capture the audio track for pass-through re-muxing.
+    const audio = this._demuxer.audioTrack;
+    this._audioConfig = audio && audio.asc.byteLength > 0
+      ? {
+          timescale: audio.timescale,
+          channelCount: audio.channelCount,
+          sampleRate: audio.sampleRate,
+          sampleSize: audio.sampleSize,
+          asc: audio.asc,
+        }
+      : null;
 
     // Extract VPS/SPS/PPS from hvcC in the init segment
     // These must be fed to the WASM decoder before any media NALs
@@ -306,22 +326,28 @@ export class SegmentTranscoder {
     await this._encoder.flush();
     if (chunks.length === 0) return null;
 
-    // 6. Generate H.264 init segment on first successful encode
+    // 6. Generate H.264 init segment on first successful encode. When the
+    // source is muxed A/V, emit a two-track init (H.264 video + AAC audio)
+    // so a single audiovideo SourceBuffer plays both.
     if (!this._initResult) {
       const avcC = this._encoder.codecDescription;
       if (!avcC) throw new Error("No avcC description from encoder");
 
-      const initSegment = this._muxer.generateInit({
+      const videoInit = {
         width: this._width,
         height: this._height,
         timescale: this._timescale,
         avcC,
-      });
-
-      this._initResult = {
-        initSegment,
-        codec: this._encoder.codec,
       };
+      const initSegment = this._audioConfig
+        ? this._muxer.generateInitAV(videoInit, this._audioConfig)
+        : this._muxer.generateInit(videoInit);
+      // Only AAC pass-through is supported, so the audio codec is mp4a.40.2.
+      const codec = this._audioConfig
+        ? `${this._encoder.codec},mp4a.40.2`
+        : this._encoder.codec;
+
+      this._initResult = { initSegment, codec };
     }
 
     // 7. Mux H.264 chunks into fMP4 media segment
@@ -345,7 +371,21 @@ export class SegmentTranscoder {
 
     // Use the smallest PTS as the base decode time for the muxed segment
     const muxBaseTime = sortedPts.length > 0 ? sortedPts[0]! : segmentBaseTime;
-    const mediaSegment = this._muxer.muxSegment(muxerSamples, muxBaseTime);
+    let mediaSegment: Uint8Array;
+    if (this._audioConfig) {
+      // Muxed A/V: drain the pass-through audio samples and re-mux both
+      // tracks. Audio keeps its own timeline (its own timescale + tfdt).
+      const audioSamples = this._demuxer.drainAudioSamples();
+      const audioBaseTime = audioSamples.length > 0 ? audioSamples[0]!.dts : 0;
+      mediaSegment = this._muxer.muxSegmentAV(
+        muxerSamples,
+        muxBaseTime,
+        audioSamples.map((a) => ({ data: a.data, duration: a.duration })),
+        audioBaseTime,
+      );
+    } else {
+      mediaSegment = this._muxer.muxSegment(muxerSamples, muxBaseTime);
+    }
 
     const tEncodeEnd = performance.now();
     const demuxMs = tDemuxEnd - tDemux0;

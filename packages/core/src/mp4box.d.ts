@@ -53,6 +53,11 @@ declare module "mp4box" {
       width: number;
       height: number;
     };
+    audio?: {
+      sample_rate: number;
+      channel_count: number;
+      sample_size: number;
+    };
   }
 
   interface MP4BoxTrack {

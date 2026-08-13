@@ -20,6 +20,22 @@ export interface MuxerSample {
   compositionTimeOffset?: number;
 }
 
+/** Audio track description for the muxed A/V path (AAC pass-through). */
+export interface MuxerAudioConfig {
+  timescale: number;
+  channelCount: number;
+  sampleRate: number;
+  sampleSize: number;
+  /** AudioSpecificConfig bytes, copied verbatim into the output esds. */
+  asc: Uint8Array;
+}
+
+/** One audio sample, passed through untouched. */
+export interface MuxerAudioSample {
+  data: Uint8Array;
+  duration: number; // in audio timescale units
+}
+
 export class FMP4Muxer {
   private _sequenceNumber = 1;
 
@@ -38,6 +54,39 @@ export class FMP4Muxer {
   muxSegment(samples: MuxerSample[], baseDecodeTime: number): Uint8Array {
     const mdat = boxMdat(samples);
     const moof = boxMoof(this._sequenceNumber++, samples, baseDecodeTime, mdat.byteLength);
+    return concat(moof, mdat);
+  }
+
+  /**
+   * Generate a two-track (video + audio) init segment. Video track_ID=1,
+   * audio track_ID=2. Used for muxed A/V streams: the H.264 video is
+   * transcoded, the AAC audio is passed through, and both are re-muxed into
+   * one `audiovideo` output so a single SourceBuffer plays both.
+   */
+  generateInitAV(video: MuxerInitConfig, audio: MuxerAudioConfig): Uint8Array {
+    return concat(boxFtyp(), boxMoovAV(video, audio));
+  }
+
+  /**
+   * Generate a two-track media segment: one moof with a video traf and an
+   * audio traf, followed by a single mdat holding the video samples then the
+   * audio samples. Base decode times are per-track (different timescales).
+   */
+  muxSegmentAV(
+    videoSamples: MuxerSample[],
+    videoBaseTime: number,
+    audioSamples: MuxerAudioSample[],
+    audioBaseTime: number,
+  ): Uint8Array {
+    const videoBytes = videoSamples.reduce((s, x) => s + x.data.byteLength, 0);
+    const audioBytes = audioSamples.reduce((s, x) => s + x.data.byteLength, 0);
+    const mdat = boxMdatAV(videoSamples, audioSamples);
+    const moof = boxMoofAV(
+      this._sequenceNumber++,
+      videoSamples, videoBaseTime,
+      audioSamples, audioBaseTime,
+      videoBytes, audioBytes,
+    );
     return concat(moof, mdat);
   }
 }
@@ -305,5 +354,204 @@ function boxMdat(samples: MuxerSample[]): Uint8Array {
     payload.set(sample.data, offset);
     offset += sample.data.byteLength;
   }
+  return box("mdat", payload);
+}
+
+// ---- Two-track (audio+video) boxes ----
+
+function boxMoovAV(video: MuxerInitConfig, audio: MuxerAudioConfig): Uint8Array {
+  const mvhd = boxMvhdAV(video.timescale);
+  const videoTrak = boxTrak(video); // existing single-track builder → track_ID 1
+  const audioTrak = boxTrakAudio(audio);
+  const mvex = box("mvex", boxTrex(), boxTrexAudio());
+  return box("moov", mvhd, videoTrak, audioTrak, mvex);
+}
+
+function boxMvhdAV(timescale: number): Uint8Array {
+  const data = new Uint8Array(96);
+  const v = new DataView(data.buffer);
+  v.setUint32(8, timescale);
+  v.setUint32(16, 0x00010000); // rate
+  v.setUint16(20, 0x0100);     // volume
+  const matrix = [0x00010000, 0, 0, 0, 0x00010000, 0, 0, 0, 0x40000000];
+  for (let i = 0; i < 9; i++) v.setUint32(32 + i * 4, matrix[i]!);
+  v.setUint32(92, 3);          // next_track_ID (1 video + 1 audio taken)
+  return fullBox("mvhd", 0, 0, data);
+}
+
+function boxTrakAudio(audio: MuxerAudioConfig): Uint8Array {
+  const tkhd = boxTkhdAudio();
+  const mdia = boxMdiaAudio(audio);
+  return box("trak", tkhd, mdia);
+}
+
+function boxTkhdAudio(): Uint8Array {
+  const data = new Uint8Array(80);
+  const v = new DataView(data.buffer);
+  v.setUint32(8, 2);           // track_ID = 2
+  v.setUint16(32, 0x0100);     // volume = 1.0 (audio track)
+  const matrix = [0x00010000, 0, 0, 0, 0x00010000, 0, 0, 0, 0x40000000];
+  for (let i = 0; i < 9; i++) v.setUint32(36 + i * 4, matrix[i]!);
+  // width/height stay 0 for audio
+  return fullBox("tkhd", 0, 3, data);
+}
+
+function boxMdiaAudio(audio: MuxerAudioConfig): Uint8Array {
+  const mdhd = boxMdhd(audio.timescale);
+  const hdlr = boxHdlrAudio();
+  const minf = boxMinfAudio(audio);
+  return box("mdia", mdhd, hdlr, minf);
+}
+
+function boxHdlrAudio(): Uint8Array {
+  const data = new Uint8Array(21);
+  const v = new DataView(data.buffer);
+  v.setUint32(4, 0x736f756e);  // handler_type = 'soun'
+  return fullBox("hdlr", 0, 0, data);
+}
+
+function boxMinfAudio(audio: MuxerAudioConfig): Uint8Array {
+  const smhd = fullBox("smhd", 0, 0, new Uint8Array(4)); // balance(2)+reserved(2)=0
+  const dinf = box("dinf", fullBox("dref", 0, 0, u32be(1), fullBox("url ", 0, 1)));
+  const stbl = boxStblAudio(audio);
+  return box("minf", smhd, dinf, stbl);
+}
+
+function boxStblAudio(audio: MuxerAudioConfig): Uint8Array {
+  const stsd = fullBox("stsd", 0, 0, u32be(1), boxMp4a(audio));
+  const stts = fullBox("stts", 0, 0, u32be(0));
+  const stsc = fullBox("stsc", 0, 0, u32be(0));
+  const stsz = fullBox("stsz", 0, 0, u32be(0), u32be(0));
+  const stco = fullBox("stco", 0, 0, u32be(0));
+  return box("stbl", stsd, stts, stsc, stsz, stco);
+}
+
+function boxMp4a(audio: MuxerAudioConfig): Uint8Array {
+  // AudioSampleEntry (ISO/IEC 14496-12): 28-byte body then esds.
+  const header = new Uint8Array(28);
+  const v = new DataView(header.buffer);
+  v.setUint16(6, 1);                         // data_reference_index
+  v.setUint16(16, audio.channelCount);
+  v.setUint16(18, audio.sampleSize);
+  v.setUint32(24, audio.sampleRate << 16);   // samplerate (16.16 fixed)
+  return box("mp4a", header, boxEsds(audio.asc));
+}
+
+function boxEsds(asc: Uint8Array): Uint8Array {
+  // DecoderSpecificInfo (tag 0x05) — the AudioSpecificConfig, verbatim.
+  const dsi = descriptor(0x05, asc);
+  // DecoderConfigDescriptor (tag 0x04): AAC audio.
+  const dcdHead = new Uint8Array(13);
+  dcdHead[0] = 0x40;                          // objectTypeIndication = Audio ISO/IEC 14496-3 (AAC)
+  dcdHead[1] = (0x05 << 2) | 0x01;            // streamType=5 (audio), upStream=0, reserved=1
+  // bufferSizeDB(3), maxBitrate(4), avgBitrate(4) left 0
+  const dcd = descriptor(0x04, dcdHead, dsi);
+  // SLConfigDescriptor (tag 0x06): predefined = 2.
+  const sl = descriptor(0x06, new Uint8Array([0x02]));
+  // ES_Descriptor (tag 0x03): ES_ID(2)=0, flags(1)=0.
+  const es = descriptor(0x03, new Uint8Array([0, 0, 0]), dcd, sl);
+  return fullBox("esds", 0, 0, es);
+}
+
+/**
+ * MP4 descriptor: tag + expandable length + payload. Sizes here are always
+ * < 128, so the length fits in a single byte (top continuation bit clear).
+ */
+function descriptor(tag: number, ...payloads: Uint8Array[]): Uint8Array {
+  const payload = concat(...payloads);
+  return concat(new Uint8Array([tag, payload.byteLength & 0x7f]), payload);
+}
+
+function boxTrexAudio(): Uint8Array {
+  const data = new Uint8Array(20);
+  const v = new DataView(data.buffer);
+  v.setUint32(0, 2);           // track_ID = 2
+  v.setUint32(4, 1);           // default_sample_description_index
+  return fullBox("trex", 0, 0, data);
+}
+
+function boxMoofAV(
+  sequenceNumber: number,
+  videoSamples: MuxerSample[],
+  videoBaseTime: number,
+  audioSamples: MuxerAudioSample[],
+  audioBaseTime: number,
+  videoBytes: number,
+  audioBytes: number,
+): Uint8Array {
+  const mfhd = fullBox("mfhd", 0, 0, u32be(sequenceNumber));
+  const videoTraf = boxTraf(videoSamples, videoBaseTime, videoBytes);
+  const audioTraf = boxTrafAudio(audioSamples, audioBaseTime);
+  const moof = box("moof", mfhd, videoTraf, audioTraf);
+
+  // Patch both trun data_offsets: video samples come first in the mdat,
+  // audio right after. Offsets are from the moof start.
+  const mdatPayloadStart = moof.byteLength + 8;
+  patchTrunDataOffsets(moof, [mdatPayloadStart, mdatPayloadStart + videoBytes]);
+  return moof;
+}
+
+function boxTrafAudio(samples: MuxerAudioSample[], baseDecodeTime: number): Uint8Array {
+  const tfhd = fullBox("tfhd", 0, 0x020000, u32be(2)); // track_ID=2, default_base_is_moof
+  const tfdt = baseDecodeTime <= 0xffffffff
+    ? fullBox("tfdt", 0, 0, u32be(baseDecodeTime))
+    : (() => {
+        const d = new Uint8Array(8);
+        new DataView(d.buffer).setUint32(0, Math.floor(baseDecodeTime / 0x100000000));
+        new DataView(d.buffer).setUint32(4, baseDecodeTime & 0xffffffff);
+        return fullBox("tfdt", 1, 0, d);
+      })();
+  const trun = boxTrunAudio(samples);
+  return box("traf", tfhd, tfdt, trun);
+}
+
+function boxTrunAudio(samples: MuxerAudioSample[]): Uint8Array {
+  // flags: data_offset + sample_duration + sample_size (audio is all sync,
+  // no composition offset, so no per-sample flags/cto).
+  const flags = 0x000001 | 0x000100 | 0x000200;
+  const data = new Uint8Array(8 + samples.length * 8);
+  const v = new DataView(data.buffer);
+  v.setUint32(0, samples.length);
+  v.setUint32(4, 0); // data_offset placeholder — patched by boxMoofAV
+  let offset = 8;
+  for (const s of samples) {
+    v.setUint32(offset, s.duration);
+    v.setUint32(offset + 4, s.data.byteLength);
+    offset += 8;
+  }
+  return fullBox("trun", 0, flags, data);
+}
+
+/** Patch each traf's trun data_offset in document order (video, then audio). */
+function patchTrunDataOffsets(moof: Uint8Array, offsets: number[]): void {
+  const view = new DataView(moof.buffer, moof.byteOffset, moof.byteLength);
+  let offset = 8;
+  let trafIndex = 0;
+  while (offset + 8 <= moof.byteLength) {
+    const size = view.getUint32(offset);
+    const type = view.getUint32(offset + 4);
+    if (type === 0x74726166) { // 'traf'
+      let inner = offset + 8;
+      while (inner + 8 <= offset + size) {
+        const isize = view.getUint32(inner);
+        if (view.getUint32(inner + 4) === 0x7472756e) { // 'trun'
+          view.setUint32(inner + 8 + 4 + 4, offsets[trafIndex]!);
+          break;
+        }
+        inner += isize;
+      }
+      trafIndex++;
+    }
+    offset += size;
+  }
+}
+
+function boxMdatAV(videoSamples: MuxerSample[], audioSamples: MuxerAudioSample[]): Uint8Array {
+  const videoBytes = videoSamples.reduce((s, x) => s + x.data.byteLength, 0);
+  const audioBytes = audioSamples.reduce((s, x) => s + x.data.byteLength, 0);
+  const payload = new Uint8Array(videoBytes + audioBytes);
+  let offset = 0;
+  for (const s of videoSamples) { payload.set(s.data, offset); offset += s.data.byteLength; }
+  for (const s of audioSamples) { payload.set(s.data, offset); offset += s.data.byteLength; }
   return box("mdat", payload);
 }

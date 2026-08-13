@@ -33,6 +33,25 @@ export interface VideoTrackInfo {
   nalLengthSize: number;
 }
 
+export interface AudioTrackInfo {
+  trackId: number;
+  codec: string;
+  timescale: number;
+  channelCount: number;
+  sampleRate: number;
+  sampleSize: number;
+  /** AudioSpecificConfig — the DecoderSpecificInfo bytes, passed through verbatim into the output esds. */
+  asc: Uint8Array;
+}
+
+/** One demuxed audio sample, passed through untouched (raw AAC frame). */
+export interface AudioSample {
+  data: Uint8Array;
+  pts: number;
+  dts: number;
+  duration: number;
+}
+
 /**
  * fMP4 Demuxer backed by mp4box.js.
  *
@@ -46,7 +65,9 @@ export interface VideoTrackInfo {
 export class FMP4Demuxer {
   private _mp4box = mp4boxCreateFile();
   private _videoTrack: VideoTrackInfo | null = null;
+  private _audioTrack: AudioTrackInfo | null = null;
   private _pendingSamples: DemuxedSample[] = [];
+  private _pendingAudio: AudioSample[] = [];
   private _offset = 0;
   private _ready = false;
   private _readyPromise: Promise<void>;
@@ -61,7 +82,20 @@ export class FMP4Demuxer {
       this._onReady(info);
     };
 
-    this._mp4box.onSamples = (_trackId: number, _user: unknown, samples: MP4Sample[]) => {
+    this._mp4box.onSamples = (trackId: number, _user: unknown, samples: MP4Sample[]) => {
+      if (this._audioTrack && trackId === this._audioTrack.trackId) {
+        // Audio: pass through the raw sample bytes untouched (no NAL parsing).
+        for (const sample of samples) {
+          const buf: ArrayBuffer | Uint8Array = sample.data;
+          this._pendingAudio.push({
+            data: ArrayBuffer.isView(buf) ? new Uint8Array(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)) : new Uint8Array(buf),
+            pts: sample.cts,
+            dts: sample.dts,
+            duration: sample.duration,
+          });
+        }
+        return;
+      }
       for (const sample of samples) {
         const nalUnits = extractNalUnitsFromSample(sample.data, this._videoTrack?.nalLengthSize ?? 4);
         this._pendingSamples.push({
@@ -83,6 +117,18 @@ export class FMP4Demuxer {
   /** Get the video track info (available after parse) */
   get videoTrack(): VideoTrackInfo | null {
     return this._videoTrack;
+  }
+
+  /** Get the audio track info, if the segment carries a muxed audio track. */
+  get audioTrack(): AudioTrackInfo | null {
+    return this._audioTrack;
+  }
+
+  /** Drain all pending audio samples extracted so far (raw AAC frames). */
+  drainAudioSamples(): AudioSample[] {
+    const samples = this._pendingAudio;
+    this._pendingAudio = [];
+    return samples;
   }
 
   /** Whether the init segment has been parsed */
@@ -162,10 +208,53 @@ export class FMP4Demuxer {
       this._mp4box.setExtractionOptions(videoTrack.id, undefined, { nbSamples: 100 });
     }
 
+    // Audio track (present in muxed A/V segments) — extracted for pass-through.
+    const audioTrack = info.audioTracks?.[0] ?? info.tracks.find(
+      (t: MP4Track) => t.type === "audio",
+    );
+    if (audioTrack) {
+      const asc = extractAudioSpecificConfig(this._mp4box, audioTrack.id);
+      this._audioTrack = {
+        trackId: audioTrack.id,
+        codec: audioTrack.codec,
+        timescale: audioTrack.timescale,
+        channelCount: audioTrack.audio?.channel_count ?? 2,
+        sampleRate: audioTrack.audio?.sample_rate ?? 48000,
+        sampleSize: audioTrack.audio?.sample_size ?? 16,
+        asc: asc ?? new Uint8Array(0),
+      };
+      this._mp4box.setExtractionOptions(audioTrack.id, undefined, { nbSamples: 1000 });
+    }
+
     this._ready = true;
     this._readyResolve();
     this._mp4box.start();
   }
+}
+
+/**
+ * Pull the AudioSpecificConfig (DecoderSpecificInfo) bytes out of the audio
+ * track's esds via mp4box's parsed box tree. Passed through verbatim into
+ * the output esds so the re-muxed audio stays bit-identical to the source.
+ */
+function extractAudioSpecificConfig(mp4box: ReturnType<typeof mp4boxCreateFile>, trackId: number): Uint8Array | null {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const moov = (mp4box as any).moov;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const trak = moov?.traks?.find((t: any) => t.tkhd?.track_id === trackId);
+    const entry = trak?.mdia?.minf?.stbl?.stsd?.entries?.[0];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const descs = entry?.esds?.esd?.descs ?? [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const decoderConfig = descs.find((d: any) => d.tag === 0x04);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const dsi = decoderConfig?.descs?.find((d: any) => d.tag === 0x05);
+    if (dsi?.data) return dsi.data instanceof Uint8Array ? dsi.data.slice() : new Uint8Array(dsi.data);
+  } catch {
+    /* fall through */
+  }
+  return null;
 }
 
 /**
