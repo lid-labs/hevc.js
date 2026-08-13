@@ -68,6 +68,7 @@
 </footer>
 
 <!-- WASM decoder -->
+<script src="demo-utils.js"></script>
 <script src="hevc-decode.js"></script>
 <!-- Shaka Player -->
 <script src="https://cdn.jsdelivr.net/npm/shaka-player@4.11.4/dist/shaka-player.compiled.js"></script>
@@ -116,20 +117,6 @@ if (typeof shaka !== 'undefined' && shaka.log && shaka.log.setLevel) {
   shaka.log.setLevel(shaka.log.Level.V1 || 4);
 }
 
-// Only allow transcoder asset overrides (?workerUrl= etc.) from safe
-// locations: same-origin paths or well-known CDNs. Blocks turning the demo
-// into a script-loading gadget via ?workerUrl=https://evil.example/w.js.
-const ASSET_HOST_ALLOWLIST = ['cdn.jsdelivr.net', 'unpkg.com'];
-function safeAssetUrl(value, name) {
-  if (!value) return undefined;
-  try {
-    const u = new URL(value, location.href);
-    if (u.origin === location.origin) return value;
-    if (u.protocol === 'https:' && ASSET_HOST_ALLOWLIST.includes(u.hostname)) return value;
-  } catch (_) { /* malformed URL falls through to the warning */ }
-  console.warn('[demo] ignoring ' + name + '=' + value + ' (origin not in the allowlist)');
-  return undefined;
-}
 async function loadMPD(presetUrl) {
   const url = presetUrl || document.getElementById('mpd-url').value.trim();
   if (!url) return;
@@ -167,7 +154,7 @@ async function loadMPD(presetUrl) {
   // bundle that's already used by the dash.js demo. Override with
   // ?workerUrl=... ; pass ?workerUrl=off explicitly to keep transcoding
   // on the main thread (useful for debugging).
-  const workerUrlParam = qp.get('workerUrl') === 'off' ? 'off' : safeAssetUrl(qp.get('workerUrl'), 'workerUrl');
+  const workerUrlParam = qp.get('workerUrl') === 'off' ? 'off' : hevcDemo.safeAssetUrl(qp.get('workerUrl'), 'workerUrl');
   const workerUrl = workerUrlParam === 'off'
     ? undefined
     : (workerUrlParam || './transcode-worker.js');
@@ -177,8 +164,8 @@ async function loadMPD(presetUrl) {
   // adaptiveCompute is ON by default — pass ?adaptiveCompute=off to opt out.
   const adaptiveCompute = qp.get('adaptiveCompute') === 'off' ? false : undefined;
   cleanup = HevcShaka.registerHevcTransmuxer(shaka, {
-    wasmUrl: safeAssetUrl(qp.get('wasmUrl'), 'wasmUrl'),
-    wasmBinaryUrl: safeAssetUrl(qp.get('wasmBinaryUrl'), 'wasmBinaryUrl'),
+    wasmUrl: hevcDemo.safeAssetUrl(qp.get('wasmUrl'), 'wasmUrl'),
+    wasmBinaryUrl: hevcDemo.safeAssetUrl(qp.get('wasmBinaryUrl'), 'wasmBinaryUrl'),
     workerUrl,
     adaptiveCompute,
   });

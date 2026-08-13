@@ -68,6 +68,7 @@ hls.<span class="fn">loadSource</span>(m3u8Url);</div>
 </footer>
 
 <!-- WASM decoder -->
+<script src="demo-utils.js"></script>
 <script src="hevc-decode.js"></script>
 <!-- hls.js -->
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1.7.0/dist/hls.min.js"></script>
@@ -110,20 +111,6 @@ busDetach = HevcHls.subscribeSegmentStat((stat) => {
     'frames=' + stat.frames);
 });
 
-// Only allow transcoder asset overrides (?workerUrl= etc.) from safe
-// locations: same-origin paths or well-known CDNs. Blocks turning the demo
-// into a script-loading gadget via ?workerUrl=https://evil.example/w.js.
-const ASSET_HOST_ALLOWLIST = ['cdn.jsdelivr.net', 'unpkg.com'];
-function safeAssetUrl(value, name) {
-  if (!value) return undefined;
-  try {
-    const u = new URL(value, location.href);
-    if (u.origin === location.origin) return value;
-    if (u.protocol === 'https:' && ASSET_HOST_ALLOWLIST.includes(u.hostname)) return value;
-  } catch (_) { /* malformed URL falls through to the warning */ }
-  console.warn('[demo] ignoring ' + name + '=' + value + ' (origin not in the allowlist)');
-  return undefined;
-}
 async function loadM3U8(presetUrl) {
   const url = presetUrl || document.getElementById('m3u8-url').value.trim();
   if (!url) return;
@@ -152,7 +139,7 @@ async function loadM3U8(presetUrl) {
   // Off-main-thread by default — same transcode-worker.js bundle as the
   // dash.js/Shaka demos. Override with ?workerUrl=... ; pass
   // ?workerUrl=off to keep transcoding on the main thread (debugging).
-  const workerUrlParam = qp.get('workerUrl') === 'off' ? 'off' : safeAssetUrl(qp.get('workerUrl'), 'workerUrl');
+  const workerUrlParam = qp.get('workerUrl') === 'off' ? 'off' : hevcDemo.safeAssetUrl(qp.get('workerUrl'), 'workerUrl');
   const workerUrl = workerUrlParam === 'off'
     ? undefined
     : (workerUrlParam || './transcode-worker.js');
@@ -161,8 +148,8 @@ async function loadM3U8(presetUrl) {
 
   console.log('[demo] attachHevcSupport');
   cleanup = await HevcHls.attachHevcSupport({
-    wasmUrl: safeAssetUrl(qp.get('wasmUrl'), 'wasmUrl'),
-    wasmBinaryUrl: safeAssetUrl(qp.get('wasmBinaryUrl'), 'wasmBinaryUrl'),
+    wasmUrl: hevcDemo.safeAssetUrl(qp.get('wasmUrl'), 'wasmUrl'),
+    wasmBinaryUrl: hevcDemo.safeAssetUrl(qp.get('wasmBinaryUrl'), 'wasmBinaryUrl'),
     workerUrl,
     forceTranscode,
     logLevel: qp.get('logLevel') || undefined,

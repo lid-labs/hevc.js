@@ -15,24 +15,37 @@ import type { SegmentTranscoderConfig } from "./segment-transcoder.js";
 import { TranscodeWorkerClient } from "./transcode-worker-client.js";
 
 const HEVC_DETECT_RE = /hev1|hvc1/i;                // Detect HEVC in a string
-// Match one HEVC codec string (hev1.2.4.L123.B0). Stops at commas so a
-// muxed codec list ("hvc1...,mp4a.40.2") keeps its audio entry on replace.
+// Match one HEVC codec string (hev1.2.4.L123.B0). The `[^"',]*` stops at a
+// comma as defense-in-depth: `isMuxedHevcMime` already gates both .replace()
+// call sites, so a comma should never reach here — but if extraction ever
+// failed, this keeps a stray audio entry out of the substituted mime.
 const HEVC_CODEC_RE = /hev1[^"',]*|hvc1[^"',]*/gi;
 // timestampOffset jump below which a write is routine alignment, not a seek
 const TS_OFFSET_FLUSH_THRESHOLD_S = 0.5;
+// Codec-string prefixes for audio codecs seen alongside HEVC in HLS/DASH.
+const AUDIO_CODEC_PREFIXES = ["mp4a", "ac-3", "ec-3", "opus", "mp3", "alac", "flac", "vorbis"];
 
 /**
- * Detect a muxed audio+video HEVC mime — an HEVC codec alongside another
- * codec in the same codecs list (e.g. `video/mp4; codecs="hvc1...,mp4a.40.2"`).
+ * Detect a muxed audio+video HEVC mime — an HEVC codec AND an audio codec in
+ * the same codecs list (e.g. `video/mp4; codecs="hvc1...,mp4a.40.2"`).
  * The transcode pipeline is video-only: intercepting such a SourceBuffer
  * would silently drop the audio track, so these mimes are refused instead
  * (isTypeSupported → false, addSourceBuffer → not intercepted).
+ *
+ * Requires an actual audio codec, not just a second entry: a video-only
+ * multi-codec list (e.g. Dolby Vision `dvh1...,hvc1...`) is not "muxed A/V"
+ * and gets the normal treatment (it fails the H.264 probe on its own merits).
+ * The unquoted-codecs capture stops at `;` so a trailing mime parameter
+ * (`codecs=hvc1...;foo=a,b`) doesn't leak a comma into the check.
  * Exported for tests.
  */
 export function isMuxedHevcMime(mimeType: string): boolean {
   if (!HEVC_DETECT_RE.test(mimeType)) return false;
-  const codecs = /codecs\s*=\s*"?([^"]*)"?/i.exec(mimeType)?.[1] ?? "";
-  return codecs.includes(",");
+  const m = /codecs\s*=\s*(?:"([^"]*)"|([^;]*))/i.exec(mimeType);
+  const list = (m?.[1] ?? m?.[2] ?? "").split(",").map((c) => c.trim().toLowerCase());
+  const hasHevc = list.some((c) => c.startsWith("hev1") || c.startsWith("hvc1"));
+  const hasAudio = list.some((c) => AUDIO_CODEC_PREFIXES.some((a) => c.startsWith(a)));
+  return hasHevc && hasAudio;
 }
 
 /**
@@ -138,6 +151,7 @@ export function installMSEIntercept(config: MSEInterceptConfig = {}): void {
       if (cfg.video?.contentType && HEVC_DETECT_RE.test(cfg.video.contentType)) {
         // Same muxed A/V refusal as isTypeSupported.
         if (isMuxedHevcMime(cfg.video.contentType)) {
+          log.info(`decodingInfo("${cfg.video.contentType}") → unsupported (muxed A/V HEVC — audio would be lost)`);
           return { supported: false, smooth: false, powerEfficient: false } as MediaCapabilitiesDecodingInfo;
         }
         const h264Codec = hevcMimeToH264Codec(cfg.video.contentType);

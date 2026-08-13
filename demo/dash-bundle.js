@@ -10967,10 +10967,14 @@ var HevcDash = (() => {
   var HEVC_DETECT_RE = /hev1|hvc1/i;
   var HEVC_CODEC_RE = /hev1[^"',]*|hvc1[^"',]*/gi;
   var TS_OFFSET_FLUSH_THRESHOLD_S = 0.5;
+  var AUDIO_CODEC_PREFIXES = ["mp4a", "ac-3", "ec-3", "opus", "mp3", "alac", "flac", "vorbis"];
   function isMuxedHevcMime(mimeType) {
     if (!HEVC_DETECT_RE.test(mimeType)) return false;
-    const codecs = /codecs\s*=\s*"?([^"]*)"?/i.exec(mimeType)?.[1] ?? "";
-    return codecs.includes(",");
+    const m = /codecs\s*=\s*(?:"([^"]*)"|([^;]*))/i.exec(mimeType);
+    const list = (m?.[1] ?? m?.[2] ?? "").split(",").map((c) => c.trim().toLowerCase());
+    const hasHevc = list.some((c) => c.startsWith("hev1") || c.startsWith("hvc1"));
+    const hasAudio = list.some((c) => AUDIO_CODEC_PREFIXES.some((a) => c.startsWith(a)));
+    return hasHevc && hasAudio;
   }
   function getMediaSourceConstructor() {
     const g = globalThis;
@@ -11017,6 +11021,7 @@ var HevcDash = (() => {
       navigator.mediaCapabilities.decodingInfo = async function(cfg) {
         if (cfg.video?.contentType && HEVC_DETECT_RE.test(cfg.video.contentType)) {
           if (isMuxedHevcMime(cfg.video.contentType)) {
+            log.info(`decodingInfo("${cfg.video.contentType}") \u2192 unsupported (muxed A/V HEVC \u2014 audio would be lost)`);
             return { supported: false, smooth: false, powerEfficient: false };
           }
           const h264Codec = hevcMimeToH264Codec(cfg.video.contentType);

@@ -83,10 +83,14 @@ export function attachHlsComputeAware(
     }
 
     if (decision.reason === "lower" || decision.reason === "raise") {
+      // On lower/raise the decider always yields a concrete capIndex. Guard
+      // anyway: a null here must not turn into `-1` (uncapped), which would
+      // do the opposite of what a "lower" decision intends.
+      if (decision.capIndex == null) return;
       try {
         // hls.js semantics: autoLevelCapping is the max auto level index,
-        // -1 means uncapped.
-        hls.autoLevelCapping = decision.capIndex ?? -1;
+        // -1 means uncapped. Only ever set to auto (-1) via cleanup.
+        hls.autoLevelCapping = decision.capIndex;
       } catch (err) {
         // Instance may be destroyed. Rolling back keeps the decider in
         // sync with what hls.js actually has configured.

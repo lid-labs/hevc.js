@@ -125,7 +125,7 @@ hls.attachMedia(videoElement);
 hls.loadSource('https://example.com/playlist.m3u8');
 ```
 
-No player instance needed: hls.js keeps HEVC levels in its ladder as long as the (patched) `MediaSource.isTypeSupported` accepts them. Supported today: fMP4 HLS with video-only or demuxed-audio renditions; muxed A/V renditions are refused with a clear error rather than playing without audio. See the [plugin README](packages/hlsjs-plugin/README.md) for details.
+No player instance needed: hls.js keeps HEVC levels in its ladder as long as the (patched) `MediaSource.isTypeSupported` accepts them. Supported today: fMP4 HLS with video-only or demuxed-audio renditions. Muxed audio+video renditions aren't supported: hls.js probes the video codec alone, so the muxed segment is caught when its SourceBuffer is created — the plugin logs a clear error and that playback fails, rather than silently playing without audio. See the [plugin README](packages/hlsjs-plugin/README.md) for details.
 
 ### How the transcoding works
 
@@ -145,10 +145,11 @@ No player instance needed: hls.js keeps HEVC levels in its ladder as long as the
 
 WASM-based HEVC transcoding is significantly more expensive than native decode. On low-end CPUs at 1080p, transcoding a 2s segment can take 6s — the buffer drains at -4s per segment and playback freezes. Bandwidth-based ABR (Shaka, dash.js) doesn't see this: the network is fine, so it keeps the top variant.
 
-The plugins fix this by piping per-segment transcode `speedX` (`segDurMs / wallClockMs`) onto a small in-process bus that both plugins consume. A player-agnostic decider observes the rolling speed, applies hysteresis, and asks the host player to narrow its variant ceiling via the player's own public ABR settings:
+The plugins fix this by piping per-segment transcode `speedX` (`segDurMs / wallClockMs`) onto a small in-process bus that the plugins consume. A player-agnostic decider observes the rolling speed, applies hysteresis, and asks the host player to narrow its variant ceiling via the player's own public ABR settings:
 
 - **Shaka** → `player.configure({ abr: { restrictions: { maxHeight, maxBandwidth } } })`
 - **dash.js** → `player.updateSettings({ streaming: { abr: { maxBitrate: { video } } } })`
+- **hls.js** → `hls.autoLevelCapping`
 
 The host ABR is never replaced — we only narrow the menu it picks from. Once headroom returns (sustained `speedX > 1.3×`), the ceiling lifts back up.
 
