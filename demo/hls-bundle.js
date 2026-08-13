@@ -9970,7 +9970,7 @@ var HevcHls = (() => {
           sampleSize: audioTrack.audio?.sample_size ?? 16,
           asc: asc ?? new Uint8Array(0)
         };
-        this._mp4box.setExtractionOptions(audioTrack.id, void 0, { nbSamples: 1e3 });
+        this._mp4box.setExtractionOptions(audioTrack.id, void 0, { nbSamples: 100 });
       }
       this._ready = true;
       this._readyResolve();
@@ -10036,7 +10036,7 @@ var HevcHls = (() => {
      */
     muxSegment(samples, baseDecodeTime) {
       const mdat = boxMdat(samples);
-      const moof = boxMoof(this._sequenceNumber++, samples, baseDecodeTime, mdat.byteLength);
+      const moof = boxMoof(this._sequenceNumber++, samples, baseDecodeTime);
       return concat(moof, mdat);
     }
     /**
@@ -10055,7 +10055,6 @@ var HevcHls = (() => {
      */
     muxSegmentAV(videoSamples, videoBaseTime, audioSamples, audioBaseTime) {
       const videoBytes = videoSamples.reduce((s, x) => s + x.data.byteLength, 0);
-      const audioBytes = audioSamples.reduce((s, x) => s + x.data.byteLength, 0);
       const mdat = boxMdatAV(videoSamples, audioSamples);
       const moof = boxMoofAV(
         this._sequenceNumber++,
@@ -10063,8 +10062,7 @@ var HevcHls = (() => {
         videoBaseTime,
         audioSamples,
         audioBaseTime,
-        videoBytes,
-        audioBytes
+        videoBytes
       );
       return concat(moof, mdat);
     }
@@ -10117,7 +10115,7 @@ var HevcHls = (() => {
     const mvex = box("mvex", boxTrex());
     return box("moov", mvhd, trak, mvex);
   }
-  function boxMvhd(timescale) {
+  function boxMvhd(timescale, nextTrackId = 2) {
     const data = new Uint8Array(96);
     const v = new DataView(data.buffer);
     v.setUint32(8, timescale);
@@ -10125,8 +10123,18 @@ var HevcHls = (() => {
     v.setUint16(20, 256);
     const matrix = [65536, 0, 0, 0, 65536, 0, 0, 0, 1073741824];
     for (let i = 0; i < 9; i++) v.setUint32(32 + i * 4, matrix[i]);
-    v.setUint32(92, 2);
+    v.setUint32(92, nextTrackId);
     return fullBox("mvhd", 0, 0, data);
+  }
+  function boxTfdt(baseDecodeTime) {
+    if (baseDecodeTime <= 4294967295) {
+      return fullBox("tfdt", 0, 0, u32be(baseDecodeTime));
+    }
+    const d = new Uint8Array(8);
+    const dv = new DataView(d.buffer);
+    dv.setUint32(0, Math.floor(baseDecodeTime / 4294967296));
+    dv.setUint32(4, baseDecodeTime & 4294967295);
+    return fullBox("tfdt", 1, 0, d);
   }
   function boxTrak(config) {
     const tkhd = boxTkhd(config.width, config.height);
@@ -10202,52 +10210,15 @@ var HevcHls = (() => {
     v.setUint32(4, 1);
     return fullBox("trex", 0, 0, data);
   }
-  function boxMoof(sequenceNumber, samples, baseDecodeTime, mdatSize) {
+  function boxMoof(sequenceNumber, samples, baseDecodeTime) {
     const mfhd = fullBox("mfhd", 0, 0, u32be(sequenceNumber));
-    const traf = boxTraf(samples, baseDecodeTime, mdatSize);
-    const moof = box("moof", mfhd, traf);
-    const dataOffset = moof.byteLength + 8;
-    patchTrunDataOffset(moof, dataOffset);
+    const moof = box("moof", mfhd, boxTraf(samples, baseDecodeTime));
+    patchTrunDataOffsets(moof, [moof.byteLength + 8]);
     return moof;
   }
-  function patchTrunDataOffset(moof, dataOffset) {
-    const view = new DataView(moof.buffer, moof.byteOffset, moof.byteLength);
-    let offset = 8;
-    while (offset + 8 <= moof.byteLength) {
-      const size = view.getUint32(offset);
-      const type = view.getUint32(offset + 4);
-      if (type === 1953653094) {
-        let inner = offset + 8;
-        while (inner + 8 <= offset + size) {
-          const isize = view.getUint32(inner);
-          const itype = view.getUint32(inner + 4);
-          if (itype === 1953658222) {
-            const dataOffsetPos = inner + 8 + 4 + 4;
-            view.setUint32(dataOffsetPos, dataOffset);
-            return;
-          }
-          inner += isize;
-        }
-      }
-      offset += size;
-    }
-  }
-  function boxTraf(samples, baseDecodeTime, mdatSize) {
-    const tfhdFlags = 131072;
-    const tfhdData = u32be(1);
-    const tfhd = fullBox("tfhd", 0, tfhdFlags, tfhdData);
-    if (baseDecodeTime <= 4294967295) {
-      const tfdt2 = fullBox("tfdt", 0, 0, u32be(baseDecodeTime));
-      const trun2 = boxTrun(samples);
-      return box("traf", tfhd, tfdt2, trun2);
-    }
-    const tfdtData = new Uint8Array(8);
-    const tfdtView = new DataView(tfdtData.buffer);
-    tfdtView.setUint32(0, Math.floor(baseDecodeTime / 4294967296));
-    tfdtView.setUint32(4, baseDecodeTime & 4294967295);
-    const tfdt = fullBox("tfdt", 1, 0, tfdtData);
-    const trun = boxTrun(samples);
-    return box("traf", tfhd, tfdt, trun);
+  function boxTraf(samples, baseDecodeTime) {
+    const tfhd = fullBox("tfhd", 0, 131072, u32be(1));
+    return box("traf", tfhd, boxTfdt(baseDecodeTime), boxTrun(samples));
   }
   function boxTrun(samples) {
     const flags = 1 | 256 | 512 | 1024 | 2048;
@@ -10279,22 +10250,11 @@ var HevcHls = (() => {
     return box("mdat", payload);
   }
   function boxMoovAV(video, audio) {
-    const mvhd = boxMvhdAV(video.timescale);
+    const mvhd = boxMvhd(video.timescale, 3);
     const videoTrak = boxTrak(video);
     const audioTrak = boxTrakAudio(audio);
     const mvex = box("mvex", boxTrex(), boxTrexAudio());
     return box("moov", mvhd, videoTrak, audioTrak, mvex);
-  }
-  function boxMvhdAV(timescale) {
-    const data = new Uint8Array(96);
-    const v = new DataView(data.buffer);
-    v.setUint32(8, timescale);
-    v.setUint32(16, 65536);
-    v.setUint16(20, 256);
-    const matrix = [65536, 0, 0, 0, 65536, 0, 0, 0, 1073741824];
-    for (let i = 0; i < 9; i++) v.setUint32(32 + i * 4, matrix[i]);
-    v.setUint32(92, 3);
-    return fullBox("mvhd", 0, 0, data);
   }
   function boxTrakAudio(audio) {
     const tkhd = boxTkhdAudio();
@@ -10342,7 +10302,7 @@ var HevcHls = (() => {
     v.setUint16(6, 1);
     v.setUint16(16, audio.channelCount);
     v.setUint16(18, audio.sampleSize);
-    v.setUint32(24, audio.sampleRate << 16);
+    v.setUint32(24, Math.min(audio.sampleRate, 65535) << 16);
     return box("mp4a", header, boxEsds(audio.asc));
   }
   function boxEsds(asc) {
@@ -10357,7 +10317,14 @@ var HevcHls = (() => {
   }
   function descriptor(tag, ...payloads) {
     const payload = concat(...payloads);
-    return concat(new Uint8Array([tag, payload.byteLength & 127]), payload);
+    const sizeBytes = [];
+    let len = payload.byteLength;
+    do {
+      sizeBytes.unshift(len & 127);
+      len >>>= 7;
+    } while (len > 0);
+    for (let i = 0; i < sizeBytes.length - 1; i++) sizeBytes[i] |= 128;
+    return concat(new Uint8Array([tag, ...sizeBytes]), payload);
   }
   function boxTrexAudio() {
     const data = new Uint8Array(20);
@@ -10366,9 +10333,9 @@ var HevcHls = (() => {
     v.setUint32(4, 1);
     return fullBox("trex", 0, 0, data);
   }
-  function boxMoofAV(sequenceNumber, videoSamples, videoBaseTime, audioSamples, audioBaseTime, videoBytes, audioBytes) {
+  function boxMoofAV(sequenceNumber, videoSamples, videoBaseTime, audioSamples, audioBaseTime, videoBytes) {
     const mfhd = fullBox("mfhd", 0, 0, u32be(sequenceNumber));
-    const videoTraf = boxTraf(videoSamples, videoBaseTime, videoBytes);
+    const videoTraf = boxTraf(videoSamples, videoBaseTime);
     const audioTraf = boxTrafAudio(audioSamples, audioBaseTime);
     const moof = box("moof", mfhd, videoTraf, audioTraf);
     const mdatPayloadStart = moof.byteLength + 8;
@@ -10377,14 +10344,7 @@ var HevcHls = (() => {
   }
   function boxTrafAudio(samples, baseDecodeTime) {
     const tfhd = fullBox("tfhd", 0, 131072, u32be(2));
-    const tfdt = baseDecodeTime <= 4294967295 ? fullBox("tfdt", 0, 0, u32be(baseDecodeTime)) : (() => {
-      const d = new Uint8Array(8);
-      new DataView(d.buffer).setUint32(0, Math.floor(baseDecodeTime / 4294967296));
-      new DataView(d.buffer).setUint32(4, baseDecodeTime & 4294967295);
-      return fullBox("tfdt", 1, 0, d);
-    })();
-    const trun = boxTrunAudio(samples);
-    return box("traf", tfhd, tfdt, trun);
+    return box("traf", tfhd, boxTfdt(baseDecodeTime), boxTrunAudio(samples));
   }
   function boxTrunAudio(samples) {
     const flags = 1 | 256 | 512;
@@ -10522,13 +10482,22 @@ var HevcHls = (() => {
         this._height = track.height;
       }
       const audio = this._demuxer.audioTrack;
-      this._audioConfig = audio && audio.asc.byteLength > 0 ? {
-        timescale: audio.timescale,
-        channelCount: audio.channelCount,
-        sampleRate: audio.sampleRate,
-        sampleSize: audio.sampleSize,
-        asc: audio.asc
-      } : null;
+      if (audio) {
+        if (audio.asc.byteLength === 0) {
+          log.warn(
+            "Muxed audio track has no AudioSpecificConfig \u2014 the audio track may fail to decode. The video is still transcoded."
+          );
+        }
+        this._audioConfig = {
+          timescale: audio.timescale,
+          channelCount: audio.channelCount,
+          sampleRate: audio.sampleRate,
+          sampleSize: audio.sampleSize,
+          asc: audio.asc
+        };
+      } else {
+        this._audioConfig = null;
+      }
       const paramSets = extractParameterSetsFromInit(data);
       if (paramSets.length > 0) {
         const psSize = paramSets.reduce((s, n) => s + 4 + n.byteLength, 0);
@@ -10696,14 +10665,13 @@ var HevcHls = (() => {
       }));
       const muxBaseTime = sortedPts.length > 0 ? sortedPts[0] : segmentBaseTime;
       let mediaSegment;
-      if (this._audioConfig) {
-        const audioSamples = this._demuxer.drainAudioSamples();
-        const audioBaseTime = audioSamples.length > 0 ? audioSamples[0].dts : 0;
+      const audioSamples = this._audioConfig ? this._demuxer.drainAudioSamples() : [];
+      if (this._audioConfig && audioSamples.length > 0) {
         mediaSegment = this._muxer.muxSegmentAV(
           muxerSamples,
           muxBaseTime,
           audioSamples.map((a) => ({ data: a.data, duration: a.duration })),
-          audioBaseTime
+          audioSamples[0].dts
         );
       } else {
         mediaSegment = this._muxer.muxSegment(muxerSamples, muxBaseTime);

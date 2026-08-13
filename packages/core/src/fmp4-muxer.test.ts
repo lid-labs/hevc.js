@@ -89,3 +89,50 @@ describe("FMP4Muxer two-track (A/V) init", () => {
     void trunCount;
   });
 });
+
+describe("FMP4Muxer two-track edge cases", () => {
+  it("encodes a >127-byte ASC with a multi-byte descriptor length (no truncation)", () => {
+    const m = new FMP4Muxer();
+    // A 200-byte ASC forces the expandable size to span two bytes.
+    const bigAsc = new Uint8Array(200).fill(0x11);
+    const init = m.generateInitAV(
+      { width: 640, height: 360, timescale: 12800, avcC: AVCC },
+      { timescale: 48000, channelCount: 2, sampleRate: 48000, sampleSize: 16, asc: bigAsc },
+    );
+    const { info, error } = parse(init);
+    expect(error).toBeNull();
+    // mp4box must still parse two tracks — proves the descriptor lengths are
+    // consistent (a truncated length would corrupt the esds and the moov).
+    expect(info!.tracks).toHaveLength(2);
+    expect(info!.tracks.find((t) => t.type === "audio")!.codec).toMatch(/^mp4a/);
+  });
+
+  it("clamps the AudioSampleEntry samplerate field for rates >= 65536 (ASC carries the truth)", () => {
+    const m = new FMP4Muxer();
+    // 96 kHz can't fit the 16-bit integer part; must not wrap to garbage.
+    const init = m.generateInitAV(
+      { width: 640, height: 360, timescale: 12800, avcC: AVCC },
+      { timescale: 96000, channelCount: 2, sampleRate: 96000, sampleSize: 16, asc: ASC },
+    );
+    const { info, error } = parse(init);
+    expect(error).toBeNull();
+    expect(info!.tracks).toHaveLength(2);
+  });
+
+  it("muxSegmentAV with zero audio samples still produces a parseable segment", () => {
+    const m = new FMP4Muxer();
+    const seg = m.muxSegmentAV(
+      [{ data: new Uint8Array([1, 2, 3, 4]), duration: 512, isKeyframe: true }],
+      0,
+      [],
+      0,
+    );
+    // moof then mdat; the audio traf carries a zero-sample trun.
+    const dv = new DataView(seg.buffer, seg.byteOffset, seg.byteLength);
+    expect(dv.getUint32(4)).toBe(0x6d6f6f66); // 'moof'
+    // mdat holds only the 4 video bytes.
+    const mdatStart = seg.byteLength - (8 + 4);
+    expect(dv.getUint32(mdatStart + 4)).toBe(0x6d646174); // 'mdat'
+    expect(dv.getUint32(mdatStart)).toBe(12);
+  });
+});

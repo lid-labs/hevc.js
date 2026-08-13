@@ -105,17 +105,29 @@ export class SegmentTranscoder {
       this._height = track.height;
     }
 
-    // Muxed A/V: capture the audio track for pass-through re-muxing.
+    // Muxed A/V: capture the audio track for pass-through re-muxing. Keyed on
+    // the audio track's presence, not on ASC extraction, so it stays in sync
+    // with the intercept's mime-based muxed decision (which already committed
+    // to an audiovideo SourceBuffer). A missing ASC is surfaced loudly rather
+    // than silently degrading to a video-only segment in an A/V buffer.
     const audio = this._demuxer.audioTrack;
-    this._audioConfig = audio && audio.asc.byteLength > 0
-      ? {
-          timescale: audio.timescale,
-          channelCount: audio.channelCount,
-          sampleRate: audio.sampleRate,
-          sampleSize: audio.sampleSize,
-          asc: audio.asc,
-        }
-      : null;
+    if (audio) {
+      if (audio.asc.byteLength === 0) {
+        log.warn(
+          "Muxed audio track has no AudioSpecificConfig — the audio track may fail to decode. " +
+          "The video is still transcoded.",
+        );
+      }
+      this._audioConfig = {
+        timescale: audio.timescale,
+        channelCount: audio.channelCount,
+        sampleRate: audio.sampleRate,
+        sampleSize: audio.sampleSize,
+        asc: audio.asc,
+      };
+    } else {
+      this._audioConfig = null;
+    }
 
     // Extract VPS/SPS/PPS from hvcC in the init segment
     // These must be fed to the WASM decoder before any media NALs
@@ -372,18 +384,19 @@ export class SegmentTranscoder {
     // Use the smallest PTS as the base decode time for the muxed segment
     const muxBaseTime = sortedPts.length > 0 ? sortedPts[0]! : segmentBaseTime;
     let mediaSegment: Uint8Array;
-    if (this._audioConfig) {
-      // Muxed A/V: drain the pass-through audio samples and re-mux both
-      // tracks. Audio keeps its own timeline (its own timescale + tfdt).
-      const audioSamples = this._demuxer.drainAudioSamples();
-      const audioBaseTime = audioSamples.length > 0 ? audioSamples[0]!.dts : 0;
+    const audioSamples = this._audioConfig ? this._demuxer.drainAudioSamples() : [];
+    if (this._audioConfig && audioSamples.length > 0) {
+      // Muxed A/V: re-mux the transcoded video with the pass-through audio.
+      // Audio keeps its own timeline (its own timescale + tfdt).
       mediaSegment = this._muxer.muxSegmentAV(
         muxerSamples,
         muxBaseTime,
         audioSamples.map((a) => ({ data: a.data, duration: a.duration })),
-        audioBaseTime,
+        audioSamples[0]!.dts,
       );
     } else {
+      // Video-only, or a muxed segment that happened to carry no audio
+      // samples — emit a single video traf (valid in an audiovideo buffer).
       mediaSegment = this._muxer.muxSegment(muxerSamples, muxBaseTime);
     }
 

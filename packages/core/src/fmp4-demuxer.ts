@@ -223,7 +223,9 @@ export class FMP4Demuxer {
         sampleSize: audioTrack.audio?.sample_size ?? 16,
         asc: asc ?? new Uint8Array(0),
       };
-      this._mp4box.setExtractionOptions(audioTrack.id, undefined, { nbSamples: 1000 });
+      // Same batching hint as video — mp4box emits per fed segment either
+      // way, but a matching value avoids implying different semantics.
+      this._mp4box.setExtractionOptions(audioTrack.id, undefined, { nbSamples: 100 });
     }
 
     this._ready = true;

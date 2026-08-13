@@ -53,7 +53,7 @@ export class FMP4Muxer {
    */
   muxSegment(samples: MuxerSample[], baseDecodeTime: number): Uint8Array {
     const mdat = boxMdat(samples);
-    const moof = boxMoof(this._sequenceNumber++, samples, baseDecodeTime, mdat.byteLength);
+    const moof = boxMoof(this._sequenceNumber++, samples, baseDecodeTime);
     return concat(moof, mdat);
   }
 
@@ -79,13 +79,12 @@ export class FMP4Muxer {
     audioBaseTime: number,
   ): Uint8Array {
     const videoBytes = videoSamples.reduce((s, x) => s + x.data.byteLength, 0);
-    const audioBytes = audioSamples.reduce((s, x) => s + x.data.byteLength, 0);
     const mdat = boxMdatAV(videoSamples, audioSamples);
     const moof = boxMoofAV(
       this._sequenceNumber++,
       videoSamples, videoBaseTime,
       audioSamples, audioBaseTime,
-      videoBytes, audioBytes,
+      videoBytes,
     );
     return concat(moof, mdat);
   }
@@ -146,7 +145,7 @@ function boxMoov(config: MuxerInitConfig): Uint8Array {
   return box("moov", mvhd, trak, mvex);
 }
 
-function boxMvhd(timescale: number): Uint8Array {
+function boxMvhd(timescale: number, nextTrackId = 2): Uint8Array {
   // mvhd v0 body (after version+flags): 96 bytes
   const data = new Uint8Array(96);
   const v = new DataView(data.buffer);
@@ -159,8 +158,20 @@ function boxMvhd(timescale: number): Uint8Array {
   const matrix = [0x00010000, 0, 0, 0, 0x00010000, 0, 0, 0, 0x40000000];
   for (let i = 0; i < 9; i++) v.setUint32(32 + i * 4, matrix[i]!);
   // pre_defined(24) at 68
-  v.setUint32(92, 2);             // next_track_ID
+  v.setUint32(92, nextTrackId);   // next_track_ID
   return fullBox("mvhd", 0, 0, data);
+}
+
+/** tfdt box — v0 for 32-bit base decode times, v1 for larger. */
+function boxTfdt(baseDecodeTime: number): Uint8Array {
+  if (baseDecodeTime <= 0xffffffff) {
+    return fullBox("tfdt", 0, 0, u32be(baseDecodeTime));
+  }
+  const d = new Uint8Array(8);
+  const dv = new DataView(d.buffer);
+  dv.setUint32(0, Math.floor(baseDecodeTime / 0x100000000));
+  dv.setUint32(4, baseDecodeTime & 0xffffffff);
+  return fullBox("tfdt", 1, 0, d);
 }
 
 function boxTrak(config: MuxerInitConfig): Uint8Array {
@@ -262,64 +273,17 @@ function boxMoof(
   sequenceNumber: number,
   samples: MuxerSample[],
   baseDecodeTime: number,
-  mdatSize: number,
 ): Uint8Array {
   const mfhd = fullBox("mfhd", 0, 0, u32be(sequenceNumber));
-  const traf = boxTraf(samples, baseDecodeTime, mdatSize);
-  const moof = box("moof", mfhd, traf);
-
-  // Patch trun data_offset: offset from moof start to mdat payload start
-  const dataOffset = moof.byteLength + 8;
-  patchTrunDataOffset(moof, dataOffset);
-
+  const moof = box("moof", mfhd, boxTraf(samples, baseDecodeTime));
+  // Patch the single trun's data_offset to the mdat payload start.
+  patchTrunDataOffsets(moof, [moof.byteLength + 8]);
   return moof;
 }
 
-function patchTrunDataOffset(moof: Uint8Array, dataOffset: number): void {
-  const view = new DataView(moof.buffer, moof.byteOffset, moof.byteLength);
-  let offset = 8;
-  while (offset + 8 <= moof.byteLength) {
-    const size = view.getUint32(offset);
-    const type = view.getUint32(offset + 4);
-    if (type === 0x74726166) { // 'traf'
-      let inner = offset + 8;
-      while (inner + 8 <= offset + size) {
-        const isize = view.getUint32(inner);
-        const itype = view.getUint32(inner + 4);
-        if (itype === 0x7472756E) { // 'trun'
-          const dataOffsetPos = inner + 8 + 4 + 4;
-          view.setUint32(dataOffsetPos, dataOffset);
-          return;
-        }
-        inner += isize;
-      }
-    }
-    offset += size;
-  }
-}
-
-function boxTraf(
-  samples: MuxerSample[],
-  baseDecodeTime: number,
-  mdatSize: number,
-): Uint8Array {
-  const tfhdFlags = 0x020000; // default_base_is_moof
-  const tfhdData = u32be(1);
-  const tfhd = fullBox("tfhd", 0, tfhdFlags, tfhdData);
-
-  if (baseDecodeTime <= 0xFFFFFFFF) {
-    const tfdt = fullBox("tfdt", 0, 0, u32be(baseDecodeTime));
-    const trun = boxTrun(samples);
-    return box("traf", tfhd, tfdt, trun);
-  }
-  const tfdtData = new Uint8Array(8);
-  const tfdtView = new DataView(tfdtData.buffer);
-  tfdtView.setUint32(0, Math.floor(baseDecodeTime / 0x100000000));
-  tfdtView.setUint32(4, baseDecodeTime & 0xFFFFFFFF);
-  const tfdt = fullBox("tfdt", 1, 0, tfdtData);
-
-  const trun = boxTrun(samples);
-  return box("traf", tfhd, tfdt, trun);
+function boxTraf(samples: MuxerSample[], baseDecodeTime: number): Uint8Array {
+  const tfhd = fullBox("tfhd", 0, 0x020000, u32be(1)); // track_ID=1, default_base_is_moof
+  return box("traf", tfhd, boxTfdt(baseDecodeTime), boxTrun(samples));
 }
 
 function boxTrun(samples: MuxerSample[]): Uint8Array {
@@ -360,23 +324,11 @@ function boxMdat(samples: MuxerSample[]): Uint8Array {
 // ---- Two-track (audio+video) boxes ----
 
 function boxMoovAV(video: MuxerInitConfig, audio: MuxerAudioConfig): Uint8Array {
-  const mvhd = boxMvhdAV(video.timescale);
+  const mvhd = boxMvhd(video.timescale, 3); // next_track_ID = 3 (video + audio taken)
   const videoTrak = boxTrak(video); // existing single-track builder → track_ID 1
   const audioTrak = boxTrakAudio(audio);
   const mvex = box("mvex", boxTrex(), boxTrexAudio());
   return box("moov", mvhd, videoTrak, audioTrak, mvex);
-}
-
-function boxMvhdAV(timescale: number): Uint8Array {
-  const data = new Uint8Array(96);
-  const v = new DataView(data.buffer);
-  v.setUint32(8, timescale);
-  v.setUint32(16, 0x00010000); // rate
-  v.setUint16(20, 0x0100);     // volume
-  const matrix = [0x00010000, 0, 0, 0, 0x00010000, 0, 0, 0, 0x40000000];
-  for (let i = 0; i < 9; i++) v.setUint32(32 + i * 4, matrix[i]!);
-  v.setUint32(92, 3);          // next_track_ID (1 video + 1 audio taken)
-  return fullBox("mvhd", 0, 0, data);
 }
 
 function boxTrakAudio(audio: MuxerAudioConfig): Uint8Array {
@@ -433,7 +385,10 @@ function boxMp4a(audio: MuxerAudioConfig): Uint8Array {
   v.setUint16(6, 1);                         // data_reference_index
   v.setUint16(16, audio.channelCount);
   v.setUint16(18, audio.sampleSize);
-  v.setUint32(24, audio.sampleRate << 16);   // samplerate (16.16 fixed)
+  // samplerate is a 16.16 fixed-point field: its 16-bit integer part can't
+  // hold rates >= 65536 (88.2/96 kHz). Clamp — decoders read the true rate
+  // from the esds AudioSpecificConfig anyway, so this field is advisory.
+  v.setUint32(24, Math.min(audio.sampleRate, 0xffff) << 16);
   return box("mp4a", header, boxEsds(audio.asc));
 }
 
@@ -454,12 +409,21 @@ function boxEsds(asc: Uint8Array): Uint8Array {
 }
 
 /**
- * MP4 descriptor: tag + expandable length + payload. Sizes here are always
- * < 128, so the length fits in a single byte (top continuation bit clear).
+ * MP4 descriptor: tag + expandable length + payload (ISO/IEC 14496-1 §8.3.3).
+ * The length is encoded 7 bits per byte, big-endian, with the top bit set on
+ * every byte but the last — correct for any size, so a large (or corrupt)
+ * AudioSpecificConfig can't silently truncate the length field.
  */
 function descriptor(tag: number, ...payloads: Uint8Array[]): Uint8Array {
   const payload = concat(...payloads);
-  return concat(new Uint8Array([tag, payload.byteLength & 0x7f]), payload);
+  const sizeBytes: number[] = [];
+  let len = payload.byteLength;
+  do {
+    sizeBytes.unshift(len & 0x7f);
+    len >>>= 7;
+  } while (len > 0);
+  for (let i = 0; i < sizeBytes.length - 1; i++) sizeBytes[i]! |= 0x80;
+  return concat(new Uint8Array([tag, ...sizeBytes]), payload);
 }
 
 function boxTrexAudio(): Uint8Array {
@@ -477,10 +441,9 @@ function boxMoofAV(
   audioSamples: MuxerAudioSample[],
   audioBaseTime: number,
   videoBytes: number,
-  audioBytes: number,
 ): Uint8Array {
   const mfhd = fullBox("mfhd", 0, 0, u32be(sequenceNumber));
-  const videoTraf = boxTraf(videoSamples, videoBaseTime, videoBytes);
+  const videoTraf = boxTraf(videoSamples, videoBaseTime);
   const audioTraf = boxTrafAudio(audioSamples, audioBaseTime);
   const moof = box("moof", mfhd, videoTraf, audioTraf);
 
@@ -493,16 +456,7 @@ function boxMoofAV(
 
 function boxTrafAudio(samples: MuxerAudioSample[], baseDecodeTime: number): Uint8Array {
   const tfhd = fullBox("tfhd", 0, 0x020000, u32be(2)); // track_ID=2, default_base_is_moof
-  const tfdt = baseDecodeTime <= 0xffffffff
-    ? fullBox("tfdt", 0, 0, u32be(baseDecodeTime))
-    : (() => {
-        const d = new Uint8Array(8);
-        new DataView(d.buffer).setUint32(0, Math.floor(baseDecodeTime / 0x100000000));
-        new DataView(d.buffer).setUint32(4, baseDecodeTime & 0xffffffff);
-        return fullBox("tfdt", 1, 0, d);
-      })();
-  const trun = boxTrunAudio(samples);
-  return box("traf", tfhd, tfdt, trun);
+  return box("traf", tfhd, boxTfdt(baseDecodeTime), boxTrunAudio(samples));
 }
 
 function boxTrunAudio(samples: MuxerAudioSample[]): Uint8Array {
