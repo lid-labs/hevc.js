@@ -16,6 +16,8 @@ import { TranscodeWorkerClient } from "./transcode-worker-client.js";
 
 const HEVC_DETECT_RE = /hev1|hvc1/i;                // Detect HEVC in a string
 const HEVC_CODEC_RE = /hev1[^"']*|hvc1[^"']*/gi;   // Match full HEVC codec string (hev1.2.4.L123.B0)
+// timestampOffset jump below which a write is routine alignment, not a seek
+const TS_OFFSET_FLUSH_THRESHOLD_S = 0.5;
 
 /**
  * The MSE constructor available in this browser: classic `MediaSource`,
@@ -43,6 +45,10 @@ export interface MSEInterceptConfig extends SegmentTranscoderConfig {
    * watchdog flags updateend without buffered-range growth as
    * `bufferAppendNoProgress`. Default false: dash.js relies on the eager
    * release to create its audio SourceBuffer during video transcode.
+   *
+   * Throughput trade-off: since the player only hands over the next segment
+   * after updateend, strict mode limits pipeline overlap to the tail of the
+   * current segment (chunks after the first) instead of a full segment.
    */
   strictAppendProgress?: boolean;
   /** Log verbosity: 'debug' | 'info' | 'warn' (default) | 'error' | 'silent'. */
@@ -164,13 +170,16 @@ export function uninstallMSEIntercept(): void {
  *  - a first init segment has been parsed (before that, playback hasn't
  *    started — the write is the player mapping media time to presentation
  *    time, and flushing would discard the queued init).
+ *
+ * dash.js is unaffected by the narrower trigger: it calls abort() on seek,
+ * which flushes the pipeline through the abort patch — this trap only backs
+ * up players that reposition without aborting.
  */
 export function shouldFlushOnTimestampOffset(
   delta: number,
   hasQueuedSegments: boolean,
   initParsed: boolean,
 ): boolean {
-  const TS_OFFSET_FLUSH_THRESHOLD_S = 0.5;
   return Math.abs(delta) >= TS_OFFSET_FLUSH_THRESHOLD_S && hasQueuedSegments && initParsed;
 }
 

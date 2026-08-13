@@ -10934,6 +10934,7 @@ var HevcHls = (() => {
   }
   var HEVC_DETECT_RE = /hev1|hvc1/i;
   var HEVC_CODEC_RE = /hev1[^"']*|hvc1[^"']*/gi;
+  var TS_OFFSET_FLUSH_THRESHOLD_S = 0.5;
   function getMediaSourceConstructor() {
     const g = globalThis;
     return g.MediaSource ?? g.ManagedMediaSource ?? null;
@@ -11004,7 +11005,6 @@ var HevcHls = (() => {
     interceptState = null;
   }
   function shouldFlushOnTimestampOffset(delta, hasQueuedSegments, initParsed) {
-    const TS_OFFSET_FLUSH_THRESHOLD_S = 0.5;
     return Math.abs(delta) >= TS_OFFSET_FLUSH_THRESHOLD_S && hasQueuedSegments && initParsed;
   }
   function createTranscodingProxy(realSB, config) {
@@ -11375,13 +11375,9 @@ var HevcHls = (() => {
       };
     }
     console.log("[hevc.js/hls] No native HEVC support \u2014 installing WASM transcoder");
+    const { forceTranscode: _forceTranscode, ...mseConfig } = config;
     installMSEIntercept({
-      wasmUrl: config.wasmUrl,
-      wasmBinaryUrl: config.wasmBinaryUrl,
-      fps: config.fps,
-      bitrate: config.bitrate,
-      workerUrl: config.workerUrl,
-      logLevel: config.logLevel,
+      ...mseConfig,
       strictAppendProgress: true
     });
     return () => {

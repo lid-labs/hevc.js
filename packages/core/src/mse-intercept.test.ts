@@ -12,6 +12,7 @@ afterEach(() => {
   uninstallMSEIntercept();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  vi.useRealTimers();
   setLogLevel("info");
 });
 
@@ -83,12 +84,12 @@ describe("transcoding proxy", () => {
     }
   }
 
-  function setup(): { ms: FakeMediaSource; sb: FakeSourceBuffer } {
+  function setup(config = {}): { ms: FakeMediaSource; sb: FakeSourceBuffer } {
     vi.stubGlobal("MediaSource", FakeMediaSource);
     vi.stubGlobal("SourceBuffer", FakeSourceBuffer);
     // Silence the (expected) main-thread transcoder init failure in Node.
     vi.spyOn(console, "error").mockImplementation(() => {});
-    installMSEIntercept({ logLevel: "debug" });
+    installMSEIntercept({ logLevel: "debug", ...config });
     const ms = new FakeMediaSource();
     // hls.js-style mime: no space, no quotes around the codec.
     const sb = ms.addSourceBuffer(
@@ -159,12 +160,7 @@ describe("transcoding proxy", () => {
 
   it("strictAppendProgress defers updateend until real data lands", async () => {
     vi.useFakeTimers();
-    vi.stubGlobal("MediaSource", FakeMediaSource);
-    vi.stubGlobal("SourceBuffer", FakeSourceBuffer);
-    vi.spyOn(console, "error").mockImplementation(() => {});
-    installMSEIntercept({ logLevel: "silent", strictAppendProgress: true });
-    const ms = new FakeMediaSource();
-    const sb = ms.addSourceBuffer("video/mp4;codecs=hvc1.1.6.L120.90");
+    const { sb } = setup({ strictAppendProgress: true });
 
     const events: string[] = [];
     (sb as unknown as SourceBuffer).addEventListener("updateend", () => events.push("updateend"));
@@ -182,6 +178,9 @@ describe("transcoding proxy", () => {
   });
 
   it("eager release still fires updateend immediately without the flag", () => {
+    // Fake timers park the transcoder-init poll so no async work leaks
+    // past the test — the assertion itself is synchronous.
+    vi.useFakeTimers();
     const { sb } = setup();
     const events: string[] = [];
     (sb as unknown as SourceBuffer).addEventListener("updateend", () => events.push("updateend"));

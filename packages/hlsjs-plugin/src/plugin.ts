@@ -126,17 +126,15 @@ export async function attachHevcSupport(
   console.log("[hevc.js/hls] No native HEVC support — installing WASM transcoder");
 
   // Install MSE intercept — patches isTypeSupported + addSourceBuffer.
+  // Forward the whole MSEInterceptConfig surface (spread, not a manual
+  // pick, so new fields like onTranscodeStart aren't silently dropped).
   // strictAppendProgress: hls.js's watchdog treats updateend without
   // buffered-range growth as `bufferAppendNoProgress` (up to
   // appendErrorMaxRetry per fragment), so updateend must wait for the
   // first transcoded chunk to land.
+  const { forceTranscode: _forceTranscode, ...mseConfig } = config;
   installMSEIntercept({
-    wasmUrl: config.wasmUrl,
-    wasmBinaryUrl: config.wasmBinaryUrl,
-    fps: config.fps,
-    bitrate: config.bitrate,
-    workerUrl: config.workerUrl,
-    logLevel: config.logLevel,
+    ...mseConfig,
     strictAppendProgress: true,
   });
 
