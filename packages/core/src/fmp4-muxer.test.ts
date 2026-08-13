@@ -15,7 +15,7 @@ function parse(bytes: Uint8Array) {
   let error: unknown = null;
   mp4.onReady = (i: unknown) => { info = i; };
   mp4.onError = (e: unknown) => { error = e; };
-  const ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer & { fileStart?: number };
+  const ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer & { fileStart: number };
   ab.fileStart = 0;
   mp4.appendBuffer(ab);
   mp4.flush();

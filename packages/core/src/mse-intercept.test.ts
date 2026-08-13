@@ -290,7 +290,7 @@ describe("muxed A/V HEVC refusal", () => {
 
     expect(MediaSource.isTypeSupported('video/mp4; codecs="hvc1.1.6.L120.90,mp4a.40.2"')).toBe(true);
     // The HEVC codec is mapped to avc1, the audio codec preserved.
-    expect(probed.at(-1)).toBe('video/mp4; codecs="avc1.64002a,mp4a.40.2"');
+    expect(probed[probed.length - 1]).toBe('video/mp4; codecs="avc1.64002a,mp4a.40.2"');
   });
 
   it("addSourceBuffer creates an A/V proxy with the combined H.264 + AAC mime", () => {
