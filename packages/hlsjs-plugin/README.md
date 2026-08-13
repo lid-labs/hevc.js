@@ -83,7 +83,7 @@ Unlike the dash.js plugin, no player instance is needed: hls.js keeps HEVC level
 
 - Tested against **hls.js 1.7.x** (the declared peer range `>=1.4.0` is not fully exercised — 1.6.6 changed how hls.js drives `SourceBuffer.timestampOffset`, and this plugin is designed for the current behavior).
 - Supported today: HLS **fMP4** streams with video-only or demuxed audio renditions.
-- Not yet supported: muxed audio+video fMP4 segments (single `audiovideo` SourceBuffer). The pipeline is video-only, so these are refused: `isTypeSupported`/`decodingInfo` report unsupported and creating the combined SourceBuffer logs a clear error, so hls.js fails fast with a fatal `bufferAddCodecError` instead of silently playing without audio. Validated end-to-end with a muxed test stream. HEVC-in-MPEG-TS is untested.
+- Muxed audio+video fMP4 segments (single `audiovideo` SourceBuffer, `codecs="hvc1...,mp4a..."`) are supported: the HEVC video is transcoded and the AAC audio is passed through, re-muxed into one combined A/V segment. Note: the muxed path runs on the main thread (the worker fast path is video-only), and only AAC audio pass-through is implemented. Validated end-to-end with a muxed test stream. HEVC-in-MPEG-TS is untested.
 - Compute-aware ABR is wired via `handle.attachComputeAware(hls)` — on by default.
 
 ## License

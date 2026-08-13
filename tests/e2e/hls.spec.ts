@@ -57,32 +57,30 @@ test.describe('hls.js Player', () => {
   }
 
   // A muxed audio+video HEVC rendition (single audiovideo SourceBuffer,
-  // codecs="...,mp4a...") must be refused cleanly: the video-only pipeline
-  // can't carry the audio track, so the plugin reports it unsupported and
-  // playback fails fast with a clear error — never silent audio-less video.
-  test('muxed A/V rendition is refused with a clear error, no silent playback', async ({ page }) => {
+  // codecs="...,mp4a...") plays both tracks: the HEVC video is transcoded and
+  // the AAC audio is passed through, re-muxed into one A/V segment.
+  test('muxed A/V rendition plays with both video and audio', async ({ page }) => {
     test.setTimeout(60_000);
 
     await loadDemoPage(page, 'hls.html');
     await enableForceTranscode(page);
-    await loadPreset(page, 'Muxed A/V (unsupported)');
+    await loadPreset(page, 'Muxed A/V (6s)');
 
-    // Wait for the refusal to surface (fatal hls.js error) — bounded, since
-    // "nothing happens" would also be a failure of the guard.
+    // Video plays...
     await page.waitForFunction(
       () => {
-        const log = document.querySelector<HTMLTextAreaElement>('#log')?.value ?? '';
-        return log.includes('muxed audio+video HEVC') && log.includes('(fatal)');
+        const v = document.querySelector<HTMLVideoElement>('#player');
+        return !!v && v.currentTime > 1 && v.videoWidth > 0 && !v.error;
       },
-      { timeout: 30_000 },
+      { timeout: 45_000 },
     );
 
-    // And crucially: playback never started (no audio-less video).
-    const started = await page.evaluate(() => {
+    // ...and the muxed audio track actually decodes (pass-through worked).
+    const audioBytes = await page.evaluate(() => {
       const v = document.querySelector<HTMLVideoElement>('#player');
-      return !!v && (v.currentTime > 0.1 || v.videoWidth > 0);
+      return (v as unknown as { webkitAudioDecodedByteCount?: number }).webkitAudioDecodedByteCount ?? 0;
     });
-    expect(started, 'muxed stream must not play video').toBe(false);
+    expect(audioBytes, 'muxed audio must decode').toBeGreaterThan(0);
   });
 
   // Regression: out-of-buffer seek. hls.js >=1.6.6 repositions without

@@ -28,9 +28,10 @@ const AUDIO_CODEC_PREFIXES = ["mp4a", "ac-3", "ec-3", "opus", "mp3", "alac", "fl
 /**
  * Detect a muxed audio+video HEVC mime — an HEVC codec AND an audio codec in
  * the same codecs list (e.g. `video/mp4; codecs="hvc1...,mp4a.40.2"`).
- * The transcode pipeline is video-only: intercepting such a SourceBuffer
- * would silently drop the audio track, so these mimes are refused instead
- * (isTypeSupported → false, addSourceBuffer → not intercepted).
+ * The MSE intercept uses this to route such a SourceBuffer through the
+ * two-track path (transcode video, pass audio through, re-mux both); the
+ * Shaka transmuxer uses it to report muxed mimes unsupported (not wired
+ * there yet).
  *
  * Requires an actual audio codec, not just a second entry: a video-only
  * multi-codec list (e.g. Dolby Vision `dvh1...,hvc1...`) is not "muxed A/V"
@@ -128,12 +129,8 @@ export function installMSEIntercept(config: MSEInterceptConfig = {}): void {
   // Patch isTypeSupported
   MediaSource.isTypeSupported = function (mimeType: string): boolean {
     if (HEVC_DETECT_RE.test(mimeType)) {
-      // Muxed A/V HEVC: the video-only pipeline would drop the audio track
-      // silently. Answer false so players filter these renditions upfront.
-      if (isMuxedHevcMime(mimeType)) {
-        log.info(`isTypeSupported("${mimeType}") → false (muxed A/V HEVC is not supported — audio would be lost)`);
-        return false;
-      }
+      // Map the HEVC codec to H.264, keeping any audio codec in the list
+      // (muxed A/V, e.g. "hvc1...,mp4a..." → "avc1...,mp4a...").
       const h264Codec = hevcMimeToH264Codec(mimeType);
       const h264Mime = mimeType.replace(HEVC_CODEC_RE, h264Codec);
       const result = originalIsTypeSupported.call(MediaSource, h264Mime);
@@ -149,11 +146,6 @@ export function installMSEIntercept(config: MSEInterceptConfig = {}): void {
     interceptState.originalDecodingInfo = originalDecodingInfo;
     navigator.mediaCapabilities.decodingInfo = async function (cfg: MediaDecodingConfiguration) {
       if (cfg.video?.contentType && HEVC_DETECT_RE.test(cfg.video.contentType)) {
-        // Same muxed A/V refusal as isTypeSupported.
-        if (isMuxedHevcMime(cfg.video.contentType)) {
-          log.info(`decodingInfo("${cfg.video.contentType}") → unsupported (muxed A/V HEVC — audio would be lost)`);
-          return { supported: false, smooth: false, powerEfficient: false } as MediaCapabilitiesDecodingInfo;
-        }
         const h264Codec = hevcMimeToH264Codec(cfg.video.contentType);
         const h264Type = cfg.video.contentType.replace(HEVC_CODEC_RE, h264Codec);
         const h264Config = { ...cfg, video: { ...cfg.video, contentType: h264Type } };
@@ -169,23 +161,17 @@ export function installMSEIntercept(config: MSEInterceptConfig = {}): void {
       return originalAddSourceBuffer.call(this, mimeType);
     }
 
-    // Muxed A/V HEVC reaching this point despite the isTypeSupported guard
-    // (player skipped the probe): fail loudly rather than play without audio.
-    if (isMuxedHevcMime(mimeType)) {
-      log.error(
-        `addSourceBuffer("${mimeType}") — muxed audio+video HEVC segments are not supported ` +
-        `(the transcode pipeline is video-only and the audio track would be dropped). ` +
-        `Repackage the stream with demuxed audio renditions.`,
-      );
-      return originalAddSourceBuffer.call(this, mimeType);
-    }
-
+    const muxed = isMuxedHevcMime(mimeType);
     const h264Codec = hevcMimeToH264Codec(mimeType);
-    log.info(`addSourceBuffer("${mimeType}") → creating H.264 proxy with ${h264Codec}`);
-    const h264Mime = `video/mp4; codecs="${h264Codec}"`;
+    // Muxed A/V: advertise the combined H.264 + AAC mime so the real
+    // SourceBuffer accepts the two-track segments the transcoder produces.
+    const h264Mime = muxed
+      ? `video/mp4; codecs="${h264Codec},mp4a.40.2"`
+      : `video/mp4; codecs="${h264Codec}"`;
+    log.info(`addSourceBuffer("${mimeType}") → creating ${muxed ? "A/V" : "H.264"} proxy with ${h264Mime}`);
     const realSB = originalAddSourceBuffer.call(this, h264Mime);
 
-    return createTranscodingProxy(realSB, interceptState!.config);
+    return createTranscodingProxy(realSB, interceptState!.config, muxed);
   };
 }
 
@@ -246,9 +232,13 @@ export function shouldFlushOnTimestampOffset(
 function createTranscodingProxy(
   realSB: SourceBuffer,
   config: MSEInterceptConfig,
+  muxed = false,
 ): SourceBuffer {
-  // Use Worker when workerUrl is provided, otherwise fall back to main thread
-  const useWorker = !!config.workerUrl;
+  // Muxed A/V goes through the main-thread transcoder: audio pass-through +
+  // two-track muxing isn't in the worker protocol, and the transcoder's
+  // combined-segment path (processMediaSegment) is non-streaming anyway.
+  // Video-only keeps the worker fast path when workerUrl is set.
+  const useWorker = !!config.workerUrl && !muxed;
   let workerClient: TranscodeWorkerClient | null = null;
   let transcoder: SegmentTranscoder | null = null;
 
@@ -519,6 +509,45 @@ function createTranscodingProxy(
             continue;
           }
           // Fall through: initParsed is now true, process this segment as media below
+        }
+
+        // Muxed A/V: non-streaming path — the main-thread transcoder returns
+        // one combined H.264+AAC segment (audio passed through). Append the
+        // two-track init on first, then the combined segment as one chunk.
+        if (muxed) {
+          log.debug(`Transcoding segment (${segment.byteLength}B) [muxed A/V]...`);
+          config.onTranscodeStart?.();
+          const combined = await transcoder!.processMediaSegment(segment);
+          config.onTranscodeEnd?.();
+          if (abortGeneration !== myGeneration) return;
+
+          if (!initAppended) {
+            const init = transcoder!.initResult;
+            if (init) {
+              initAppended = true;
+              lastInitSegment = init.initSegment;
+              if (updatingGetter.call(realSB)) await waitForRealUpdateEnd();
+              if (abortGeneration !== myGeneration) return;
+              realAppend(init.initSegment.buffer as ArrayBuffer);
+              await waitForRealUpdateEnd();
+              if (abortGeneration !== myGeneration) return;
+              log.debug("A/V init segment appended");
+            }
+          }
+
+          if (combined) {
+            if (updatingGetter.call(realSB)) await waitForRealUpdateEnd();
+            if (abortGeneration !== myGeneration) return;
+            realAppend(combined.buffer as ArrayBuffer);
+            await waitForRealUpdateEnd();
+          }
+
+          if (fakeUpdating) {
+            fakeUpdating = false;
+            dispatchOnSB("update");
+            dispatchOnSB("updateend");
+          }
+          continue;
         }
 
         // Media segment: streaming transcode (partial chunks emitted incrementally)

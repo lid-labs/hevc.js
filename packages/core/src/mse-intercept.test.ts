@@ -279,38 +279,39 @@ describe("muxed A/V HEVC refusal", () => {
     return new FakeMS();
   }
 
-  it("isTypeSupported answers false for muxed HEVC so players filter it upfront", () => {
-    install();
-    expect(MediaSource.isTypeSupported('video/mp4; codecs="hvc1.1.6.L120.90,mp4a.40.2"')).toBe(false);
-    // Single-codec HEVC still maps to H.264 and probes true
-    expect(MediaSource.isTypeSupported('video/mp4; codecs="hvc1.1.6.L120.90"')).toBe(true);
+  it("isTypeSupported maps muxed HEVC to combined H.264 + audio, keeping the audio codec", () => {
+    const probed: string[] = [];
+    class ProbingMS extends FakeMS {
+      static isTypeSupported(m: string): boolean { probed.push(m); return true; }
+    }
+    vi.stubGlobal("MediaSource", ProbingMS);
+    vi.stubGlobal("SourceBuffer", FakeSB);
+    installMSEIntercept({ logLevel: "silent" });
+
+    expect(MediaSource.isTypeSupported('video/mp4; codecs="hvc1.1.6.L120.90,mp4a.40.2"')).toBe(true);
+    // The HEVC codec is mapped to avc1, the audio codec preserved.
+    expect(probed[probed.length - 1]).toBe('video/mp4; codecs="avc1.64002a,mp4a.40.2"');
   });
 
-  it("addSourceBuffer refuses to intercept muxed HEVC — loud error, original call", () => {
-    const ms = install("error");
-    const err = vi.spyOn(console, "error").mockImplementation(() => {});
-    const muxed = 'video/mp4; codecs="hvc1.1.6.L120.90,mp4a.40.2"';
-    ms.addSourceBuffer(muxed);
-    // Passed through untouched — no H.264 proxy mime substitution
-    expect(ms.createdMimes).toEqual([muxed]);
-    const messages = err.mock.calls.map((c) => c.join(" "));
-    expect(messages.some((m) => m.includes("muxed audio+video HEVC"))).toBe(true);
+  it("addSourceBuffer creates an A/V proxy with the combined H.264 + AAC mime", () => {
+    const ms = install();
+    ms.addSourceBuffer('video/mp4; codecs="mp4a.40.2,hvc1.1.6.L120.90"');
+    // Real SourceBuffer created with the combined mime (video-first).
+    expect(ms.createdMimes).toEqual(['video/mp4; codecs="avc1.64002a,mp4a.40.2"']);
   });
 
-  it("decodingInfo reports muxed HEVC as unsupported", async () => {
+  it("decodingInfo maps muxed HEVC to the combined H.264 + audio type", async () => {
     const original = vi.fn().mockResolvedValue({ supported: true, smooth: true, powerEfficient: true });
     vi.stubGlobal("navigator", { mediaCapabilities: { decodingInfo: original } });
     install();
-    const res = await navigator.mediaCapabilities.decodingInfo({
+    await navigator.mediaCapabilities.decodingInfo({
       type: "media-source",
       video: { contentType: 'video/mp4; codecs="hvc1.1.6.L120.90,mp4a.40.2"', width: 1920, height: 1080, bitrate: 1e6, framerate: 25 },
     });
-    expect(res.supported).toBe(false);
-    // Single-codec HEVC is still delegated (mapped to H.264) to the original
-    await navigator.mediaCapabilities.decodingInfo({
-      type: "media-source",
-      video: { contentType: 'video/mp4; codecs="hvc1.1.6.L120.90"', width: 1920, height: 1080, bitrate: 1e6, framerate: 25 },
-    });
-    expect(original).toHaveBeenCalled();
+    expect(original).toHaveBeenCalledWith(
+      expect.objectContaining({
+        video: expect.objectContaining({ contentType: 'video/mp4; codecs="avc1.64002a,mp4a.40.2"' }),
+      }),
+    );
   });
 });
