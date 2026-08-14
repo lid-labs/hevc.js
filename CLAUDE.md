@@ -6,16 +6,18 @@
 ## Project context
 
 This is a public pnpm monorepo (https://github.com/privaloops/hevc.js) shipping
-two npm packages under the `@hevcjs` scope:
+npm packages under the `@hevcjs` scope:
 
 - `packages/core/` → `@hevcjs/core` — HEVC WASM decoder + MSE intercept +
-  HEVC → H.264 transcode pipeline
+  HEVC → H.264 transcode pipeline (single- and two-track fMP4 muxing)
 - `packages/dashjs-plugin/` → `@hevcjs/dashjs-plugin` — dash.js plugin
-  consuming `@hevcjs/core` to play HEVC streams in browsers without native
-  HEVC support
+- `packages/shaka-plugin/` → `@hevcjs/shaka-plugin` — Shaka Player plugin
+  (registers a `Transmuxer` for `hev1`/`hvc1`)
+- `packages/hlsjs-plugin/` → `@hevcjs/hlsjs-plugin` — hls.js plugin
 
-The HEVC decoder lives in `src/` (C++ compiled to WASM via Emscripten); the
-JS packages are TypeScript bundled with tsup.
+Each plugin consumes `@hevcjs/core` to play HEVC streams in browsers without
+native HEVC support. The HEVC decoder lives in `src/` (C++ compiled to WASM
+via Emscripten); the JS packages are TypeScript bundled with tsup.
 
 Every commit, PR, tag, release, and npm publish is publicly visible. Treat
 each git action accordingly.
@@ -75,11 +77,16 @@ manage versioning and publishing.
 - Any new pure JS/TS utility added to `packages/*/src/` SHOULD ship with
   tests in a colocated `*.test.ts` file. Vitest setup lives in
   `packages/core/`.
-- C++ decoder changes MUST keep `pnpm test` green (102+ unit tests +
+- Run `pnpm -r typecheck` before pushing, not just a source-only build:
+  CI runs `tsc --noEmit` over sources **and** `*.test.ts` files, and
+  `vitest run` does not typecheck. The TS target is ES2020 (no
+  `Array.prototype.at`, etc.).
+- C++ decoder changes MUST keep `pnpm test` green (146+ unit tests +
   pixel-perfect oracle suite). Do not skip oracle tests.
 - E2E (`pnpm test:e2e`) is not in CI yet. Run it locally before merging
-  any change touching `mse-intercept.ts`, `segment-transcoder.ts`, or the
-  `dashjs-plugin` glue code.
+  any change touching `mse-intercept.ts`, `segment-transcoder.ts`,
+  `fmp4-muxer.ts`, `fmp4-demuxer.ts`, or the `dashjs-plugin` /
+  `shaka-plugin` / `hlsjs-plugin` glue code.
 
 ## Security
 
