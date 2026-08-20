@@ -2,7 +2,7 @@
 
 HEVC/H.265 playback plugin for [Shaka Player](https://github.com/shaka-project/shaka-player). Registers a custom Shaka `Transmuxer` that ingests HEVC fMP4 segments and emits H.264 fMP4 that any browser can play via MSE.
 
-Tracks issue [#101](https://github.com/privaloops/hevc.js/issues/101).
+Tracks issue [#101](https://github.com/lid-labs/hevc.js/issues/101).
 
 ## Install
 

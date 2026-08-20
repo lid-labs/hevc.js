@@ -1,7 +1,7 @@
 # hevc.js
 
-[![Build](https://github.com/privaloops/hevc.js/actions/workflows/build.yml/badge.svg)](https://github.com/privaloops/hevc.js/actions/workflows/build.yml)
-[![Tests](https://github.com/privaloops/hevc.js/actions/workflows/test.yml/badge.svg)](https://github.com/privaloops/hevc.js/actions/workflows/test.yml)
+[![Build](https://github.com/lid-labs/hevc.js/actions/workflows/build.yml/badge.svg)](https://github.com/lid-labs/hevc.js/actions/workflows/build.yml)
+[![Tests](https://github.com/lid-labs/hevc.js/actions/workflows/test.yml/badge.svg)](https://github.com/lid-labs/hevc.js/actions/workflows/test.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![npm downloads core](https://img.shields.io/npm/dw/@hevcjs/core?label=core)](https://www.npmjs.com/package/@hevcjs/core)
 [![npm downloads plugin](https://img.shields.io/npm/dw/@hevcjs/dashjs-plugin?label=dashjs-plugin)](https://www.npmjs.com/package/@hevcjs/dashjs-plugin)
@@ -21,7 +21,7 @@
 ## 采用情况
 
 - **dash.js** — hevc.js 已作为官方 [HEVC 播放示例](https://github.com/Dash-Industry-Forum/dash.js/pull/5028) 收录于 dash.js(5.2.1+)。
-- **Shaka Player** — [Shaka 插件](https://www.npmjs.com/package/@hevcjs/shaka-plugin) 是应 Shaka Player 维护者的[请求](https://github.com/privaloops/hevc.js/issues/101)而开发的。
+- **Shaka Player** — [Shaka 插件](https://www.npmjs.com/package/@hevcjs/shaka-plugin) 是应 Shaka Player 维护者的[请求](https://github.com/lid-labs/hevc.js/issues/101)而开发的。
 
 后续计划见 [ROADMAP.md](ROADMAP.md)。
 
