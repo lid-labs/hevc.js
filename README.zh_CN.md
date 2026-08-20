@@ -12,7 +12,7 @@
 
 ![hevc.js 在浏览器中播放 HEVC DASH 流 — WASM 实时转码为 H.264,并实时显示每段转码速度](docs/assets/dashjs-demo.gif)
 
-一个用 C++17 从零开始编写的 HEVC 解码器,编译为 WebAssembly,并附带一个开箱即用的 dash.js 插件。在 Web Worker 中通过 WebCodecs 实时将 HEVC 转码为 H.264,完全在客户端完成。可在所有支持 WebCodecs H.264 编码的 Chrome、Edge 和 Firefox 上运行。
+一个用 C++17 从零开始编写的 HEVC 解码器,编译为 WebAssembly,并附带开箱即用的 dash.js、Shaka Player 和 hls.js 插件。在 Web Worker 中通过 WebCodecs 实时将 HEVC 转码为 H.264,完全在客户端完成。可在所有支持 WebCodecs H.264 编码的 Chrome、Edge 和 Firefox 上运行。
 
 1080p @ 60fps。WASM 体积仅 236KB。零依赖。无需特殊服务器标头。
 

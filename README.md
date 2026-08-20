@@ -14,9 +14,9 @@
 
 ![hevc.js playing an HEVC DASH stream in the browser — WASM transcoding to H.264 in real time, with live per-segment speed stats](docs/assets/dashjs-demo.gif)
 
-A from-scratch HEVC decoder written in C++17, compiled to WebAssembly, with drop-in plugins for dash.js and Shaka Player. Transcodes HEVC to H.264 in real-time, client-side, via WebCodecs inside a Web Worker. Works on Chrome, Edge, and Firefox where WebCodecs H.264 encoding is available.
+A from-scratch HEVC decoder written in C++17, compiled to WebAssembly, with drop-in plugins for dash.js, Shaka Player and hls.js. Transcodes HEVC to H.264 in real-time, client-side, via WebCodecs inside a Web Worker. Works on Chrome, Edge, and Firefox where WebCodecs H.264 encoding is available.
 
-1080p @ 60fps. 236KB WASM. Zero dependencies. No special server headers required. Compute-aware quality control caps the player's ABR ceiling when the device can't transcode at real-time, so the buffer never starves — on by default, no manual tuning.
+1080p @ 60fps. 236KB WASM. Zero dependencies. No special server headers required. Compute-aware quality control caps the player's ABR ceiling when the device can't transcode at real-time, so the buffer never starves — automatic with the dash.js plugin, one call away with hls.js and Shaka.
 
 Built in 8 days by one developer, assisted by AI — [read the story](https://www.developpement.ai/blog/hevcjs-decodeur-h265-navigateur-wasm).
 
@@ -125,7 +125,7 @@ hls.attachMedia(videoElement);
 hls.loadSource('https://example.com/playlist.m3u8');
 ```
 
-No player instance needed: hls.js keeps HEVC levels in its ladder as long as the (patched) `MediaSource.isTypeSupported` accepts them. Supported today: fMP4 HLS with video-only, demuxed-audio, or muxed audio+video renditions. For muxed A/V (single `audiovideo` track) the HEVC video is transcoded and the AAC audio is passed through, re-muxed into one combined segment (main-thread path; AAC only). Validated end-to-end with a muxed test stream. See the [plugin README](packages/hlsjs-plugin/README.md) for details.
+No player instance needed to attach: hls.js keeps HEVC levels in its ladder as long as the (patched) `MediaSource.isTypeSupported` accepts them. Supported today: fMP4 HLS with video-only, demuxed-audio, or muxed audio+video renditions. For muxed A/V (single `audiovideo` track) the HEVC video is transcoded and the AAC audio is passed through, re-muxed into one combined segment (main-thread path; AAC only). Validated end-to-end with a muxed test stream. See the [plugin README](packages/hlsjs-plugin/README.md) for details.
 
 ### How the transcoding works
 
@@ -174,7 +174,7 @@ attachHevcSupport(player, {
 });
 ```
 
-`subscribeSegmentStat` is also exported from both plugins if you want the raw perf bus.
+`subscribeSegmentStat` is also exported from all three plugins if you want the raw perf bus.
 
 ### Browser compatibility
 
