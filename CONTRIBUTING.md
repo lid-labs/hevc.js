@@ -16,7 +16,7 @@ Thanks for your interest in contributing! Here's how to get started.
 
 ```bash
 # Clone and install
-git clone https://github.com/privaloops/hevc.js.git
+git clone https://github.com/lid-labs/hevc.js.git
 cd hevc.js
 pnpm install
 
@@ -84,7 +84,7 @@ PRs that only touch docs, CI, tests, or build configuration don't need a changes
 
 ## Reporting bugs
 
-Open an issue at https://github.com/privaloops/hevc.js/issues with:
+Open an issue at https://github.com/lid-labs/hevc.js/issues with:
 - Steps to reproduce
 - Expected vs actual behavior
 - Browser/OS/architecture

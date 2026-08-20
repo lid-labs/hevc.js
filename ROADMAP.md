@@ -1,14 +1,14 @@
 # Roadmap
 
 What's coming next, roughly in priority order. Open a
-[Discussion](https://github.com/privaloops/hevc.js/discussions) or an issue if
+[Discussion](https://github.com/lid-labs/hevc.js/discussions) or an issue if
 you'd like to influence it — real-world usage reports carry the most weight.
 
 ## Near term
 
 - **Fix micro-stalls on 1080p+ ABR (Shaka)** — batched transmuxer output can
   starve the buffer on quality switches. Tracked in
-  [#126](https://github.com/privaloops/hevc.js/issues/126).
+  [#126](https://github.com/lid-labs/hevc.js/issues/126).
 - **hls.js plugin — next steps** — `@hevcjs/hlsjs-plugin` is published on
   npm and covers fMP4 HLS: video-only, demuxed-audio and muxed audio+video
   renditions, with compute-aware ABR wired to `hls.autoLevelCapping`.

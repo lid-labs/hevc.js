@@ -5,7 +5,7 @@
 
 ## Project context
 
-This is a public pnpm monorepo (https://github.com/privaloops/hevc.js) shipping
+This is a public pnpm monorepo (https://github.com/lid-labs/hevc.js) shipping
 npm packages under the `@hevcjs` scope:
 
 - `packages/core/` → `@hevcjs/core` — HEVC WASM decoder + MSE intercept +

@@ -1,7 +1,7 @@
 # hevc.js
 
-[![Build](https://github.com/privaloops/hevc.js/actions/workflows/build.yml/badge.svg)](https://github.com/privaloops/hevc.js/actions/workflows/build.yml)
-[![Tests](https://github.com/privaloops/hevc.js/actions/workflows/test.yml/badge.svg)](https://github.com/privaloops/hevc.js/actions/workflows/test.yml)
+[![Build](https://github.com/lid-labs/hevc.js/actions/workflows/build.yml/badge.svg)](https://github.com/lid-labs/hevc.js/actions/workflows/build.yml)
+[![Tests](https://github.com/lid-labs/hevc.js/actions/workflows/test.yml/badge.svg)](https://github.com/lid-labs/hevc.js/actions/workflows/test.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![npm downloads core](https://img.shields.io/npm/dw/@hevcjs/core?label=core)](https://www.npmjs.com/package/@hevcjs/core)
 [![npm downloads dashjs-plugin](https://img.shields.io/npm/dw/@hevcjs/dashjs-plugin?label=dashjs-plugin)](https://www.npmjs.com/package/@hevcjs/dashjs-plugin)
@@ -23,7 +23,7 @@ Built in 8 days by one developer, assisted by AI — [read the story](https://ww
 ## Adoption
 
 - **dash.js** — hevc.js ships as an official [HEVC playback sample](https://github.com/Dash-Industry-Forum/dash.js/pull/5028) in dash.js (5.2.1+).
-- **Shaka Player** — the [Shaka plugin](https://www.npmjs.com/package/@hevcjs/shaka-plugin) was built after a Shaka Player maintainer [requested it](https://github.com/privaloops/hevc.js/issues/101).
+- **Shaka Player** — the [Shaka plugin](https://www.npmjs.com/package/@hevcjs/shaka-plugin) was built after a Shaka Player maintainer [requested it](https://github.com/lid-labs/hevc.js/issues/101).
 
 See [ROADMAP.md](ROADMAP.md) for what's next.
 
