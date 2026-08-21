@@ -2,7 +2,10 @@
   "extends": "../../tsconfig.json",
   "compilerOptions": {
     "outDir": "dist",
-    "rootDir": "src"
+    "rootDir": "src",
+    // demo-stream-assets.test.ts reads the shipped init segments from disk.
+    // Tests import their vitest helpers explicitly, so no globals are lost.
+    "types": ["node"]
   },
   "include": ["src"]
 }
