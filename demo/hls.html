@@ -123,6 +123,40 @@ async function loadM3U8(presetUrl) {
   if (hls) { hls.destroy(); hls = null; }
 
   const video = document.getElementById('player');
+  // Drop any src left by a previous native playback before reusing the element.
+  video.removeAttribute('src');
+  video.load();
+
+  const forceTranscode = document.getElementById('force-transcode').checked;
+
+  // Safari (iOS/macOS) plays HLS natively and decodes HEVC in hardware. Routing
+  // it through hls.js + MSE gains nothing and hits a WebKit bug where the
+  // MediaSource starts in readyState "ended", so the first append fails
+  // (webkit.org/b/305712 — hls.js reports bufferAppendingError then
+  // mediaSourceRequiresReset).
+  //
+  // Both checks are required. Android Chrome also reports HLS support, but
+  // without native HEVC — the very case this project exists for — so it must
+  // keep going through hls.js and the transcoding plugin.
+  const nativeHls = video.canPlayType('application/vnd.apple.mpegurl');
+  const nativeHevc = video.canPlayType('video/mp4; codecs="hvc1.1.6.L93.90"');
+  if (!forceTranscode && nativeHls && nativeHevc) {
+    console.log('[demo] native HLS + native HEVC — bypassing hls.js',
+      '(hls="' + nativeHls + '", hevc="' + nativeHevc + '")');
+    video.src = url;
+    document.getElementById('status').textContent =
+      'Playing via native HLS — hardware HEVC, hevc.js not needed on this browser';
+    return;
+  }
+
+  // Transcoding patches classic MediaSource; without it there is nothing to
+  // intercept, so say so instead of failing further down.
+  if (forceTranscode && typeof MediaSource === 'undefined') {
+    document.getElementById('status').textContent =
+      'Force transcoding needs classic MediaSource, which this browser does not expose ' +
+      '(iPhone Safari has ManagedMediaSource only). Uncheck it to play natively.';
+    return;
+  }
 
   if (typeof Hls === 'undefined' || !Hls.isSupported()) {
     document.getElementById('status').textContent = 'hls.js failed to load or MSE is unavailable.';
@@ -136,7 +170,6 @@ async function loadM3U8(presetUrl) {
   }
 
   const qp = new URLSearchParams(location.search);
-  const forceTranscode = document.getElementById('force-transcode').checked;
   // Off-main-thread by default — same transcode-worker.js bundle as the
   // dash.js/Shaka demos. Override with ?workerUrl=... ; pass
   // ?workerUrl=off to keep transcoding on the main thread (debugging).
