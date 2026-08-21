@@ -119,7 +119,12 @@ import { attachHevcSupport } from '@hevcjs/hlsjs-plugin';
 // MediaSource.isTypeSupported at manifest parse time.
 const handle = await attachHevcSupport({ workerUrl: './transcode-worker.js' });
 
-const hls = new Hls({ preferManagedMediaSource: false });
+// Classic MediaSource is required by the transcoding path. iPhone Safari only
+// has ManagedMediaSource: pinning classic MSE there would leave hls.js with no
+// MediaSource at all and playback would fail, so keep its default.
+const hls = new Hls({
+  ...(typeof MediaSource !== 'undefined' ? { preferManagedMediaSource: false } : {}),
+});
 handle.attachComputeAware(hls);          // wire compute-aware ABR (on by default)
 hls.attachMedia(videoElement);
 hls.loadSource('https://example.com/playlist.m3u8');

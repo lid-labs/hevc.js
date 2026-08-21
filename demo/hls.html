@@ -156,11 +156,12 @@ async function loadM3U8(presetUrl) {
     logLevel: qp.get('logLevel') || undefined,
   });
 
-  // preferManagedMediaSource: false — the transcoding path needs classic
-  // MediaSource; browsers where only ManagedMediaSource exists (iPhone
-  // Safari) play HEVC natively anyway.
+  // The transcoding path needs classic MediaSource, so pin it when it exists.
+  // iPhone Safari only has ManagedMediaSource: forcing classic MSE there would
+  // leave hls.js with no MediaSource at all and playback would fail, so keep
+  // its default and let the iPhone decode HEVC natively.
   hls = new Hls({
-    preferManagedMediaSource: false,
+    ...(typeof MediaSource !== 'undefined' ? { preferManagedMediaSource: false } : {}),
     debug: qp.get('debug') === '1',
   });
 

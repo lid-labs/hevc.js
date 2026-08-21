@@ -171,11 +171,16 @@ export async function attachHevcSupport(
 
   // The intercept patches classic MediaSource. When ManagedMediaSource also
   // exists, hls.js prefers it by default and would bypass the intercept —
-  // remind integrators to pin classic MSE.
+  // remind integrators to pin classic MSE. The guard matters: on browsers with
+  // ManagedMediaSource only (iPhone Safari) this code is unreachable, and
+  // pinning classic MSE there would leave hls.js with no MediaSource at all.
   if (typeof (globalThis as Record<string, unknown>).ManagedMediaSource !== "undefined") {
     console.warn(
-      "[hevc.js/hls] ManagedMediaSource detected: pass `preferManagedMediaSource: false` " +
-      "to the Hls constructor, or hls.js will bypass the transcoding intercept.",
+      "[hevc.js/hls] ManagedMediaSource detected — hls.js prefers it by default and " +
+      "would bypass the transcoding intercept. Pin classic MSE, guarded so iPhone " +
+      "Safari keeps working:\n" +
+      "  new Hls({ ...(typeof MediaSource !== 'undefined' " +
+      "? { preferManagedMediaSource: false } : {}) })",
     );
   }
 
