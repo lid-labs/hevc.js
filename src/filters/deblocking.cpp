@@ -61,18 +61,19 @@ static bool is_boundary_excluded(const DecodingContext& ctx,
     if (edgeType == EDGE_HOR && y >= picH) return true;
 
     // §8.7.2.1: slice_deblocking_filter_disabled_flag for the slice containing Q-side
-    int ctbSize = 1 << sps.CtbLog2SizeY;
-    int addr_q = (y / ctbSize) * sps.PicWidthInCtbsY + (x / ctbSize);
+    // Grid indices: coordinates are non-negative here (picture-boundary edges
+    // returned above), so shifting matches the original division.
+    const int ctbLog2 = sps.CtbLog2SizeY;
+    int addr_q = (y >> ctbLog2) * sps.PicWidthInCtbsY + (x >> ctbLog2);
     auto& sh_q = ctx.sh_at_ctb(addr_q);
     if (sh_q.slice_deblocking_filter_disabled_flag) return true;
 
     // Tile boundary
     if (!pps.loop_filter_across_tiles_enabled_flag && !pps.TileId.empty()) {
-        int ctbSize = 1 << sps.CtbLog2SizeY;
         if (edgeType == EDGE_VER) {
-            int rx_q = x / ctbSize;
-            int rx_p = (x - 1) / ctbSize;
-            int ry = y / ctbSize;
+            int rx_q = x >> ctbLog2;
+            int rx_p = (x - 1) >> ctbLog2;
+            int ry = y >> ctbLog2;
             int addr_q = ry * sps.PicWidthInCtbsY + rx_q;
             int addr_p = ry * sps.PicWidthInCtbsY + rx_p;
             if (addr_q < (int)pps.TileId.size() && addr_p < (int)pps.TileId.size()) {
@@ -81,9 +82,9 @@ static bool is_boundary_excluded(const DecodingContext& ctx,
                 if (pps.TileId[ts_q] != pps.TileId[ts_p]) return true;
             }
         } else {
-            int ry_q = y / ctbSize;
-            int ry_p = (y - 1) / ctbSize;
-            int rx = x / ctbSize;
+            int ry_q = y >> ctbLog2;
+            int ry_p = (y - 1) >> ctbLog2;
+            int rx = x >> ctbLog2;
             int addr_q = ry_q * sps.PicWidthInCtbsY + rx;
             int addr_p = ry_p * sps.PicWidthInCtbsY + rx;
             if (addr_q < (int)pps.TileId.size() && addr_p < (int)pps.TileId.size()) {
@@ -99,9 +100,9 @@ static bool is_boundary_excluded(const DecodingContext& ctx,
     if (ctx.slice_idx) {
         int addr_p;
         if (edgeType == EDGE_VER) {
-            addr_p = (y / ctbSize) * sps.PicWidthInCtbsY + ((x - 1) / ctbSize);
+            addr_p = (y >> ctbLog2) * sps.PicWidthInCtbsY + ((x - 1) >> ctbLog2);
         } else {
-            addr_p = ((y - 1) / ctbSize) * sps.PicWidthInCtbsY + (x / ctbSize);
+            addr_p = ((y - 1) >> ctbLog2) * sps.PicWidthInCtbsY + (x >> ctbLog2);
         }
         if (ctx.slice_idx[addr_q] != ctx.slice_idx[addr_p]) {
             // §8.7.2.1: "left/top boundary of the slice and
@@ -424,8 +425,8 @@ void apply_deblocking(DecodingContext& ctx) {
                     bool bypassQ = cuQ.cu_transquant_bypass;
 
                     // §8.7.2.5.3: slice parameters for the slice containing q0,0
-                    int ctbSizeF = 1 << sps.CtbLog2SizeY;
-                    int addrQ = (yQ / ctbSizeF) * sps.PicWidthInCtbsY + (xQ / ctbSizeF);
+                    const int ctbLog2F = sps.CtbLog2SizeY;
+                    int addrQ = (yQ >> ctbLog2F) * sps.PicWidthInCtbsY + (xQ >> ctbLog2F);
                     auto& sh_filt = ctx.sh_at_ctb(addrQ);
 
 

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cassert>
+
 // Coding Tree — slice_segment_data, coding_quadtree, coding_unit
 // Spec §7.3.8 (slice data), §7.3.8.3 (coding_quadtree), §7.3.8.5 (coding_unit)
 
@@ -107,23 +109,27 @@ struct DecodingContext {
 
     // Helper: get CU info at luma sample position
     CUInfo& cu_at(int x, int y) {
-        int minCbSize = sps->MinCbSizeY;
-        return cu_info[(y / minCbSize) * cu_info_stride + (x / minCbSize)];
+        assert(x >= 0 && y >= 0);
+        int shift = sps->MinCbLog2SizeY;
+        return cu_info[(y >> shift) * cu_info_stride + (x >> shift)];
     }
     const CUInfo& cu_at(int x, int y) const {
-        int minCbSize = sps->MinCbSizeY;
-        return cu_info[(y / minCbSize) * cu_info_stride + (x / minCbSize)];
+        assert(x >= 0 && y >= 0);
+        int shift = sps->MinCbLog2SizeY;
+        return cu_info[(y >> shift) * cu_info_stride + (x >> shift)];
     }
 
     // Get intra mode at position (luma) — min-TB granularity for NxN support
     int intra_mode_at(int x, int y) const {
-        int minTbSize = sps->MinTbSizeY;
-        return intra_pred_mode_y[(y / minTbSize) * intra_pred_mode_stride + (x / minTbSize)];
+        assert(x >= 0 && y >= 0);
+        int shift = sps->MinTbLog2SizeY;
+        return intra_pred_mode_y[(y >> shift) * intra_pred_mode_stride + (x >> shift)];
     }
     // Get chroma intra mode at position
     int chroma_mode_at(int x, int y) const {
-        int minTbSize = sps->MinTbSizeY;
-        return intra_pred_mode_c[(y / minTbSize) * intra_pred_mode_stride + (x / minTbSize)];
+        assert(x >= 0 && y >= 0);
+        int shift = sps->MinTbLog2SizeY;
+        return intra_pred_mode_c[(y >> shift) * intra_pred_mode_stride + (x >> shift)];
     }
     void set_intra_mode(int x, int y, int size, int mode);
     void set_chroma_mode(int x, int y, int size, int mode);
