@@ -84,23 +84,8 @@ gen_abr() {
   # (it will not look in-band once the entry says hvc1). Round-tripping through
   # Annex B makes ffmpeg parse VPS/SPS/PPS and write a real hvcC.
   # The other presets are unaffected: their DASH sources already carry them.
-  # Rebuild through a plain mp4, not straight into the HLS muxer: fed raw Annex B
-  # ffmpeg knows neither duration nor bitrate and drops the EXT-X-STREAM-INF
-  # entries, leaving a master playlist with no variants.
-  local fps
-  fps=$(ffprobe -v error -select_streams v -show_entries stream=r_frame_rate \
-        -of csv=p=0 "$TMP/abr_480p.mp4")
-  for rep in 480p 720p 1080p; do
-    ffmpeg -y -loglevel error -i "$TMP/abr_${rep}.mp4" \
-      -c:v copy -bsf:v hevc_mp4toannexb -f hevc "$TMP/abr_${rep}.h265"
-    ffmpeg -y -loglevel error -r "$fps" -i "$TMP/abr_${rep}.h265" \
-      -c:v copy -tag:v hvc1 "$TMP/abr_${rep}_hvc1.mp4"
-  done
-
   ffmpeg -y -loglevel error \
-    -i "$TMP/abr_480p_hvc1.mp4" \
-    -i "$TMP/abr_720p_hvc1.mp4" \
-    -i "$TMP/abr_1080p_hvc1.mp4" \
+    -i "$TMP/abr_480p.mp4" -i "$TMP/abr_720p.mp4" -i "$TMP/abr_1080p.mp4" \
     -i "$TMP/abr_audio.mp4" \
     -map 0:v -map 1:v -map 2:v -map 3:a -c copy -tag:v hvc1 \
     -f hls -hls_time 2 -hls_playlist_type vod -hls_segment_type fmp4 \
@@ -111,6 +96,25 @@ gen_abr() {
     "$dir/media_%v.m3u8"
 
   add_codecs "$dir/master.m3u8" "$src/manifest.mpd"
+
+  # The DASH source is hev1 with in-band parameter sets and an empty hvcC, which
+  # is valid there. HLS needs hvc1, and -tag:v only relabels the track: the init
+  # comes out claiming hvc1 (parameter sets out-of-band) while carrying none, so
+  # no native decoder can start — it will not look in-band once the entry says
+  # hvc1. Build a donor with a real hvcC and copy just that box across.
+  #
+  # Only the box is copied. Remuxing the elementary stream to rebuild it would
+  # shift keyframe timestamps (Annex B carries none, so B-frame reordering moves
+  # them by the reorder depth) and change where the muxer splits segments.
+  # One donor per variant: the SPS carries the resolution, so a 480p hvcC in the
+  # 1080p init would configure the decoder for the wrong frame size.
+  for rep in 480p 720p 1080p; do
+    ffmpeg -y -loglevel error -i "$TMP/abr_${rep}.mp4" \
+      -c:v copy -bsf:v hevc_mp4toannexb -f hevc "$TMP/donor_${rep}.h265"
+    ffmpeg -y -loglevel error -i "$TMP/donor_${rep}.h265" \
+      -c:v copy -tag:v hvc1 "$TMP/donor_${rep}.mp4"
+    python3 tools/patch_hvcc.py "$TMP/donor_${rep}.mp4" "$dir/init_${rep}.mp4"
+  done
 
   echo "✓ hls_abr ← dash_abr ($(du -sh "$dir" | cut -f1))"
 }
