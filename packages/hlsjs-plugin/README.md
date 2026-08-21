@@ -33,12 +33,17 @@ await attachHevcSupport({
   wasmUrl: '/hevc-decode.js',
 });
 
-const hls = new Hls({ preferManagedMediaSource: false });
+// Classic MediaSource is required by the transcoding path. iPhone Safari only
+// has ManagedMediaSource: pinning classic MSE there would leave hls.js with no
+// MediaSource at all and playback would fail, so keep its default.
+const hls = new Hls({
+  ...(typeof MediaSource !== 'undefined' ? { preferManagedMediaSource: false } : {}),
+});
 hls.attachMedia(video);
 hls.loadSource('https://example.com/stream/playlist.m3u8');
 ```
 
-`preferManagedMediaSource: false` keeps hls.js on classic `MediaSource`, which the transcoding path requires. Browsers where only `ManagedMediaSource` exists (iPhone Safari) play HEVC natively, so nothing is lost there.
+`preferManagedMediaSource: false` keeps hls.js on classic `MediaSource`, which the transcoding path requires. Guard it on `typeof MediaSource !== 'undefined'`: iPhone Safari exposes only `ManagedMediaSource`, and pinning classic MSE there leaves hls.js without any MediaSource, which breaks playback. Left on its default, iPhone plays HEVC natively.
 
 ## Usage — from a CDN (zero build)
 
@@ -54,7 +59,12 @@ hls.loadSource('https://example.com/stream/playlist.m3u8');
     wasmBinaryUrl: 'https://unpkg.com/@hevcjs/core@1/dist/wasm/hevc-decode.wasm',
   });
 
-  const hls = new Hls({ preferManagedMediaSource: false });
+  // Classic MediaSource is required by the transcoding path. iPhone Safari only
+// has ManagedMediaSource: pinning classic MSE there would leave hls.js with no
+// MediaSource at all and playback would fail, so keep its default.
+const hls = new Hls({
+  ...(typeof MediaSource !== 'undefined' ? { preferManagedMediaSource: false } : {}),
+});
   hls.attachMedia(video);
   hls.loadSource('https://example.com/stream/playlist.m3u8');
 </script>

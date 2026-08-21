@@ -297,7 +297,9 @@
   wasmUrl: <span class="text-green-400">'/hevc-decode.js'</span>,
 });
 
-<span class="text-accent">const</span> hls = <span class="text-accent">new</span> Hls({ preferManagedMediaSource: <span class="text-accent">false</span> });
+<span class="text-accent">const</span> hls = <span class="text-accent">new</span> Hls({
+  ...(<span class="text-accent">typeof</span> MediaSource !== <span class="text-green-400">'undefined'</span> ? { preferManagedMediaSource: <span class="text-accent">false</span> } : {}),
+});
 hls.attachMedia(video);
 hls.loadSource(<span class="text-green-400">'https://example.com/stream/playlist.m3u8'</span>);</code></pre>
         </div>
@@ -325,14 +327,16 @@ hls.loadSource(<span class="text-green-400">'https://example.com/stream/playlist
     wasmBinaryUrl: <span class="text-green-400">'https://unpkg.com/@hevcjs/core@1/dist/wasm/hevc-decode.wasm'</span>,
   });
 
-  <span class="text-accent">const</span> hls = <span class="text-accent">new</span> Hls({ preferManagedMediaSource: <span class="text-accent">false</span> });
+  <span class="text-accent">const</span> hls = <span class="text-accent">new</span> Hls({
+    ...(<span class="text-accent">typeof</span> MediaSource !== <span class="text-green-400">'undefined'</span> ? { preferManagedMediaSource: <span class="text-accent">false</span> } : {}),
+  });
   hls.attachMedia(video);
   hls.loadSource(<span class="text-green-400">'https://example.com/stream/playlist.m3u8'</span>);
 &lt;/<span class="text-accent">script</span>&gt;</code></pre>
         </div>
 
         <div class="px-4 py-3 rounded-lg bg-smoke border border-ash text-sm text-silver">
-          <span class="text-white font-medium"><code class="font-mono">preferManagedMediaSource: false</code></span> keeps hls.js on classic <code class="font-mono">MediaSource</code>, which the transcoding path requires. Browsers where only <code class="font-mono">ManagedMediaSource</code> exists (iPhone Safari) play HEVC natively, so nothing is lost there.
+          <span class="text-white font-medium"><code class="font-mono">preferManagedMediaSource: false</code></span> keeps hls.js on classic <code class="font-mono">MediaSource</code>, which the transcoding path requires. Guard it on <code class="font-mono">typeof MediaSource !== 'undefined'</code>: iPhone Safari exposes only <code class="font-mono">ManagedMediaSource</code>, and pinning classic MSE there leaves hls.js without any MediaSource, which breaks playback. Left on its default, iPhone plays HEVC natively.
         </div>
       </div>
     </section>
@@ -566,7 +570,9 @@ hls.loadSource(<span class="text-green-400">'https://example.com/stream/playlist
 });
 
 <span class="text-silver/50">// Then create the player</span>
-<span class="text-accent">const</span> hls = <span class="text-accent">new</span> Hls({ preferManagedMediaSource: <span class="text-accent">false</span> });
+<span class="text-accent">const</span> hls = <span class="text-accent">new</span> Hls({
+  ...(<span class="text-accent">typeof</span> MediaSource !== <span class="text-green-400">'undefined'</span> ? { preferManagedMediaSource: <span class="text-accent">false</span> } : {}),
+});
 
 <span class="text-silver/50">// Remove all patches when done</span>
 cleanup();</code></pre>
@@ -644,7 +650,9 @@ cleanup();</code></pre>
 
 <span class="text-accent">const</span> handle = <span class="text-accent">await</span> attachHevcSupport({ workerUrl: <span class="text-green-400">'./transcode-worker.js'</span> });
 
-<span class="text-accent">const</span> hls = <span class="text-accent">new</span> Hls({ preferManagedMediaSource: <span class="text-accent">false</span> });
+<span class="text-accent">const</span> hls = <span class="text-accent">new</span> Hls({
+  ...(<span class="text-accent">typeof</span> MediaSource !== <span class="text-green-400">'undefined'</span> ? { preferManagedMediaSource: <span class="text-accent">false</span> } : {}),
+});
 handle.attachComputeAware(hls);  <span class="text-silver/50">// caps hls.autoLevelCapping under compute pressure</span></code></pre>
         </div>
 

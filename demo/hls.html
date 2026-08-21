@@ -123,6 +123,16 @@ async function loadM3U8(presetUrl) {
   if (hls) { hls.destroy(); hls = null; }
 
   const video = document.getElementById('player');
+  const forceTranscode = document.getElementById('force-transcode').checked;
+
+  // Transcoding patches classic MediaSource; without it there is nothing to
+  // intercept, so say so instead of failing further down.
+  if (forceTranscode && typeof MediaSource === 'undefined') {
+    document.getElementById('status').textContent =
+      'Force transcoding needs classic MediaSource, which this browser does not expose ' +
+      '(iPhone Safari has ManagedMediaSource only). Uncheck it to play natively.';
+    return;
+  }
 
   if (typeof Hls === 'undefined' || !Hls.isSupported()) {
     document.getElementById('status').textContent = 'hls.js failed to load or MSE is unavailable.';
@@ -136,7 +146,6 @@ async function loadM3U8(presetUrl) {
   }
 
   const qp = new URLSearchParams(location.search);
-  const forceTranscode = document.getElementById('force-transcode').checked;
   // Off-main-thread by default — same transcode-worker.js bundle as the
   // dash.js/Shaka demos. Override with ?workerUrl=... ; pass
   // ?workerUrl=off to keep transcoding on the main thread (debugging).
@@ -156,11 +165,12 @@ async function loadM3U8(presetUrl) {
     logLevel: qp.get('logLevel') || undefined,
   });
 
-  // preferManagedMediaSource: false — the transcoding path needs classic
-  // MediaSource; browsers where only ManagedMediaSource exists (iPhone
-  // Safari) play HEVC natively anyway.
+  // The transcoding path needs classic MediaSource, so pin it when it exists.
+  // iPhone Safari only has ManagedMediaSource: forcing classic MSE there would
+  // leave hls.js with no MediaSource at all and playback would fail, so keep
+  // its default and let the iPhone decode HEVC natively.
   hls = new Hls({
-    preferManagedMediaSource: false,
+    ...(typeof MediaSource !== 'undefined' ? { preferManagedMediaSource: false } : {}),
     debug: qp.get('debug') === '1',
   });
 
@@ -177,9 +187,15 @@ async function loadM3U8(presetUrl) {
   }
 
   hls.on(Hls.Events.ERROR, (_evt, data) => {
+    // data.error carries the actual exception from appendBuffer — without it a
+    // bufferAppendingError is indistinguishable from a quota, state or codec problem.
+    var err = data.error || data.err;
     console.error('[demo] hls.js error', data.type, data.details, data.fatal ? '(fatal)' : '',
       'sn=' + (data.frag ? data.frag.sn : '?'),
-      'count=' + (data.appendsWithoutProgress ?? '?'));
+      'count=' + (data.appendsWithoutProgress ?? '?'),
+      'err=' + (err ? (err.name || '') + ': ' + (err.message || String(err)) : 'none'),
+      'mime=' + (data.mimeType || (data.frag && data.frag.type) || '?'),
+      'videoError=' + (video && video.error ? video.error.code + '/' + (video.error.message || '') : 'none'));
     if (data.fatal) {
       document.getElementById('status').textContent =
         'Error: ' + data.type + ' / ' + data.details;

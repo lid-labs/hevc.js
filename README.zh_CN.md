@@ -99,7 +99,12 @@ import { attachHevcSupport } from '@hevcjs/hlsjs-plugin';
 // 会用 MediaSource.isTypeSupported 过滤清晰度层级。
 const handle = await attachHevcSupport({ workerUrl: './transcode-worker.js' });
 
-const hls = new Hls({ preferManagedMediaSource: false });
+// 转码路径需要经典 MediaSource。iPhone Safari 只提供 ManagedMediaSource:
+// 在这类浏览器上强制使用经典 MSE,会让 hls.js 完全没有可用的 MediaSource,
+// 导致播放失败,因此保留其默认值。
+const hls = new Hls({
+  ...(typeof MediaSource !== 'undefined' ? { preferManagedMediaSource: false } : {}),
+});
 handle.attachComputeAware(hls);          // 计算感知 ABR(默认开启)
 hls.attachMedia(videoElement);
 hls.loadSource('https://example.com/playlist.m3u8');
