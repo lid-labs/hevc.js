@@ -17,6 +17,35 @@ namespace hevc {
 static const int eo_dx[4][2] = {{-1, 1}, {0, 0}, {-1, 1}, {1, -1}};
 static const int eo_dy[4][2] = {{0, 0}, {-1, 1}, {-1, 1}, {-1, 1}};
 
+// True when the 3x3 CTB neighbourhood around (rx, ry) is uniform — same slice
+// and same tile everywhere. SAO neighbours never reach past that neighbourhood,
+// so no per-sample cross-boundary test of §8.7.3.2 can fire inside this CTB.
+static bool sao_ctb_neighbourhood_uniform(const DecodingContext& ctx, const PPS& pps,
+                                          const SPS& sps, int rx, int ry) {
+    if (!ctx.slice_idx) return true;
+
+    const int w = sps.PicWidthInCtbsY;
+    const int h = sps.PicHeightInCtbsY;
+    const int curAddr = ry * w + rx;
+    const uint8_t si_cur = ctx.slice_idx[curAddr];
+
+    const bool checkTiles = !pps.loop_filter_across_tiles_enabled_flag && !pps.TileId.empty();
+    const int tile_cur = checkTiles ? pps.TileId[pps.CtbAddrRsToTs[curAddr]] : 0;
+
+    for (int dy = -1; dy <= 1; dy++) {
+        const int ny = ry + dy;
+        if (ny < 0 || ny >= h) continue;
+        for (int dx = -1; dx <= 1; dx++) {
+            const int nx = rx + dx;
+            if (nx < 0 || nx >= w) continue;
+            const int nbrAddr = ny * w + nx;
+            if (ctx.slice_idx[nbrAddr] != si_cur) return false;
+            if (checkTiles && pps.TileId[pps.CtbAddrRsToTs[nbrAddr]] != tile_cur) return false;
+        }
+    }
+    return true;
+}
+
 void apply_sao(DecodingContext& ctx) {
     auto& sps = *ctx.sps;
     auto& pps = *ctx.pps;
@@ -52,6 +81,10 @@ void apply_sao(DecodingContext& ctx) {
     for (int ry = 0; ry < sps.PicHeightInCtbsY; ry++) {
         for (int rx = 0; rx < sps.PicWidthInCtbsY; rx++) {
             auto& sao = ctx.sao_params[ry * ctx.sao_params_stride + rx];
+
+            // Once per CTB, not once per sample: decides whether the edge-offset
+            // loop can skip the cross-slice/tile tests entirely.
+            const bool ctbUniform = sao_ctb_neighbourhood_uniform(ctx, pps, sps, rx, ry);
 
             for (int cIdx = 0; cIdx < numComp; cIdx++) {
                 if (sao.sao_type_idx[cIdx] == 0) continue;
@@ -100,9 +133,11 @@ void apply_sao(DecodingContext& ctx) {
                         }
                 }
 
-                // Pre-check: do we need cross-slice/tile boundary checks?
-                // Only needed if neighbors can be in a different slice/tile
-                bool needBoundaryCheck = (ctx.slice_idx != nullptr);
+                // Cross-boundary tests can only fire on a non-uniform neighbourhood
+                bool needBoundaryCheck = !ctbUniform;
+
+                // Fast path: no cross-boundary tests and no per-sample CU lookups
+                bool fastPath = ctbUniform && !ctbHasPcmOrBypass;
 
                 const uint16_t* origData = origPlane[cIdx].data();
                 uint16_t* destData = pic->planes[cIdx].data();
@@ -112,6 +147,40 @@ void apply_sao(DecodingContext& ctx) {
                     int eoClass = sao.sao_eo_class[cIdx];
                     int dx0 = eo_dx[eoClass][0], dy0 = eo_dy[eoClass][0];
                     int dx1 = eo_dx[eoClass][1], dy1 = eo_dy[eoClass][1];
+
+                    if (fastPath) {
+                        // Hoist the picture-boundary test out of the loop: a sample is
+                        // processed iff both neighbours stay inside the picture, which
+                        // reduces to a range restriction on x and y.
+                        const int minDx = std::min(dx0, dx1), maxDx = std::max(dx0, dx1);
+                        const int minDy = std::min(dy0, dy1), maxDy = std::max(dy0, dy1);
+                        const int xLo = std::max(xCtb, -minDx);
+                        const int xHi = std::min(xCtb + nCtbSw, compW - maxDx);
+                        const int yLo = std::max(yCtb, -minDy);
+                        const int yHi = std::min(yCtb + nCtbSh, compH - maxDy);
+
+                        const int* offs = sao.sao_offset_val[cIdx];
+                        const int nOff1 = dy0 * stride + dx0;
+                        const int nOff2 = dy1 * stride + dx1;
+
+                        for (int y = yLo; y < yHi; y++) {
+                            const uint16_t* srcRow = origData + (ptrdiff_t)y * stride;
+                            uint16_t* dstRow = destData + (ptrdiff_t)y * stride;
+                            for (int x = xLo; x < xHi; x++) {
+                                int c_val = srcRow[x];
+                                int a = srcRow[x + nOff1];
+                                int b = srcRow[x + nOff2];
+                                // edgeIdx = 2 + sign(c-a) + sign(c-b); offs[2] is always 0
+                                // (§7.4.9.3) so the flat category writes back c_val unchanged
+                                // and the offset != 0 branch can be dropped.
+                                int edgeIdx = 2 + ((c_val > a) - (c_val < a))
+                                                + ((c_val > b) - (c_val < b));
+                                dstRow[x] = static_cast<uint16_t>(
+                                    Clip3(0, maxVal, c_val + offs[edgeIdx]));
+                            }
+                        }
+                        continue;
+                    }
 
                     for (int j = 0; j < nCtbSh; j++) {
                         int ySj = yCtb + j;
@@ -208,6 +277,31 @@ void apply_sao(DecodingContext& ctx) {
                     // Band offset — §8.7.3.3
                     int bandShift = bitDepth - 5;
                     int bandPos = sao.sao_band_position[cIdx];
+
+                    if (fastPath) {
+                        // Fold the "is this sample in the offset window" test into a
+                        // 32-entry table. No wrap-around: bands past 31 don't exist,
+                        // so offsets falling off the end are simply unused.
+                        int bandOffs[32] = {};
+                        for (int k = 0; k < 4; k++) {
+                            int b = bandPos + k;
+                            if (b < 32) bandOffs[b] = sao.sao_offset_val[cIdx][k];
+                        }
+
+                        const int xHi = std::min(xCtb + nCtbSw, compW);
+                        const int yHi = std::min(yCtb + nCtbSh, compH);
+
+                        for (int y = yCtb; y < yHi; y++) {
+                            const uint16_t* srcRow = origData + (ptrdiff_t)y * stride;
+                            uint16_t* dstRow = destData + (ptrdiff_t)y * stride;
+                            for (int x = xCtb; x < xHi; x++) {
+                                int sample = srcRow[x];
+                                dstRow[x] = static_cast<uint16_t>(
+                                    Clip3(0, maxVal, sample + bandOffs[sample >> bandShift]));
+                            }
+                        }
+                        continue;
+                    }
 
                     for (int j = 0; j < nCtbSh; j++) {
                         int ySj = yCtb + j;
