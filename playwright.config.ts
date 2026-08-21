@@ -66,6 +66,13 @@ export default defineConfig({
       name: 'local-chromium',
       use: { browserName: 'chromium' },
     },
+    {
+      // Real Chrome, not bundled Chromium: only the branded build ships HEVC
+      // decoding, which the native-playback tests need. Those tests skip
+      // themselves when the browser turns out to have no HEVC.
+      name: 'local-chrome',
+      use: { browserName: 'chromium', channel: 'chrome' },
+    },
     ...bsBrowsers.map((b) => ({
       name: `bs-${b.name.toLowerCase().replace(/\s+/g, '-')}`,
       use: {
