@@ -1,5 +1,41 @@
 # @hevcjs/hlsjs-plugin
 
+## 0.1.1
+
+### Patch Changes
+
+- [#225](https://github.com/lid-labs/hevc.js/pull/225) [`cd48c45`](https://github.com/lid-labs/hevc.js/commit/cd48c451531a55790d392aa8ef873c9310ec0089) Thanks [@privaloops](https://github.com/privaloops)! - Fix the documented hls.js setup breaking playback on iPhone Safari.
+
+  The README, the site docs and the demo all recommended constructing hls.js with
+  an unconditional `preferManagedMediaSource: false`. That is right wherever
+  classic `MediaSource` exists, but iPhone Safari exposes only
+  `ManagedMediaSource`: pinning classic MSE there leaves hls.js with no
+  MediaSource at all and playback fails outright, in every mode — not just when
+  transcoding is forced. dash.js and Shaka were unaffected because nothing told
+  them to avoid `ManagedMediaSource`.
+
+  The snippet is now guarded:
+
+  ```js
+  const hls = new Hls({
+    ...(typeof MediaSource !== "undefined"
+      ? { preferManagedMediaSource: false }
+      : {}),
+  });
+  ```
+
+  The claim that "browsers where only ManagedMediaSource exists play HEVC
+  natively, so nothing is lost there" was wrong as written: that holds only if
+  hls.js is left on its default. The plugin's own warning now prints the guarded
+  snippet instead of advice that invites the mistake.
+
+  Transcoding still does not run on iPhone Safari — the intercept patches classic
+  `MediaSource`, which is absent there — but playback now falls back to native
+  HEVC decoding instead of failing.
+
+- Updated dependencies [[`24dc3bd`](https://github.com/lid-labs/hevc.js/commit/24dc3bde1e741ceefe11b8695a9ebcaaa1e68ce8), [`792b489`](https://github.com/lid-labs/hevc.js/commit/792b48949a916434bdeb6755a2f254ed4961a820)]:
+  - @hevcjs/core@1.4.1
+
 ## 0.1.0
 
 ### Minor Changes

@@ -1,5 +1,59 @@
 # @hevcjs/core
 
+## 1.4.1
+
+### Patch Changes
+
+- [#222](https://github.com/lid-labs/hevc.js/pull/222) [`24dc3bd`](https://github.com/lid-labs/hevc.js/commit/24dc3bde1e741ceefe11b8695a9ebcaaa1e68ce8) Thanks [@privaloops](https://github.com/privaloops)! - Speed up the SAO in-loop filter in the WASM decoder.
+
+  `apply_sao` ran the cross-slice / cross-tile boundary test for every sample of
+  every picture: the guard gating it (`ctx.slice_idx != nullptr`) was always true,
+  because the decoder assigns that pointer unconditionally. The test can only
+  change the outcome on a one-pixel CTB border, yet every sample paid four integer
+  divisions plus the slice-header lookups.
+
+  The neighbourhood is now checked once per CTB. When it is uniform (single slice,
+  no tiles, or an interior CTB) and the CTB has no PCM / transquant-bypass CU, the
+  edge- and band-offset loops run with no divisions, no per-sample bounds tests and
+  no branch on the offset value. Otherwise the original path runs unchanged.
+
+  Decoded output is byte-identical — the full suite (146 tests, including the
+  pixel-perfect oracle MD5 comparisons) passes, and a build with bounds assertions
+  enabled reports no out-of-range access.
+
+  Measured in WASM (emcc 6.0.8, single-threaded, best of 3 x 3 runs):
+
+  - 1080p, SAO on: 67.0 → 79.7 fps (1.19x)
+  - 4K, SAO on: 18.5 → 21.5 fps (1.16x)
+  - 1080p, SAO off: unchanged, as expected — the filter does no work on those
+    streams, so this optimization does nothing for them
+
+- [#223](https://github.com/lid-labs/hevc.js/pull/223) [`792b489`](https://github.com/lid-labs/hevc.js/commit/792b48949a916434bdeb6755a2f254ed4961a820) Thanks [@privaloops](https://github.com/privaloops)! - Index the CU / intra-mode / CTB grids with shifts instead of integer divisions.
+
+  `cu_at`, `intra_mode_at`, `chroma_mode_at` and the deblocking boundary
+  derivations divided sample coordinates by a power-of-two grid size whose value
+  is only known at run time, so the compiler could not turn the division into a
+  shift. These accessors sit on the hottest paths of the decoder, and WebAssembly
+  has no cheap `i32.div_s`.
+
+  All the coordinates involved are non-negative — picture-boundary edges return
+  earlier, and the two decremented call sites are guarded — which makes the shift
+  exactly equivalent. That precondition is now asserted in the accessors: it costs
+  nothing in release builds, and a negative coordinate would otherwise turn a
+  harmless truncation into an out-of-bounds index.
+
+  Decoded output is byte-identical: the full suite (146 tests, oracle MD5
+  comparisons included) passes, in a release build and in a build with assertions
+  enabled.
+
+  Measured in WASM (emcc 6.0.8, single-threaded, best of 3 x 3 runs):
+
+  - 1080p: 79.7 → 85.2 fps (1.07x)
+  - 4K: 21.5 → 22.0 fps (1.02x)
+
+  The gain is larger here than the −3 % reported for the same change on native
+  x86, which matches the expectation that divisions cost more in WebAssembly.
+
 ## 1.4.0
 
 ### Minor Changes
