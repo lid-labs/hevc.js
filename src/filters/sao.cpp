@@ -86,6 +86,26 @@ void apply_sao(DecodingContext& ctx) {
             // loop can skip the cross-slice/tile tests entirely.
             const bool ctbUniform = sao_ctb_neighbourhood_uniform(ctx, pps, sps, rx, ry);
 
+            // Does this CTU hold any PCM or transquant_bypass CU? Scanned on luma
+            // coordinates, so it is the same answer for all three components —
+            // compute it once per CTB rather than once per component.
+            bool ctbHasPcmOrBypass = false;
+            if (sps.pcm_loop_filter_disabled_flag || pps.transquant_bypass_enabled_flag) {
+                // Only scan when PCM or transquant_bypass are possible in this stream
+                int xYctb = rx * ctbSize;
+                int yYctb = ry * ctbSize;
+                int minCb = sps.MinCbSizeY;
+                int cbEnd_x = std::min(xYctb + ctbSize, (int)sps.pic_width_in_luma_samples);
+                int cbEnd_y = std::min(yYctb + ctbSize, (int)sps.pic_height_in_luma_samples);
+                for (int cy = yYctb; cy < cbEnd_y && !ctbHasPcmOrBypass; cy += minCb)
+                    for (int cx = xYctb; cx < cbEnd_x && !ctbHasPcmOrBypass; cx += minCb) {
+                        auto& cu = ctx.cu_at(cx, cy);
+                        if ((sps.pcm_loop_filter_disabled_flag && cu.is_pcm) ||
+                            cu.cu_transquant_bypass)
+                            ctbHasPcmOrBypass = true;
+                    }
+            }
+
             for (int cIdx = 0; cIdx < numComp; cIdx++) {
                 if (sao.sao_type_idx[cIdx] == 0) continue;
 
@@ -115,29 +135,17 @@ void apply_sao(DecodingContext& ctx) {
                 int compH = pic->height[cIdx];
                 int stride = pic->stride[cIdx];
 
-                // Pre-check: does this CTU have any PCM or transquant_bypass CUs?
-                // If not, skip per-pixel cu_at() checks (common case).
-                bool ctbHasPcmOrBypass = false;
-                if (pcmFilterDisabled || pps.transquant_bypass_enabled_flag) {
-                    // Only scan when PCM or transquant_bypass are possible in this stream
-                    int xYctb = rx * ctbSize;
-                    int yYctb = ry * ctbSize;
-                    int minCb = sps.MinCbSizeY;
-                    int cbEnd_x = std::min(xYctb + ctbSize, (int)sps.pic_width_in_luma_samples);
-                    int cbEnd_y = std::min(yYctb + ctbSize, (int)sps.pic_height_in_luma_samples);
-                    for (int cy = yYctb; cy < cbEnd_y && !ctbHasPcmOrBypass; cy += minCb)
-                        for (int cx = xYctb; cx < cbEnd_x && !ctbHasPcmOrBypass; cx += minCb) {
-                            auto& cu = ctx.cu_at(cx, cy);
-                            if ((pcmFilterDisabled && cu.is_pcm) || cu.cu_transquant_bypass)
-                                ctbHasPcmOrBypass = true;
-                        }
-                }
-
                 // Cross-boundary tests can only fire on a non-uniform neighbourhood
                 bool needBoundaryCheck = !ctbUniform;
 
-                // Fast path: no cross-boundary tests and no per-sample CU lookups
-                bool fastPath = ctbUniform && !ctbHasPcmOrBypass;
+                // Edge offset reads two neighbours, so it needs a uniform
+                // neighbourhood on top of having no per-sample CU lookups to do.
+                bool fastPathEdge = ctbUniform && !ctbHasPcmOrBypass;
+                // Band offset reads no neighbour at all (§8.7.3.3): no cross-slice
+                // or cross-tile test can ever apply to it, so uniformity is
+                // irrelevant here — gating on it would drop multi-slice and
+                // multi-tile streams onto the slow loop for nothing.
+                bool fastPathBand = !ctbHasPcmOrBypass;
 
                 const uint16_t* origData = origPlane[cIdx].data();
                 uint16_t* destData = pic->planes[cIdx].data();
@@ -148,7 +156,7 @@ void apply_sao(DecodingContext& ctx) {
                     int dx0 = eo_dx[eoClass][0], dy0 = eo_dy[eoClass][0];
                     int dx1 = eo_dx[eoClass][1], dy1 = eo_dy[eoClass][1];
 
-                    if (fastPath) {
+                    if (fastPathEdge) {
                         // Hoist the picture-boundary test out of the loop: a sample is
                         // processed iff both neighbours stay inside the picture, which
                         // reduces to a range restriction on x and y.
@@ -278,7 +286,7 @@ void apply_sao(DecodingContext& ctx) {
                     int bandShift = bitDepth - 5;
                     int bandPos = sao.sao_band_position[cIdx];
 
-                    if (fastPath) {
+                    if (fastPathBand) {
                         // Fold the "is this sample in the offset window" test into a
                         // 32-entry table. No wrap-around: bands past 31 don't exist,
                         // so offsets falling off the end are simply unused.
@@ -296,8 +304,11 @@ void apply_sao(DecodingContext& ctx) {
                             uint16_t* dstRow = destData + (ptrdiff_t)y * stride;
                             for (int x = xCtb; x < xHi; x++) {
                                 int sample = srcRow[x];
+                                // & 31 is a no-op while sample <= maxVal, which the
+                                // decoder guarantees; it keeps a corrupt plane or an
+                                // inconsistent bit depth from indexing past the table.
                                 dstRow[x] = static_cast<uint16_t>(
-                                    Clip3(0, maxVal, sample + bandOffs[sample >> bandShift]));
+                                    Clip3(0, maxVal, sample + bandOffs[(sample >> bandShift) & 31]));
                             }
                         }
                         continue;
