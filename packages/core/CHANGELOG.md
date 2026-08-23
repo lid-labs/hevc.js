@@ -1,5 +1,94 @@
 # @hevcjs/core
 
+## 1.4.2
+
+### Patch Changes
+
+- [#227](https://github.com/lid-labs/hevc.js/pull/227) [`cd71bce`](https://github.com/lid-labs/hevc.js/commit/cd71bceb80e2458bb57b516348db1422785d2745) Thanks [@privaloops](https://github.com/privaloops)! - Dequantize in 32-bit arithmetic on the common path.
+
+  `perform_dequant` computed every coefficient through `int64_t`, which costs
+  noticeably more than 32-bit arithmetic in WebAssembly. It was the second hottest
+  function in a WASM profile of 1080p decoding, at 8% of samples.
+
+  The width is only needed for the `<< qpPer` step: `coeff * m * scale` always fits
+  in `int32` (at worst 32768 _ 255 _ 72, about 6.0e8). Dividing numerator and
+  denominator by 2^qpPer rewrites
+
+      ((X << qpPer) + (1 << (bdShift-1))) >> bdShift
+
+  as `(X + (1 << (s-1))) >> s` with `s = bdShift - qpPer`, which stays in 32 bits.
+  `s == 0` degenerates to `X`. When `qpPer > bdShift` — reachable, since `bdShift`
+  is as low as 5 for 4x4 at 8-bit while `qpPer` reaches 8 — the original 64-bit
+  path still runs.
+
+  Output is byte-identical: the full suite (146 tests, oracle MD5 comparisons
+  included) passes, and a build comparing the folded result against the reference
+  formula for every coefficient reports no divergence across all fixtures and the
+  1080p and 4K streams in full.
+
+  Measured in WASM (emcc 6.0.8, single-threaded, A/B interleaved with the order
+  swapped each round to cancel thermal drift): 1080p averages 82.9 -> 86.3 fps,
+  about 4%, winning all six rounds.
+
+- [#229](https://github.com/lid-labs/hevc.js/pull/229) [`e30e3e7`](https://github.com/lid-labs/hevc.js/commit/e30e3e79c3c5511f1aa47ec7d7a5299ab2a3e58d) Thanks [@privaloops](https://github.com/privaloops)! - Ship a WASM binary that is actually built from the current sources.
+
+  The published package carries `wasm/hevc-decode.wasm`, a file committed to the
+  repository. Nothing kept it in sync: `release.yml` only ran `pnpm build:js`, and
+  `build:wasm` copied its output to `packages/core/dist/wasm/` — a directory that
+  `tsup` then wiped (`clean: true`) and repopulated from the stale committed copy.
+  So even a full `pnpm build` could not update it.
+
+  The binary in 1.4.1 was built in April. Every release since then shipped it,
+  including the decoder optimizations announced in 1.4.1 changelogs, none of which
+  were in the published artifact.
+
+  Fixed at both ends: `build:wasm` now writes to `packages/core/wasm/`, the source
+  of truth, and `release.yml` builds the WASM before publishing.
+
+  The toolchain also moved from emsdk 3.1.51 (late 2023) to 6.0.8, across every
+  workflow. Measured on 1080p, A/B with the order swapped each round:
+
+  - 3.1.51: 79.4 / 79.1 / 73.8 / 78.5 fps, 286,695 bytes
+  - 6.0.8: 87.1 / 86.1 / 85.8 / 86.0 fps, 267,136 bytes
+
+  That is about 9% faster and 7% smaller with no source change, and the ranges do
+  not overlap. 3.1.51 also rejected `HEAPU16` in `EXPORTED_RUNTIME_METHODS`, an
+  export the code relies on; 6.0.8 accepts it without warning.
+
+  Verified with 28 end-to-end browser tests (hls.js, dash.js, Shaka, core, native
+  playback and bugfix validation), the 146-test C++ suite and the JS unit tests.
+
+  Documented binary size corrected from 236KB to 261KB across the READMEs and the
+  site — the previous figure had not matched any shipped build for some time.
+
+- [#230](https://github.com/lid-labs/hevc.js/pull/230) [`9605ca0`](https://github.com/lid-labs/hevc.js/commit/9605ca0795828ba65e8d017bb82f81492c020dc3) Thanks [@privaloops](https://github.com/privaloops)! - Fix two SAO fast-path gates and bound the band-offset table index.
+
+  Follow-ups from a review of the SAO work landed earlier this week.
+
+  **Band offset was gated on neighbourhood uniformity, which does not apply to
+  it.** Edge offset reads two neighbours, so it genuinely needs the cross-slice /
+  cross-tile check to be provably unnecessary. Band offset (§8.7.3.3) reads no
+  neighbour at all, so no such check can ever fire — gating it on `ctbUniform`
+  dropped every multi-slice and multi-tile stream onto the slow loop for nothing.
+  The two paths now have their own gates.
+
+  **`ctbHasPcmOrBypass` was recomputed once per component.** It scans the CU grid
+  on luma coordinates, so all three components get the same answer; it is now
+  computed once per CTB, next to the uniformity check it should have accompanied.
+  Unexpectedly measurable on the benchmark stream — the guard was being evaluated
+  three times per CTB rather than once.
+
+  **The band-offset table was indexed without a bound.** `bandOffs[sample >>
+bandShift]` trusted `sample <= maxVal`; the slow loop it replaced was
+  structurally immune thanks to its `bandIdx < 4` test. Masking with `& 31` is a
+  no-op while the invariant holds and keeps a corrupt plane or an inconsistent
+  chroma bit depth from reading past a stack array.
+
+  Output is byte-identical: 146/146 including the oracle MD5 comparisons.
+
+  Measured in WASM (emcc 6.0.8, A/B with the order swapped each round), 1080p:
+  78.7 / 81.0 / 81.6 before, 84.5 / 84.5 / 84.4 after.
+
 ## 1.4.1
 
 ### Patch Changes
