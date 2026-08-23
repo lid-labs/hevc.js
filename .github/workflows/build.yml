@@ -39,7 +39,7 @@ jobs:
       - name: Setup Emscripten
         uses: mymindstorm/setup-emsdk@4528d102f7230f0e7b276855c01ea1159be0e984 # v16
         with:
-          version: 3.1.51
+          version: 6.0.8
 
       - name: Configure
         run: emcmake cmake -B build-wasm -DBUILD_WASM=ON -DBUILD_TESTS=OFF

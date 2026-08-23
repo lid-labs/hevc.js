@@ -25,7 +25,7 @@
     "packages/shaka-plugin/dist/"
   ],
   "scripts": {
-    "build:wasm": "emcmake cmake -B build-wasm -DBUILD_WASM=ON -DCMAKE_BUILD_TYPE=Release && cmake --build build-wasm && cp build-wasm/hevc-decode.js build-wasm/hevc-decode.wasm packages/core/dist/wasm/",
+    "build:wasm": "emcmake cmake -B build-wasm -DBUILD_WASM=ON -DCMAKE_BUILD_TYPE=Release && cmake --build build-wasm && cp build-wasm/hevc-decode.js build-wasm/hevc-decode.wasm packages/core/wasm/",
     "build:core": "pnpm --filter @hevcjs/core build",
     "build:dashjs": "pnpm --filter @hevcjs/dashjs-plugin build",
     "build:shaka": "pnpm --filter @hevcjs/shaka-plugin build",

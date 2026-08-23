@@ -21,6 +21,14 @@ jobs:
         with:
           fetch-depth: 0
 
+      # The published package ships packages/core/wasm/*.wasm. Without this the
+      # release would keep publishing whatever binary happens to be committed,
+      # which is how 1.4.1 went out with a decoder built back in April.
+      - name: Setup Emscripten
+        uses: mymindstorm/setup-emsdk@4528d102f7230f0e7b276855c01ea1159be0e984 # v16
+        with:
+          version: 6.0.8
+
       - name: Setup pnpm
         uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
         with:
@@ -35,6 +43,9 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Build WASM decoder
+        run: pnpm build:wasm
 
       - name: Build JS packages
         run: pnpm build:js
