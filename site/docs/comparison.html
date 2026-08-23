@@ -39,7 +39,7 @@
         "name": "Is hevc.js faster than libde265 compiled to WASM?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "libde265 is slightly faster: hevc.js reaches about 83% of libde265's decode speed when both run as WebAssembly. The trade-off is size and license: hevc.js is 236 KB of WASM (vs ~2 MB) and MIT-licensed (vs LGPL-3.0), and it ships a complete MSE streaming pipeline with dash.js and Shaka Player plugins rather than a raw decoder."
+          "text": "libde265 is slightly faster: hevc.js reaches about 83% of libde265's decode speed when both run as WebAssembly. The trade-off is size and license: hevc.js is 261 KB of WASM (vs ~2 MB) and MIT-licensed (vs LGPL-3.0), and it ships a complete MSE streaming pipeline with dash.js and Shaka Player plugins rather than a raw decoder."
         }
       },
       {
@@ -240,7 +240,7 @@
               </tr>
               <tr>
                 <td class="param-name">WASM size</td>
-                <td class="text-accent-light font-semibold">236 KB</td>
+                <td class="text-accent-light font-semibold">261 KB</td>
                 <td>~2 MB</td>
                 <td>Tens of MB (core)</td>
                 <td>Multiple builds (incl. 256/512 MB memory variants)</td>

@@ -14,7 +14,7 @@
 
 一个用 C++17 从零开始编写的 HEVC 解码器,编译为 WebAssembly,并附带开箱即用的 dash.js、Shaka Player 和 hls.js 插件。在 Web Worker 中通过 WebCodecs 实时将 HEVC 转码为 H.264,完全在客户端完成。可在所有支持 WebCodecs H.264 编码的 Chrome、Edge 和 Firefox 上运行。
 
-1080p @ 60fps。WASM 体积仅 236KB。零依赖。无需特殊服务器标头。
+1080p @ 60fps。WASM 体积仅 261KB。零依赖。无需特殊服务器标头。
 
 由一名开发者在 AI 协助下用 8 天构建完成 — [阅读完整故事](https://www.developpement.ai/blog/hevcjs-decodeur-h265-navigateur-wasm)。
 
@@ -66,7 +66,7 @@ npm install @hevcjs/hlsjs-plugin    # hls.js
 
 - `transcode-worker.js` — Web Worker(IIFE 格式,独立运行)
 - `wasm/hevc-decode.js` — Emscripten 胶水代码
-- `wasm/hevc-decode.wasm` — WASM 二进制文件(236KB)
+- `wasm/hevc-decode.wasm` — WASM 二进制文件(261KB)
 
 将它们从 `node_modules/@hevcjs/core/dist/` 复制到你的公共目录:
 
@@ -172,7 +172,7 @@ hevc.js 在客户端将 HEVC 转码为 H.264。这需要浏览器提供两样东
 
 这个实现在三个维度上瞄准了不同的细分市场:
 
-- **体积** — 编译为 WASM 后只有 236 KB,而 libde265 编译到 WASM 大约 2 MB。**小 8 倍** — 这在向浏览器、microVM 或沙盒运行时分发时很关键。
+- **体积** — 编译为 WASM 后只有 261 KB,而 libde265 编译到 WASM 大约 2 MB。**小 8 倍** — 这在向浏览器、microVM 或沙盒运行时分发时很关键。
 - **现代化与许可证** — 全代码使用 C++17(`std::optional`、`std::shared_ptr`、`std::array`、`constexpr`),单线程,零依赖,**MIT 许可证**(libde265 是 LGPL — 这对在商业产品中静态链接很重要)。
 - **规范可追溯性** — 函数命名直接对应 ITU-T H.265 规范的章节号,且 [`docs/cross-reference.md`](docs/cross-reference.md) 把每个规范章节映射到对应的源文件和测试。如果你想 *理解* HEVC 而不只是解码它,这很有用(高校、编解码器研究、贡献者)。
 
@@ -243,7 +243,7 @@ cd build && ctest --output-on-failure    # 128 个测试
 source ~/emsdk/emsdk_env.sh
 emcmake cmake -B build-wasm -DBUILD_WASM=ON -DCMAKE_BUILD_TYPE=Release
 cmake --build build-wasm
-# 输出:build-wasm/hevc-decode.js + hevc-decode.wasm(236KB)
+# 输出:build-wasm/hevc-decode.js + hevc-decode.wasm(261KB)
 ```
 
 ### 性能
@@ -256,7 +256,7 @@ cmake --build build-wasm
 | **4K 解码** | 28 fps | 21 fps | — |
 | **1080p 转码** | — | ~2.5 倍实时(6 秒分片用 2.4 秒处理) | — |
 
-WASM 解码器的性能在原生 C++ 性能的 20% 以内,在两者都编译为 WASM 时,达到了 **libde265 速度的 83%**(libde265 是一个成熟的、经过 10 年优化的 HEVC 解码器)— 而二进制大小只有 **1/8**(236 KB vs ~2 MB)。
+WASM 解码器的性能在原生 C++ 性能的 20% 以内,在两者都编译为 WASM 时,达到了 **libde265 速度的 83%**(libde265 是一个成熟的、经过 10 年优化的 HEVC 解码器)— 而二进制大小只有 **1/8**(261 KB vs ~2 MB)。
 
 ### 规范一致性
 
