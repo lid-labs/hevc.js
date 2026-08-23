@@ -1,5 +1,12 @@
 # @hevcjs/shaka-plugin
 
+## 0.3.5
+
+### Patch Changes
+
+- Updated dependencies [[`cd71bce`](https://github.com/lid-labs/hevc.js/commit/cd71bceb80e2458bb57b516348db1422785d2745), [`e30e3e7`](https://github.com/lid-labs/hevc.js/commit/e30e3e79c3c5511f1aa47ec7d7a5299ab2a3e58d), [`9605ca0`](https://github.com/lid-labs/hevc.js/commit/9605ca0795828ba65e8d017bb82f81492c020dc3)]:
+  - @hevcjs/core@1.4.2
+
 ## 0.3.4
 
 ### Patch Changes
