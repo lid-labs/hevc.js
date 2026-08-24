@@ -235,6 +235,8 @@ This implementation targets a different niche on three axes:
 
 This is **not a libde265 replacement** — libde265 is faster on pure native and battle-tested in production (GStreamer, VLC, libheif, FFmpeg fallback). For embedding in browsers, microVMs, and sandboxed environments where binary size, license, or readability matter more than the last 20% of native throughput, this decoder is a viable alternative.
 
+For a side-by-side of the four ways to play HEVC in a browser — hevc.js, libde265.js, ffmpeg.wasm and h265web.js — see [HEVC in the browser: four ways, compared](https://www.hevcjs.dev/docs/comparison.html) (WASM size, license, MSE streaming, COOP/COEP requirements).
+
 ### C API
 
 ```c
