@@ -37,7 +37,7 @@ So the bound is set by the calling pattern, not by the decoder:
 | `decode()` batch API | one per frame decoded | ~1.2 GB — by design, see below |
 
 Both rows are covered by tests in `tests/unit/test_incremental.cpp`
-(`DPBBoundedOverSequenceLongerThanDPB`, `DPBRetainsEveryPictureWhenDrainIsDeferred`).
+(`HeldMemoryDoesNotGrowWithSequenceLength`, `DPBRetainsEveryPictureWhenDrainIsDeferred`).
 
 ## Guidance for callers
 
