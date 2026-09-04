@@ -54,6 +54,31 @@ registerHevcTransmuxer(shaka, { adaptiveCompute: false });
 
 Options passed at `attachComputeAware` time merge on top of options passed at register time — convenient when `onObservation` is only known once the UI exists.
 
+## Performance & tuning
+
+Shaka 4.x's `Transmuxer.transmux()` contract returns one `Uint8Array` per segment, so the buffered range can only grow in whole-segment jumps. On hardware where WASM transcoding runs near real time, the playback head skirts the edge of that range: playback stutters in a few-second rhythm even though the buffer is contiguous and nothing is out of spec. The dash.js plugin does not show this, because it appends transcoded chunks to MSE progressively as the encoder emits them.
+
+A deeper buffer gives transcoding room to stay ahead:
+
+```js
+import { registerHevcTransmuxer, recommendedBufferConfig } from '@hevcjs/shaka-plugin';
+
+const player = new shaka.Player();
+player.configure(recommendedBufferConfig());   // before load()
+await player.load(manifestUrl);
+```
+
+That raises `streaming.bufferingGoal` to 30s, against Shaka's default of 10. Startup takes longer to fill the buffer, in exchange for playback that absorbs slower-than-real-time stretches instead of stalling on them. `configure()` deep-merges, so the rest of your configuration is untouched; only a later `configure()` setting `bufferingGoal` itself would override it.
+
+It leaves `rebufferingGoal` alone on purpose. That setting decides whether Shaka gates playback on buffer depth at all — it defaults to 0 on Shaka 5, where the buffer poller never runs and the playback rate is never held back. Turning it on would mean that a device transcoding at around real time freezes until the goal is re-accumulated, trading a stutter for a longer hard stall. Raise it only if you have measured that it helps on your content and hardware.
+
+This is a mitigation, not a cure: it buys headroom, it does not make transcoding faster. If `speedX` stays below 1 for long enough, the buffer drains whatever its depth. Two things help there:
+
+- **Use the Worker** (`workerUrl`), which keeps decoding off the main thread.
+- **Leave compute-aware ABR on** (the default), so the variant ceiling drops when the device cannot keep up.
+
+`subscribeSegmentStat` reports the per-segment `speedX` if you want to see where a given device actually lands.
+
 ## How It Works
 
 Shaka exposes a `TransmuxerEngine` that lets plugins convert one container/codec into another before MSE sees the bytes. This package follows the same pattern as Shaka's built-in `AacTransmuxer`:

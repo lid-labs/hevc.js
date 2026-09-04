@@ -45,6 +45,13 @@
  * ```ts
  * player.configure({ mediaSource: { forceTransmux: true } });
  * ```
+ *
+ * On hardware where WASM transcoding runs near real time, a deeper buffer
+ * keeps playback from stuttering at the edge of the buffered range:
+ *
+ * ```ts
+ * player.configure(recommendedBufferConfig());
+ * ```
  */
 
 import { HevcTransmuxer } from "./transmuxer.js";
@@ -56,6 +63,8 @@ export { HevcTransmuxer } from "./transmuxer.js";
 export type { TransmuxOutput, HevcTransmuxerConfig } from "./transmuxer.js";
 export { attachShakaComputeAware } from "./compute-aware.js";
 export type { ShakaComputeAwareOptions } from "./compute-aware.js";
+export { recommendedBufferConfig } from "./buffer-config.js";
+export type { ShakaBufferConfig } from "./buffer-config.js";
 // Re-export the perf-bus surface so consumers can subscribe to per-segment
 // transcode stats (speedX, frames, resolution) without depending on
 // @hevcjs/core directly.

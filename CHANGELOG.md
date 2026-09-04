@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- **`@hevcjs/shaka-plugin`: `recommendedBufferConfig()`**: buffer settings for HEVC playback through the transmuxer (`bufferingGoal` 30s, against Shaka's default of 10; `rebufferingGoal` is deliberately left alone, since raising it gates playback on buffer depth and turns a stutter into a longer stall). Shaka's `transmux()` hands MSE one segment at a time, so the buffered range grows in jumps; where transcoding runs near real time the playback head rides its edge and stutters. Applied by `demo/shaka.html`, documented under "Performance & tuning" in the plugin README.
 - **`@hevcjs/hlsjs-plugin`**: hls.js plugin for HEVC playback via the shared MSE intercept. `attachHevcSupport(config)` — no player instance needed; supports fMP4 HLS with video-only or demuxed-audio renditions (master playlists + audio group validated end-to-end). Muxed A/V segments play video-only for now.
 - **Core `strictAppendProgress` intercept option**: updateend for a media append only fires once that segment's first transcoded chunk reached the SourceBuffer — satisfies hls.js's `bufferAppendNoProgress` watchdog. Off by default (dash.js/Shaka unchanged).
 - **Core: `SourceBuffer.changeType()` patched**: HEVC mimes map to their H.264 equivalent on codec switches.
