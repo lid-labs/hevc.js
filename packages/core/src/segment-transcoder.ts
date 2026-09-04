@@ -665,7 +665,7 @@ export class SegmentTranscoder {
   }
 }
 
-/** Concatenate length-prefixed NAL units into an Annex B buffer for the decoder. */
+/** Join raw NAL units into an Annex B buffer, prefixing each with a start code. */
 function toAnnexB(nalUnits: Uint8Array[]): Uint8Array {
   const totalSize = nalUnits.reduce((sum, n) => sum + 4 + n.length, 0);
   const buf = new Uint8Array(totalSize);
