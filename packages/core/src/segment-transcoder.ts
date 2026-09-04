@@ -293,34 +293,47 @@ export class SegmentTranscoder {
     let decodeMs = 0;
     let encodeMs = 0;
 
+    const encodeDrained = (frames: HEVCFrame[]) => {
+      if (frames.length === 0) return;
+      if (frameCount === 0) {
+        // Encoder setup on the first frames of the segment (recreated on a
+        // resolution change for ABR).
+        frameW = frames[0]!.width;
+        frameH = frames[0]!.height;
+        this._prepareEncoder(frameW, frameH);
+        this._encoder!.onChunk = (chunk) => chunks.push(chunk);
+      }
+      for (const frame of frames) {
+        // Use PTS-sorted timestamps: frames come out in display order, so
+        // the i-th frame of the segment carries the i-th smallest PTS.
+        const i = frameCount++;
+        const timestampUs = i < sortedPts.length
+          ? Math.round((sortedPts[i]! / this._timescale) * 1_000_000)
+          : Math.round((segmentBaseTime / this._timescale) * 1_000_000) + Math.round((i / this._fps) * 1_000_000);
+        this._encoder!.encode(frame, timestampUs, i === 0);
+      }
+    };
+
     for (const sample of samples) {
       const tFeed0 = performance.now();
       this._decoder.feed(toAnnexB(sample.nalUnits));
       const frames = this._decoder.drain();
       const tDrainEnd = performance.now();
       decodeMs += tDrainEnd - tFeed0;
-
-      if (frames.length > 0) {
-        if (frameCount === 0) {
-          // Encoder setup on the first frames of the segment (recreated on a
-          // resolution change for ABR).
-          frameW = frames[0]!.width;
-          frameH = frames[0]!.height;
-          this._prepareEncoder(frameW, frameH);
-          this._encoder!.onChunk = (chunk) => chunks.push(chunk);
-        }
-        for (const frame of frames) {
-          // Use PTS-sorted timestamps: frames come out in display order, so
-          // the i-th frame of the segment carries the i-th smallest PTS.
-          const i = frameCount++;
-          const timestampUs = i < sortedPts.length
-            ? Math.round((sortedPts[i]! / this._timescale) * 1_000_000)
-            : Math.round((segmentBaseTime / this._timescale) * 1_000_000) + Math.round((i / this._fps) * 1_000_000);
-          this._encoder!.encode(frame, timestampUs, i === 0);
-        }
-      }
+      encodeDrained(frames);
       encodeMs += performance.now() - tDrainEnd;
     }
+
+    // Segment boundary: empty the reorder buffer. drain() leaves pictures the
+    // bumping conditions have not released yet; carried over, they would be
+    // emitted while transcoding the next segment and take its timestamps.
+    // Muxing is per segment, so each one must carry its own frames.
+    const tSegFlush = performance.now();
+    const tail = this._decoder.flush();
+    decodeMs += performance.now() - tSegFlush;
+    const tTailEncode = performance.now();
+    encodeDrained(tail);
+    encodeMs += performance.now() - tTailEncode;
 
     if (frameCount === 0) {
       this.lastPerfStats = null;
@@ -531,33 +544,42 @@ export class SegmentTranscoder {
     let encodedCount = 0;
     let pending: HEVCFrame[] = [];
 
+    const ingest = async (frames: HEVCFrame[]) => {
+      if (frames.length === 0) return;
+      if (frameCount === 0) {
+        frameW = frames[0]!.width;
+        frameH = frames[0]!.height;
+        this._prepareEncoder(frameW, frameH);
+      }
+      frameCount += frames.length;
+      pending.push(...frames);
+      while (pending.length >= BATCH_SIZE) {
+        await emitBatch(pending.splice(0, BATCH_SIZE), encodedCount);
+        encodedCount += BATCH_SIZE;
+      }
+    };
+
     for (const sample of samples) {
       const tFeed0 = performance.now();
       this._decoder.feed(toAnnexB(sample.nalUnits));
       const frames = this._decoder.drain();
       const tDrainEnd = performance.now();
       decodeMs += tDrainEnd - tFeed0;
-
-      if (frames.length > 0) {
-        if (frameCount === 0) {
-          frameW = frames[0]!.width;
-          frameH = frames[0]!.height;
-          this._prepareEncoder(frameW, frameH);
-        }
-        frameCount += frames.length;
-        pending.push(...frames);
-        while (pending.length >= BATCH_SIZE) {
-          await emitBatch(pending.splice(0, BATCH_SIZE), encodedCount);
-          encodedCount += BATCH_SIZE;
-        }
-      }
+      await ingest(frames);
       encodeMs += performance.now() - tDrainEnd;
     }
 
+    // Segment boundary: empty the reorder buffer, so pictures drain() has not
+    // released yet do not spill into the next segment and take its timestamps.
+    const tSegFlush = performance.now();
+    const tail = this._decoder.flush();
+    decodeMs += performance.now() - tSegFlush;
+
+    const tTail0 = performance.now();
+    await ingest(tail);
     if (frameCount === 0) return;
 
     // Trailing partial batch
-    const tTail0 = performance.now();
     if (pending.length > 0) {
       await emitBatch(pending, encodedCount);
       pending = [];

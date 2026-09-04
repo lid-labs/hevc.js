@@ -213,27 +213,34 @@ describe("SegmentTranscoder.processMediaSegment decode/encode interleaving", () 
   /**
    * Decoder stub modelling §C.5.2 bumping with a reorder depth of 2.
    *
-   * `total` is how many samples the segment carries: on the last one the
-   * stub bumps everything, which is what the real decoder does at a closed
-   * GOP boundary (measured on bbb1080_50f: 12 frames in, 12 frames out per
-   * 12-frame segment, batched and interleaved alike).
+   * It holds back its reorder frames exactly like the real decoder, which
+   * since the §C.5.2.2 fix never bumps the picture it is currently decoding.
+   * Emptying that buffer is the caller's job — measured on bbb1080_50f, a
+   * 12-frame segment yields 11 frames via drain() and the twelfth only on
+   * flush(). Without the flush the segment would ship 11 frames and leak the
+   * twelfth into the next one, where it would take that segment's timestamp.
    */
   class FakeDecoder {
     calls: string[] = [];
     private _held = 0;
-    private _fed = 0;
     private _nextPoc = 0;
-    constructor(private _total: number) {}
     feed() {
       this.calls.push("feed");
       this._held++;
-      this._fed++;
     }
     drain() {
       this.calls.push("drain");
-      const reorder = this._fed >= this._total ? 0 : 2;
       const out = [];
-      while (this._held > reorder) {
+      while (this._held > 2) {
+        this._held--;
+        out.push(makeFrame(this._nextPoc++));
+      }
+      return out;
+    }
+    flush() {
+      this.calls.push("flush");
+      const out = [];
+      while (this._held > 0) {
         this._held--;
         out.push(makeFrame(this._nextPoc++));
       }
@@ -243,7 +250,7 @@ describe("SegmentTranscoder.processMediaSegment decode/encode interleaving", () 
 
   const setup = (sampleCount: number) => {
     const t = new SegmentTranscoder();
-    const decoder = new FakeDecoder(sampleCount);
+    const decoder = new FakeDecoder();
     const encoded: { timestampUs: number; keyFrame: boolean }[] = [];
 
     const samples = Array.from({ length: sampleCount }, (_, i) => ({
@@ -304,6 +311,8 @@ describe("SegmentTranscoder.processMediaSegment decode/encode interleaving", () 
 
     expect(decoder.calls.filter((c) => c === "feed")).toHaveLength(30);
     expect(maxFeedsWithoutDrain(decoder.calls)).toBe(1);
+    // The segment must not end with frames still held by the decoder.
+    expect(decoder.calls[decoder.calls.length - 1]).toBe("flush");
   });
 
   it("drains after each feed on the streaming path too", async () => {
@@ -319,6 +328,7 @@ describe("SegmentTranscoder.processMediaSegment decode/encode interleaving", () 
 
     expect(decoder.calls.filter((c) => c === "feed")).toHaveLength(30);
     expect(maxFeedsWithoutDrain(decoder.calls)).toBe(1);
+    expect(decoder.calls[decoder.calls.length - 1]).toBe("flush");
     expect(emitted.length).toBeGreaterThan(0);
   });
 
@@ -328,8 +338,8 @@ describe("SegmentTranscoder.processMediaSegment decode/encode interleaving", () 
     await t.processMediaSegment(new Uint8Array(8));
 
     // Every frame of the segment is encoded, in display order, exactly as the
-    // batched path did — the interleaving must not shift frames into the next
-    // segment, where they would pick up that segment's timestamps.
+    // batched path did — no frame may be left for the next segment, where it
+    // would pick up that segment's timestamps.
     expect(encoded).toHaveLength(30);
     const expectedUs = samples
       .map((s) => s.pts)
