@@ -183,3 +183,161 @@ describe("extractTfdt", () => {
     expect(extractTfdt(new Uint8Array(0))).toBeNull();
   });
 });
+
+/**
+ * The decoder must not hold a whole segment's worth of pictures.
+ *
+ * The WASM DPB only reclaims a picture once the caller has bumped it out
+ * (`drain()`); feeding every sample of a segment before draining once keeps
+ * one picture alive per frame — ~24 MB each at 4K, which overruns the 2 GB
+ * WASM ceiling on a 2s segment. `drain()` copies planes into the JS heap, so
+ * draining early costs nothing and the frames stay valid across later feeds.
+ *
+ * The invariant asserted here is the interleaving itself: at most one feed()
+ * between two drain() calls.
+ */
+describe("SegmentTranscoder.processMediaSegment decode/encode interleaving", () => {
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const makeFrame = (poc: number) => ({
+    y: new Uint16Array(4),
+    cb: new Uint16Array(1),
+    cr: new Uint16Array(1),
+    width: 64,
+    height: 64,
+    chromaWidth: 32,
+    chromaHeight: 32,
+    bitDepth: 8,
+    poc,
+  });
+
+  /**
+   * Decoder stub modelling §C.5.2 bumping with a reorder depth of 2.
+   *
+   * `total` is how many samples the segment carries: on the last one the
+   * stub bumps everything, which is what the real decoder does at a closed
+   * GOP boundary (measured on bbb1080_50f: 12 frames in, 12 frames out per
+   * 12-frame segment, batched and interleaved alike).
+   */
+  class FakeDecoder {
+    calls: string[] = [];
+    private _held = 0;
+    private _fed = 0;
+    private _nextPoc = 0;
+    constructor(private _total: number) {}
+    feed() {
+      this.calls.push("feed");
+      this._held++;
+      this._fed++;
+    }
+    drain() {
+      this.calls.push("drain");
+      const reorder = this._fed >= this._total ? 0 : 2;
+      const out = [];
+      while (this._held > reorder) {
+        this._held--;
+        out.push(makeFrame(this._nextPoc++));
+      }
+      return out;
+    }
+  }
+
+  const setup = (sampleCount: number) => {
+    const t = new SegmentTranscoder();
+    const decoder = new FakeDecoder(sampleCount);
+    const encoded: { timestampUs: number; keyFrame: boolean }[] = [];
+
+    const samples = Array.from({ length: sampleCount }, (_, i) => ({
+      trackId: 1,
+      nalUnits: [new Uint8Array([0x26, 0x01])],
+      pts: i * 3600,
+      dts: i * 3600,
+      duration: 3600,
+      isKeyframe: i === 0,
+    }));
+
+    (t as any)._decoder = decoder;
+    (t as any)._demuxer = {
+      parseSegment: () => samples,
+      drainAudioSamples: () => [],
+    };
+    (t as any)._muxer = { muxSegment: () => new Uint8Array([1, 2, 3]) };
+
+    // Encoder stub: emits one chunk per encoded frame, like a real
+    // VideoEncoder, so the muxing and batch-emit steps actually run.
+    let onChunkCb: ((c: unknown) => void) | null = null;
+    (t as any)._encoder = {
+      encode(_f: unknown, timestampUs: number, keyFrame: boolean) {
+        encoded.push({ timestampUs, keyFrame });
+        onChunkCb?.({ data: new Uint8Array([0]), duration: 40000, isKeyframe: keyFrame });
+      },
+      flush: async () => {},
+      close: () => {},
+      codec: "avc1.42E01E",
+      codecDescription: new Uint8Array([1]),
+      set onChunk(cb: (c: unknown) => void) {
+        onChunkCb = cb;
+      },
+    };
+    (t as any)._width = 64;
+    (t as any)._height = 64;
+    (t as any)._paramSetsFed = true;
+    (t as any)._initResult = { initSegment: new Uint8Array(), codec: "avc1.42" };
+
+    return { t, decoder, encoded, samples };
+  };
+
+  /** Longest run of feed() calls with no drain() in between. */
+  const maxFeedsWithoutDrain = (calls: string[]) => {
+    let run = 0;
+    let worst = 0;
+    for (const c of calls) {
+      if (c === "feed") worst = Math.max(worst, ++run);
+      else run = 0;
+    }
+    return worst;
+  };
+
+  it("drains after each feed instead of buffering the whole segment", async () => {
+    const { t, decoder } = setup(30);
+
+    await t.processMediaSegment(new Uint8Array(8));
+
+    expect(decoder.calls.filter((c) => c === "feed")).toHaveLength(30);
+    expect(maxFeedsWithoutDrain(decoder.calls)).toBe(1);
+  });
+
+  it("drains after each feed on the streaming path too", async () => {
+    // processMediaSegmentStreaming — not processMediaSegment — is what every
+    // video-only stream goes through (mse-intercept routes muxed A/V only to
+    // the combined path), so it carries the 4K memory ceiling.
+    const { t, decoder } = setup(30);
+
+    const emitted: Uint8Array[] = [];
+    await t.processMediaSegmentStreaming(new Uint8Array(8), (h264) => {
+      emitted.push(h264);
+    });
+
+    expect(decoder.calls.filter((c) => c === "feed")).toHaveLength(30);
+    expect(maxFeedsWithoutDrain(decoder.calls)).toBe(1);
+    expect(emitted.length).toBeGreaterThan(0);
+  });
+
+  it("keeps display-order timestamps and a single keyframe across the interleaved path", async () => {
+    const { t, encoded, samples } = setup(30);
+
+    await t.processMediaSegment(new Uint8Array(8));
+
+    // Every frame of the segment is encoded, in display order, exactly as the
+    // batched path did — the interleaving must not shift frames into the next
+    // segment, where they would pick up that segment's timestamps.
+    expect(encoded).toHaveLength(30);
+    const expectedUs = samples
+      .map((s) => s.pts)
+      .sort((a, b) => a - b)
+      .map((pts) => Math.round((pts / 90000) * 1_000_000));
+    expect(encoded.map((e) => e.timestampUs)).toEqual(expectedUs);
+    expect(encoded.filter((e) => e.keyFrame)).toHaveLength(1);
+    expect(encoded[0]!.keyFrame).toBe(true);
+  });
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+});

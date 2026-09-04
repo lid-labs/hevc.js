@@ -93,3 +93,33 @@ int32_t transform_buf[64 * 64];  // precision etendue pour transform
 - Pas d'allocation dynamique dans le hot path
 - 64*64*4 = 16KB par buffer, ~48KB total — acceptable sur la stack
 - WASM : la stack par defaut Emscripten est ~64KB (le heap est extensible, pas la stack). Prevoir `-sSTACK_SIZE=1048576` en Phase 8, ou restructurer pour allouer les buffers au niveau CTU
+
+## AD-007 : DPB — L'appelant décide de l'enveloppe mémoire, le décodeur ne libère qu'au bump
+
+**Contexte** : Un buffer d'image n'est recyclé que lorsqu'elle n'est ni référence ni
+en attente de sortie. `drain()` n'évince pas lui-même : il retourne des `Picture*`
+bruts qui doivent rester valides jusqu'au prochain `feed()`. L'éviction est donc
+différée à `alloc_picture()`.
+
+Conséquence : un appelant qui enchaîne les `feed()` avant de drainer retient une
+image par frame décodée (~24 Mo en 4K), et la longueur de segment qu'il peut
+traiter devient bornée par le plafond WASM de 2 Go.
+
+**Décision** : Ne pas faire évincer `drain()`, et exiger des appelants qu'ils
+alternent `feed()` / `drain()`. Le wrapper JS copie les plans hors du tas WASM,
+donc drainer tôt ne coûte rien.
+
+**Justification** :
+- Faire évincer `drain()` invaliderait les pointeurs qu'il vient de retourner
+- L'API batch (`decode()` + `get_frame(i)`) a besoin de la rétention : c'est son
+  contrat, pas une fuite
+- Déplacer la décision chez l'appelant garde un seul modèle mémoire pour les deux
+
+**Conséquence** : `DPB::drain` est appelé une fois par image et non une fois par
+segment, ce qui met ses conditions §C.5.2.2 sur le chemin critique. Elles doivent
+donc exclure l'image courante (le processus s'applique avant son stockage) et
+mesurer le remplissage du DPB en buffers occupés — un compteur qui décroît à
+mesure qu'on bump. Avec `pictures_.size()`, qui ne décroît jamais, la condition
+reste vraie et vide tout le DPB en ordre de décodage.
+
+Enveloppe chiffrée et garde-fous : `docs/memory-envelope.md`.
