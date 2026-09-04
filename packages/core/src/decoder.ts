@@ -206,7 +206,11 @@ export class HEVCDecoder {
   /**
    * Drain output-ready frames from the decoder (§C.5.2 bumping process).
    * Returns frames in display order, only when ready per DPB constraints.
-   * Frames are valid until the next feed() or destroy() call.
+   *
+   * Planes are copied out of the WASM heap, so the returned frames stay
+   * valid across later feed() and destroy() calls. Draining after every
+   * feed() is what keeps the DPB at its bound — the decoder cannot reclaim
+   * a picture before it has been bumped out. See docs/memory-envelope.md.
    */
   drain(): HEVCFrame[] {
     const m = this._m;

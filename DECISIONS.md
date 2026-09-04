@@ -93,3 +93,36 @@ int32_t transform_buf[64 * 64];  // precision etendue pour transform
 - Pas d'allocation dynamique dans le hot path
 - 64*64*4 = 16KB par buffer, ~48KB total — acceptable sur la stack
 - WASM : la stack par defaut Emscripten est ~64KB (le heap est extensible, pas la stack). Prevoir `-sSTACK_SIZE=1048576` en Phase 8, ou restructurer pour allouer les buffers au niveau CTU
+
+## AD-007 : DPB — the caller sets the memory envelope; the decoder only frees on a bump
+
+*Written in English per the repo's documentation convention (CLAUDE.md). AD-001
+to AD-006 predate it and are still in French — see the follow-up issue.*
+
+**Context**: A picture's storage buffer is reclaimed only once it is neither a
+reference nor pending output. `drain()` does not evict: it returns raw
+`Picture*` that must stay valid until the next `feed()`, so eviction is
+deferred to `alloc_picture()`.
+
+Consequence: a caller that chains `feed()` calls before draining retains one
+picture per decoded frame (~24 MB at 4K), and the segment length it can handle
+becomes bounded by the 2 GB WASM ceiling.
+
+**Decision**: Do not make `drain()` evict, and require callers to interleave
+`feed()` / `drain()`. The JS wrapper copies planes out of the WASM heap, so
+draining early costs nothing.
+
+**Rationale**:
+- Evicting inside `drain()` would invalidate the pointers it just returned
+- The batch API (`decode()` + `get_frame(i)`) needs the retention: that is its
+  contract, not a leak
+- Moving the decision to the caller keeps a single memory model for both
+
+**Consequence**: `DPB::drain` is called once per picture rather than once per
+segment, which puts its §C.5.2.2 conditions on the hot path. They must
+therefore exclude the current picture (the process runs before it is stored)
+and measure DPB fullness in occupied buffers — a count that falls as pictures
+are bumped. With `pictures_.size()`, which never falls, the condition stays
+true and drains the whole DPB in decode order.
+
+Figures and guard rails: `docs/memory-envelope.md`.

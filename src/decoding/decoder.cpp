@@ -295,7 +295,10 @@ DecodeStatus Decoder::decode_picture(const std::vector<NalUnit>& nals,
     dpb_.mark_current_as_short_term_ref();
 
     // §C.5.2.3: mark current picture as "needed for output"
-    // (PicOutputFlag is 1 for all pictures in Main profile)
+    // NOTE: this overrides the PicOutputFlag read at allocation time
+    // (decoder.cpp above). Honouring the flag needs the transcoder to stop
+    // assuming one output frame per demuxed sample when assigning timestamps
+    // — see issue #243.
     if (dpb_.current_pic()) {
         dpb_.current_pic()->needed_for_output = true;
     }

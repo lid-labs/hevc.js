@@ -120,9 +120,10 @@ gen_abr() {
 }
 
 # --- hls_{720p,1080p,4k}: test patterns, 1 video variant + audio group ------
-# Segment duration follows the DASH source (720p: 2s, 1080p/4k: 1s) — a 2s
-# 4K segment is ~50 frames per transcode unit and blows past the WASM
-# decoder's 2GB memory ceiling.
+# Segment duration follows the DASH source (720p: 2s, 1080p/4k: 1s).
+# The 4K segment length used to be capped by decoder memory; the transcoder
+# now drains after every feed, so the DPB stays bounded whatever the segment
+# length (docs/memory-envelope.md).
 gen_mire() {
   local name=$1 seg=$2
   local dir="$STREAMS/hls_${name}" src="$STREAMS/dash_${name}"

@@ -213,3 +213,130 @@ TEST(IncrementalDecode, DPBBounded) {
     EXPECT_EQ(total_drained, 10u)
         << "Expected 10 frames, got " << total_drained;
 }
+
+// ============================================================
+// Test: interleaved drain outputs the same pictures, in the same order
+// ============================================================
+// The batched caller (feed everything, drain once) bumped the whole DPB in
+// one pass, so it always emitted in POC order. Draining after every feed
+// exercises §C.5.2.2 on every picture instead, which is where an off-by-one
+// on the bumping conditions shows up: it bumps a picture before its
+// lower-POC neighbours are decoded, and the stream plays out of order.
+// B-frame fixtures are the ones that catch it — P-only streams decode in
+// display order and cannot.
+
+TEST(IncrementalDecode, InterleavedDrainMatchesBatchedOutputOrder) {
+    const char* fixtures[] = {
+        "b_qcif_10f.265",
+        "full_qcif_10f.265",
+        "full_qcif_10f_10bit.265",
+        "p_qcif_10f.265",
+        "bbb1080_50f.265",
+        "bbb4k_25f.265",
+    };
+
+    for (const char* name : fixtures) {
+        std::string path = std::string(FIXTURES_DIR) + "/" + name;
+        auto data = read_file(path);
+        ASSERT_FALSE(data.empty()) << "Cannot read " << path;
+
+        // Batched: one feed, one drain — the reference output order.
+        Decoder batched;
+        ASSERT_EQ(batched.feed(data.data(), data.size()), DecodeStatus::OK) << name;
+        std::vector<int32_t> batched_poc;
+        for (auto* pic : batched.drain()) batched_poc.push_back(pic->poc);
+        for (auto* pic : batched.flush()) batched_poc.push_back(pic->poc);
+
+        // Interleaved: drain after every feed.
+        Decoder interleaved;
+        std::vector<int32_t> interleaved_poc;
+        auto nal_starts = find_nal_starts(data);
+        for (size_t i = 0; i < nal_starts.size(); i++) {
+            size_t start = nal_starts[i];
+            size_t end = (i + 1 < nal_starts.size()) ? nal_starts[i+1] : data.size();
+            ASSERT_EQ(interleaved.feed(data.data() + start, end - start), DecodeStatus::OK)
+                << name << " at NAL " << i;
+            for (auto* pic : interleaved.drain()) interleaved_poc.push_back(pic->poc);
+        }
+        for (auto* pic : interleaved.flush()) interleaved_poc.push_back(pic->poc);
+
+        EXPECT_EQ(interleaved_poc, batched_poc) << "output order differs on " << name;
+    }
+}
+
+// ============================================================
+// Test: held memory does not grow with the length of the sequence
+// ============================================================
+// DPBBounded above runs on a 10-frame fixture, so its `max_dpb <= 16`
+// assertion passes even if nothing is ever released. This one runs on 50
+// frames, where the bound only holds if pictures are actually reclaimed.
+//
+// It counts `pictures()`, not the §C.5.2.2 occupied-buffer figure: a picture
+// that has been bumped but not yet evicted still owns its planes, and that
+// retention is exactly what this is guarding against. The two differ because
+// eviction is deferred to alloc_picture() to keep drained pointers valid.
+//
+// The assertion is a ratio rather than a constant. `pictures()` can spike
+// above the §A.4.1 storage-buffer bound between two allocations — an IRAP
+// unmarks every reference at once, and they all become evictable before the
+// next alloc_picture() sweeps them — so a fixed cap would be a magic number
+// tied to this fixture's DPB size. What must hold on any stream is that the
+// peak stops growing once the DPB is warm.
+
+TEST(IncrementalDecode, HeldMemoryDoesNotGrowWithSequenceLength) {
+    std::string path = std::string(FIXTURES_DIR) + "/bbb1080_50f.265";
+    auto data = read_file(path);
+    ASSERT_FALSE(data.empty()) << "Cannot read " << path;
+
+    auto nal_starts = find_nal_starts(data);
+    ASSERT_GE(nal_starts.size(), 3u);
+
+    Decoder dec;
+    size_t peak_early = 0;   // peak over the first half of the stream
+    size_t peak_late = 0;    // peak over the second half
+    size_t total_drained = 0;
+    const size_t midpoint = nal_starts.size() / 2;
+
+    for (size_t i = 0; i < nal_starts.size(); i++) {
+        size_t start = nal_starts[i];
+        size_t end = (i + 1 < nal_starts.size()) ? nal_starts[i+1] : data.size();
+
+        ASSERT_EQ(dec.feed(data.data() + start, end - start), DecodeStatus::OK)
+            << "Feed failed at NAL " << i;
+        total_drained += dec.drain().size();
+
+        size_t held = dec.dpb().pictures().size();
+        if (i < midpoint) peak_early = std::max(peak_early, held);
+        else peak_late = std::max(peak_late, held);
+    }
+    total_drained += dec.flush().size();
+
+    // Retention would make the second-half peak climb past the first-half
+    // one; a bounded decoder holds as many pictures at the end of the stream
+    // as it did once the DPB was warm.
+    EXPECT_LE(peak_late, peak_early)
+        << "held pictures grew from " << peak_early << " to " << peak_late
+        << " over the sequence — pictures are not being released";
+    EXPECT_EQ(total_drained, 50u);
+}
+
+// ============================================================
+// Test: deferring drain() retains every picture — memory envelope
+// ============================================================
+// The counterpart of the test above, and the reason a 4K segment blows past
+// the WASM 2GB ceiling: a caller that feeds a whole segment before draining
+// keeps one picture per frame alive, because eviction needs a bump first.
+// If this ever stops holding, the memory envelope documented in
+// docs/memory-envelope.md is stale and must be updated with it.
+
+TEST(IncrementalDecode, DPBRetainsEveryPictureWhenDrainIsDeferred) {
+    std::string path = std::string(FIXTURES_DIR) + "/bbb1080_50f.265";
+    auto data = read_file(path);
+    ASSERT_FALSE(data.empty()) << "Cannot read " << path;
+
+    Decoder dec;
+    ASSERT_EQ(dec.feed(data.data(), data.size()), DecodeStatus::OK);
+
+    EXPECT_EQ(dec.dpb().pictures().size(), 50u)
+        << "One picture per decoded frame is retained until the caller drains";
+}

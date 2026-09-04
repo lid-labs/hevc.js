@@ -366,13 +366,11 @@ void DPB::derive_colpic(const SliceHeader& sh) {
 
 Picture* DPB::alloc_picture(int width, int height, ChromaFormat fmt,
                              int bd_luma, int bd_chroma) {
-    // Remove pictures that are no longer referenced and not needed for output
-    pictures_.erase(
-        std::remove_if(pictures_.begin(), pictures_.end(),
-            [](const std::shared_ptr<Picture>& p) {
-                return !p->is_reference() && !p->needed_for_output;
-            }),
-        pictures_.end());
+    // §C.5.2.2 — free storage buffers that are neither reference nor pending
+    // output before growing the DPB. This only has something to reclaim once
+    // the caller has bumped pictures out (drain/flush): a caller that feeds a
+    // whole segment before draining keeps every picture alive.
+    evict_unused();
 
     auto pic = std::make_shared<Picture>();
     pic->allocate(width, height, fmt, bd_luma, bd_chroma);
@@ -420,12 +418,13 @@ std::vector<Picture*> DPB::get_output_pictures() {
 // 3. If the picture storage buffer is also "unused for reference",
 //    it is emptied (handled by evict_unused).
 
-Picture* DPB::bump() {
+Picture* DPB::bump(bool skip_current) {
     // §C.5.2.4 step 1: select the picture with the smallest PicOrderCntVal
     // that is marked as "needed for output".
     // Within multiple CVS, earlier CVS pictures are output first.
     Picture* smallest = nullptr;
     for (auto& pic : pictures_) {
+        if (skip_current && pic.get() == current_pic_) continue;
         if (!pic->needed_for_output) continue;
         if (!smallest ||
             pic->cvs_id < smallest->cvs_id ||
@@ -455,6 +454,19 @@ Picture* DPB::bump() {
 // For most real-world streams, the reorder_pics and DPB size conditions
 // are sufficient. Latency-based bumping is a conformance refinement
 // that can be added later if needed.
+//
+// Two details decide whether output comes out in display order:
+//
+// 1. §C.5.2.2 runs *before* the current picture is stored in the DPB. We are
+//    called after feed() decoded it, so both counts must skip current_pic_ —
+//    otherwise every condition fires one picture early and bumps a picture
+//    whose lower-POC neighbours are not decoded yet.
+// 2. The "DPB is full" condition counts *occupied storage buffers*. Bumping
+//    empties the buffer of a picture that is no longer a reference (§C.5.2.4
+//    step 3), so that count must fall as we bump. Counting pictures_ instead
+//    would keep the condition true for the whole loop — it never shrinks,
+//    since eviction is deferred to alloc_picture to keep drained pointers
+//    valid — and drain the entire DPB in decode order.
 
 std::vector<Picture*> DPB::drain(const SPS& sps) {
     std::vector<Picture*> out;
@@ -464,10 +476,23 @@ std::vector<Picture*> DPB::drain(const SPS& sps) {
     int max_reorder = static_cast<int>(sps.sub_layer_ordering[tid].max_num_reorder_pics);
     int max_dpb_size = static_cast<int>(sps.sub_layer_ordering[tid].max_dec_pic_buffering_minus1) + 1;
 
+    // Pictures already in the DPB when §C.5.2.2 is evaluated — the current
+    // picture is not one of them.
     auto count_needed_for_output = [this]() {
         int count = 0;
         for (auto& pic : pictures_) {
-            if (pic->needed_for_output) count++;
+            if (pic.get() != current_pic_ && pic->needed_for_output) count++;
+        }
+        return count;
+    };
+
+    // Storage buffers still held: a picture that is neither a reference nor
+    // pending output is emptied (§C.5.2.4 step 3) and no longer counts.
+    auto count_occupied = [this]() {
+        int count = 0;
+        for (auto& pic : pictures_) {
+            if (pic.get() != current_pic_ &&
+                (pic->is_reference() || pic->needed_for_output)) count++;
         }
         return count;
     };
@@ -482,7 +507,7 @@ std::vector<Picture*> DPB::drain(const SPS& sps) {
         }
 
         // Condition 2: DPB is full
-        if (static_cast<int>(pictures_.size()) >= max_dpb_size) {
+        if (count_occupied() >= max_dpb_size) {
             if (count_needed_for_output() > 0) {
                 should_bump = true;
             }
@@ -490,7 +515,9 @@ std::vector<Picture*> DPB::drain(const SPS& sps) {
 
         if (!should_bump) break;
 
-        Picture* pic = bump();
+        // Skip the current picture: the counters above exclude it, so bumping
+        // it would output a picture without making either count fall.
+        Picture* pic = bump(/*skip_current=*/true);
         if (!pic) break;
         out.push_back(pic);
 

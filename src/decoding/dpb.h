@@ -76,7 +76,10 @@ public:
 
     // §C.5.2.4 — "Bumping" process: output the picture with smallest POC
     // that is marked as "needed for output". Returns nullptr if no picture to bump.
-    Picture* bump();
+    // skip_current leaves the picture being decoded out of the selection:
+    // §C.5.2.2 runs before it is stored, so drain() must not pick it, while
+    // flush() at end of stream must.
+    Picture* bump(bool skip_current = false);
 
     // §C.5.2.2/C.5.2.3 — Drain: bump pictures while bumping conditions are met.
     // Uses sps_max_num_reorder_pics and sps_max_dec_pic_buffering_minus1 from the active SPS.

@@ -279,70 +279,78 @@ export class SegmentTranscoder {
       this._paramSetsFed = true;
     }
 
-    // 3. Feed NAL units to WASM decoder (Annex B format)
-    for (const sample of samples) {
-      const totalSize = sample.nalUnits.reduce((sum, n) => sum + 4 + n.length, 0);
-      const nalBuffer = new Uint8Array(totalSize);
-      let offset = 0;
-      for (const nal of sample.nalUnits) {
-        nalBuffer[offset++] = 0;
-        nalBuffer[offset++] = 0;
-        nalBuffer[offset++] = 0;
-        nalBuffer[offset++] = 1;
-        nalBuffer.set(nal, offset);
-        offset += nal.length;
+    // 3-5. Decode and encode sample by sample, draining after every feed.
+    // The WASM DPB only reclaims a picture once the caller has bumped it out,
+    // so feeding a whole segment before draining retains one picture per
+    // frame — ~24 MB each at 4K, which overruns the 2 GB WASM ceiling on a 2s
+    // segment. drain() copies planes into the JS heap, so the frames stay
+    // valid across later feeds and encoding them right away lets the GC
+    // reclaim them too.
+    const chunks: EncodedChunk[] = [];
+    let frameCount = 0;
+    let frameW = 0;
+    let frameH = 0;
+    let decodeMs = 0;
+    let encodeMs = 0;
+
+    const encodeDrained = (frames: HEVCFrame[]) => {
+      if (frames.length === 0) return;
+      if (frameCount === 0) {
+        // Encoder setup on the first frames of the segment (recreated on a
+        // resolution change for ABR).
+        frameW = frames[0]!.width;
+        frameH = frames[0]!.height;
+        this._prepareEncoder(frameW, frameH);
+        this._encoder!.onChunk = (chunk) => chunks.push(chunk);
       }
-      this._decoder.feed(nalBuffer);
+      for (const frame of frames) {
+        // Use PTS-sorted timestamps: frames come out in display order, so
+        // the i-th frame of the segment carries the i-th smallest PTS.
+        const i = frameCount++;
+        const timestampUs = i < sortedPts.length
+          ? Math.round((sortedPts[i]! / this._timescale) * 1_000_000)
+          : Math.round((segmentBaseTime / this._timescale) * 1_000_000) + Math.round((i / this._fps) * 1_000_000);
+        this._encoder!.encode(frame, timestampUs, i === 0);
+      }
+    };
+
+    for (const sample of samples) {
+      const tFeed0 = performance.now();
+      this._decoder.feed(toAnnexB(sample.nalUnits));
+      const frames = this._decoder.drain();
+      const tDrainEnd = performance.now();
+      decodeMs += tDrainEnd - tFeed0;
+      encodeDrained(frames);
+      encodeMs += performance.now() - tDrainEnd;
     }
 
-    // 4. Drain decoded YUV frames (display order)
-    const frames = this._decoder.drain();
-    const tDecodeEnd = performance.now();
-    if (frames.length === 0) {
+    // Segment boundary: empty the reorder buffer. drain() leaves pictures the
+    // bumping conditions have not released yet; carried over, they would be
+    // emitted while transcoding the next segment and take its timestamps.
+    // Muxing is per segment, so each one must carry its own frames.
+    const tSegFlush = performance.now();
+    const tail = this._decoder.flush();
+    decodeMs += performance.now() - tSegFlush;
+    const tTailEncode = performance.now();
+    encodeDrained(tail);
+    encodeMs += performance.now() - tTailEncode;
+
+    if (frameCount === 0) {
       this.lastPerfStats = null;
       return null;
     }
 
-    // 5. Encode to H.264 (recreate encoder on resolution change for ABR)
-    const frameW = frames[0]!.width;
-    const frameH = frames[0]!.height;
-    if (this._encoder && (frameW !== this._width || frameH !== this._height)) {
-      log.info(`Resolution changed ${this._width}x${this._height} → ${frameW}x${frameH}, recreating encoder`);
-      this._encoder.close();
-      this._encoder = null;
-      this._initResult = null; // force new H.264 init segment
-    }
-    if (!this._encoder) {
-      this._encoder = new H264Encoder({
-        width: frameW,
-        height: frameH,
-        fps: this._fps,
-        bitrate: this._config.bitrate,
-      });
-      this._width = frameW;
-      this._height = frameH;
-    }
-
-    const chunks: EncodedChunk[] = [];
-    this._encoder.onChunk = (chunk) => chunks.push(chunk);
-
-    for (let i = 0; i < frames.length; i++) {
-      // Use PTS-sorted timestamps: frames are in display order from drain(),
-      // so frame[i] corresponds to the i-th smallest PTS value.
-      const timestampUs = i < sortedPts.length
-        ? Math.round((sortedPts[i]! / this._timescale) * 1_000_000)
-        : Math.round((segmentBaseTime / this._timescale) * 1_000_000) + Math.round((i / this._fps) * 1_000_000);
-      this._encoder.encode(frames[i]!, timestampUs, i === 0);
-    }
-
-    await this._encoder.flush();
+    // Everything from here — encoder flush, init segment, muxing — is charged
+    // to encodeMs, so demuxMs+decodeMs+encodeMs still covers the whole call.
+    const tTail0 = performance.now();
+    await this._encoder!.flush();
     if (chunks.length === 0) return null;
 
     // 6. Generate H.264 init segment on first successful encode. When the
     // source is muxed A/V, emit a two-track init (H.264 video + AAC audio)
     // so a single audiovideo SourceBuffer plays both.
     if (!this._initResult) {
-      const avcC = this._encoder.codecDescription;
+      const avcC = this._encoder!.codecDescription;
       if (!avcC) throw new Error("No avcC description from encoder");
 
       const videoInit = {
@@ -356,8 +364,8 @@ export class SegmentTranscoder {
         : this._muxer.generateInit(videoInit);
       // Only AAC pass-through is supported, so the audio codec is mp4a.40.2.
       const codec = this._audioConfig
-        ? `${this._encoder.codec},mp4a.40.2`
-        : this._encoder.codec;
+        ? `${this._encoder!.codec},mp4a.40.2`
+        : this._encoder!.codec;
 
       this._initResult = { initSegment, codec };
     }
@@ -400,10 +408,8 @@ export class SegmentTranscoder {
       mediaSegment = this._muxer.muxSegment(muxerSamples, muxBaseTime);
     }
 
-    const tEncodeEnd = performance.now();
     const demuxMs = tDemuxEnd - tDemux0;
-    const decodeMs = tDecodeEnd - tDemuxEnd;
-    const encodeMs = tEncodeEnd - tDecodeEnd;
+    encodeMs += performance.now() - tTail0;
     // Intrinsic segment duration in media time — sum of sample durations
     // (robust to VFR and to truncated last segments, unlike `n * fps`).
     const segDurTicks = samples.reduce((sum, s) => sum + s.duration, 0);
@@ -415,7 +421,7 @@ export class SegmentTranscoder {
       demuxMs,
       decodeMs,
       encodeMs,
-      frames: frames.length,
+      frames: frameCount,
       segDurMs,
       width: frameW,
       height: frameH,
@@ -430,7 +436,7 @@ export class SegmentTranscoder {
         totalMs,
         segDurMs,
         speedX: segDurMs / totalMs,
-        frames: frames.length,
+        frames: frameCount,
         width: frameW,
         height: frameH,
       });
@@ -473,68 +479,32 @@ export class SegmentTranscoder {
       this._paramSetsFed = true;
     }
 
-    for (const sample of samples) {
-      const totalSize = sample.nalUnits.reduce((sum, n) => sum + 4 + n.length, 0);
-      const nalBuffer = new Uint8Array(totalSize);
-      let offset = 0;
-      for (const nal of sample.nalUnits) {
-        nalBuffer[offset++] = 0; nalBuffer[offset++] = 0;
-        nalBuffer[offset++] = 0; nalBuffer[offset++] = 1;
-        nalBuffer.set(nal, offset);
-        offset += nal.length;
-      }
-      this._decoder.feed(nalBuffer);
-    }
-
-    // Drain frames in display order
-    const frames = this._decoder.drain();
-    const tDecodeEnd = performance.now();
-    if (frames.length === 0) return;
-
-    const frameW = frames[0]!.width;
-    const frameH = frames[0]!.height;
-    if (this._encoder && (frameW !== this._width || frameH !== this._height)) {
-      this._encoder.close();
-      this._encoder = null;
-      this._initResult = null;
-    }
-    if (!this._encoder) {
-      this._encoder = new H264Encoder({
-        width: frameW, height: frameH,
-        fps: this._fps, bitrate: this._config.bitrate,
-      });
-      this._width = frameW;
-      this._height = frameH;
-    }
-
-    // Encode in batches, using PTS-sorted timestamps
+    // Encode and ship one BATCH_SIZE batch as soon as it is full.
     let initEmitted = false;
-    const tEncode0 = performance.now();
-
-    for (let batchStart = 0; batchStart < frames.length; batchStart += BATCH_SIZE) {
-      const batchEnd = Math.min(batchStart + BATCH_SIZE, frames.length);
+    const emitBatch = async (batch: HEVCFrame[], batchStart: number) => {
       const batchChunks: EncodedChunk[] = [];
-      this._encoder.onChunk = (chunk) => batchChunks.push(chunk);
+      this._encoder!.onChunk = (chunk) => batchChunks.push(chunk);
 
-      for (let i = batchStart; i < batchEnd; i++) {
-        const timestampUs = i < sortedPts.length
-          ? Math.round((sortedPts[i]! / this._timescale) * 1_000_000)
-          : Math.round((segmentBaseTime / this._timescale) * 1_000_000) + Math.round((i / this._fps) * 1_000_000);
-        this._encoder.encode(frames[i]!, timestampUs, i === 0);
+      for (let i = 0; i < batch.length; i++) {
+        const idx = batchStart + i;
+        const timestampUs = idx < sortedPts.length
+          ? Math.round((sortedPts[idx]! / this._timescale) * 1_000_000)
+          : Math.round((segmentBaseTime / this._timescale) * 1_000_000) + Math.round((idx / this._fps) * 1_000_000);
+        this._encoder!.encode(batch[i]!, timestampUs, idx === 0);
       }
 
-      await this._encoder.flush();
-      if (batchChunks.length === 0) continue;
+      await this._encoder!.flush();
+      if (batchChunks.length === 0) return;
 
       if (!this._initResult) {
-        const avcC = this._encoder.codecDescription;
+        const avcC = this._encoder!.codecDescription;
         if (!avcC) throw new Error("No avcC description from encoder");
         this._initResult = {
           initSegment: this._muxer.generateInit({
             width: this._width, height: this._height,
             timescale: this._timescale, avcC,
           }),
-          codec: this._encoder.codec,
+          codec: this._encoder!.codec,
         };
       }
 
@@ -559,14 +529,66 @@ export class SegmentTranscoder {
       const mediaSegment = this._muxer.muxSegment(muxerSamples, batchBaseTime);
       await onChunk(mediaSegment, !initEmitted ? this._initResult : null);
       initEmitted = true;
+    };
+
+    // Decode and encode in lockstep. Draining after every feed keeps the WASM
+    // DPB at its §A.4.1 bound instead of one picture per frame — the whole
+    // point of this path for 4K, where a deferred drain costs ~24 MB a frame
+    // and overruns the 2 GB WASM ceiling. Shipping each full batch keeps the
+    // JS heap bounded too, since drain() copies planes out of the WASM heap.
+    let decodeMs = 0;
+    let encodeMs = 0;
+    let frameW = 0;
+    let frameH = 0;
+    let frameCount = 0;
+    let encodedCount = 0;
+    let pending: HEVCFrame[] = [];
+
+    const ingest = async (frames: HEVCFrame[]) => {
+      if (frames.length === 0) return;
+      if (frameCount === 0) {
+        frameW = frames[0]!.width;
+        frameH = frames[0]!.height;
+        this._prepareEncoder(frameW, frameH);
+      }
+      frameCount += frames.length;
+      pending.push(...frames);
+      while (pending.length >= BATCH_SIZE) {
+        await emitBatch(pending.splice(0, BATCH_SIZE), encodedCount);
+        encodedCount += BATCH_SIZE;
+      }
+    };
+
+    for (const sample of samples) {
+      const tFeed0 = performance.now();
+      this._decoder.feed(toAnnexB(sample.nalUnits));
+      const frames = this._decoder.drain();
+      const tDrainEnd = performance.now();
+      decodeMs += tDrainEnd - tFeed0;
+      await ingest(frames);
+      encodeMs += performance.now() - tDrainEnd;
     }
+
+    // Segment boundary: empty the reorder buffer, so pictures drain() has not
+    // released yet do not spill into the next segment and take its timestamps.
+    const tSegFlush = performance.now();
+    const tail = this._decoder.flush();
+    decodeMs += performance.now() - tSegFlush;
+
+    const tTail0 = performance.now();
+    await ingest(tail);
+    if (frameCount === 0) return;
+
+    // Trailing partial batch
+    if (pending.length > 0) {
+      await emitBatch(pending, encodedCount);
+      pending = [];
+    }
+    encodeMs += performance.now() - tTail0;
 
     // Publish one perf event per segment (not per batch) so compute-aware
     // ABR sees the same shape from streaming and non-streaming paths.
-    const tEncodeEnd = performance.now();
     const demuxMs = tDemuxEnd - tDemux0;
-    const decodeMs = tDecodeEnd - tDemuxEnd;
-    const encodeMs = tEncodeEnd - tEncode0;
     const segDurTicks = samples.reduce((sum, s) => sum + s.duration, 0);
     const segDurMs = (segDurTicks / this._timescale) * 1000;
     // Keep the flush() clock (_baseDecodeTime) on the segment timeline so a
@@ -576,7 +598,7 @@ export class SegmentTranscoder {
       demuxMs,
       decodeMs,
       encodeMs,
-      frames: frames.length,
+      frames: frameCount,
       segDurMs,
       width: frameW,
       height: frameH,
@@ -587,7 +609,7 @@ export class SegmentTranscoder {
         totalMs,
         segDurMs,
         speedX: segDurMs / totalMs,
-        frames: frames.length,
+        frames: frameCount,
         width: frameW,
         height: frameH,
       });
@@ -617,6 +639,26 @@ export class SegmentTranscoder {
     this._initResult = null;
   }
 
+  /** Create the H.264 encoder, or recreate it when the resolution changed (ABR). */
+  private _prepareEncoder(width: number, height: number): void {
+    if (this._encoder && (width !== this._width || height !== this._height)) {
+      log.info(`Resolution changed ${this._width}x${this._height} → ${width}x${height}, recreating encoder`);
+      this._encoder.close();
+      this._encoder = null;
+      this._initResult = null; // force new H.264 init segment
+    }
+    if (!this._encoder) {
+      this._encoder = new H264Encoder({
+        width,
+        height,
+        fps: this._fps,
+        bitrate: this._config.bitrate,
+      });
+      this._width = width;
+      this._height = height;
+    }
+  }
+
   private async _encodeFrames(frames: HEVCFrame[]): Promise<Uint8Array | null> {
     if (!this._encoder || frames.length === 0) return null;
 
@@ -643,6 +685,22 @@ export class SegmentTranscoder {
     this._baseDecodeTime += muxerSamples.reduce((sum, s) => sum + s.duration, 0);
     return segment;
   }
+}
+
+/** Join raw NAL units into an Annex B buffer, prefixing each with a start code. */
+function toAnnexB(nalUnits: Uint8Array[]): Uint8Array {
+  const totalSize = nalUnits.reduce((sum, n) => sum + 4 + n.length, 0);
+  const buf = new Uint8Array(totalSize);
+  let offset = 0;
+  for (const nal of nalUnits) {
+    buf[offset++] = 0;
+    buf[offset++] = 0;
+    buf[offset++] = 0;
+    buf[offset++] = 1;
+    buf.set(nal, offset);
+    offset += nal.length;
+  }
+  return buf;
 }
 
 /**
