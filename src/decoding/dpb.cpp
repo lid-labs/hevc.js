@@ -418,12 +418,13 @@ std::vector<Picture*> DPB::get_output_pictures() {
 // 3. If the picture storage buffer is also "unused for reference",
 //    it is emptied (handled by evict_unused).
 
-Picture* DPB::bump() {
+Picture* DPB::bump(bool skip_current) {
     // §C.5.2.4 step 1: select the picture with the smallest PicOrderCntVal
     // that is marked as "needed for output".
     // Within multiple CVS, earlier CVS pictures are output first.
     Picture* smallest = nullptr;
     for (auto& pic : pictures_) {
+        if (skip_current && pic.get() == current_pic_) continue;
         if (!pic->needed_for_output) continue;
         if (!smallest ||
             pic->cvs_id < smallest->cvs_id ||
@@ -514,7 +515,9 @@ std::vector<Picture*> DPB::drain(const SPS& sps) {
 
         if (!should_bump) break;
 
-        Picture* pic = bump();
+        // Skip the current picture: the counters above exclude it, so bumping
+        // it would output a picture without making either count fall.
+        Picture* pic = bump(/*skip_current=*/true);
         if (!pic) break;
         out.push_back(pic);
 
