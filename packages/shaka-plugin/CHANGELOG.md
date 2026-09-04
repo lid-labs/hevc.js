@@ -1,5 +1,24 @@
 # @hevcjs/shaka-plugin
 
+## 0.4.0
+
+### Minor Changes
+
+- [#245](https://github.com/lid-labs/hevc.js/pull/245) [`d556420`](https://github.com/lid-labs/hevc.js/commit/d5564202831b4c5ec61848354bcb68c9dbef13c9) Thanks [@privaloops](https://github.com/privaloops)! - Add `recommendedBufferConfig()`, buffer settings for HEVC playback through the transmuxer.
+
+  Shaka 4.x's `Transmuxer.transmux()` returns one `Uint8Array` per segment, so the buffered range grows in whole-segment jumps. Where WASM transcoding runs near real time, the playback head skirts the edge of that range and playback stutters in a few-second rhythm — contiguous buffer, nothing out of spec, but visible. The dash.js path does not show it, because it appends transcoded chunks to MSE progressively.
+
+  `player.configure(recommendedBufferConfig())` raises `bufferingGoal` to 30s, against Shaka's default of 10, so a slower-than-real-time stretch drains the buffer instead of stalling playback. It returns a config fragment rather than applying itself: the plugin is handed `shaka`, not the player, and silently rewriting a player's configuration would be a surprise.
+
+  `rebufferingGoal` is deliberately left alone. It decides whether Shaka gates playback on buffer depth at all, and defaults to 0 on Shaka 5 — the buffer poller never starts and the playback rate is never held back. Raising it would switch that on, so a device transcoding at around real time would freeze until the goal was re-accumulated: a longer stall than the stutter being fixed.
+
+  Headroom, not a cure — see the README's "Performance & tuning" section for what else helps when `speedX` stays below 1.
+
+### Patch Changes
+
+- Updated dependencies [[`dc16558`](https://github.com/lid-labs/hevc.js/commit/dc165583d967a700de6574b64b9221186dcc86f6)]:
+  - @hevcjs/core@1.4.3
+
 ## 0.3.5
 
 ### Patch Changes
