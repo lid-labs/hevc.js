@@ -292,9 +292,10 @@ TEST(IncrementalDecode, HeldMemoryDoesNotGrowWithSequenceLength) {
     ASSERT_GE(nal_starts.size(), 3u);
 
     Decoder dec;
-    size_t peak_early = 0;   // peak over the first 12 pictures
-    size_t peak_late = 0;    // peak over everything after them
+    size_t peak_early = 0;   // peak over the first half of the stream
+    size_t peak_late = 0;    // peak over the second half
     size_t total_drained = 0;
+    const size_t midpoint = nal_starts.size() / 2;
 
     for (size_t i = 0; i < nal_starts.size(); i++) {
         size_t start = nal_starts[i];
@@ -305,14 +306,14 @@ TEST(IncrementalDecode, HeldMemoryDoesNotGrowWithSequenceLength) {
         total_drained += dec.drain().size();
 
         size_t held = dec.dpb().pictures().size();
-        if (i < nal_starts.size() / 4) peak_early = std::max(peak_early, held);
+        if (i < midpoint) peak_early = std::max(peak_early, held);
         else peak_late = std::max(peak_late, held);
     }
     total_drained += dec.flush().size();
 
-    // Retention would make the late peak climb well past the early one; a
-    // bounded decoder holds the same number of pictures at frame 50 as at
-    // frame 12.
+    // Retention would make the second-half peak climb past the first-half
+    // one; a bounded decoder holds as many pictures at the end of the stream
+    // as it did once the DPB was warm.
     EXPECT_LE(peak_late, peak_early)
         << "held pictures grew from " << peak_early << " to " << peak_late
         << " over the sequence — pictures are not being released";

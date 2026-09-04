@@ -294,10 +294,14 @@ DecodeStatus Decoder::decode_picture(const std::vector<NalUnit>& nals,
     // §8.1 step 4: mark current picture as short-term reference
     dpb_.mark_current_as_short_term_ref();
 
-    // §C.5.2.3 already marked the picture "needed for output" at allocation
-    // time, from PicOutputFlag. Do not force it to true here: that would
-    // output pictures the bitstream asked to discard (pic_output_flag = 0)
-    // and keep their storage buffer alive until a bump that never comes.
+    // §C.5.2.3: mark current picture as "needed for output"
+    // NOTE: this overrides the PicOutputFlag read at allocation time
+    // (decoder.cpp above). Honouring the flag needs the transcoder to stop
+    // assuming one output frame per demuxed sample when assigning timestamps
+    // — see issue #243.
+    if (dpb_.current_pic()) {
+        dpb_.current_pic()->needed_for_output = true;
+    }
 
     return DecodeStatus::OK;
 }
