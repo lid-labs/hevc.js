@@ -171,6 +171,11 @@ async function loadMPD(presetUrl) {
   });
 
   player = new shaka.Player();
+  // Deeper buffer than Shaka's default: transmux() hands MSE one segment at a
+  // time, so on hardware where transcoding is near real-time the playback head
+  // otherwise rides the edge of the buffered range and stutters. Harmless on
+  // the native path too — it only asks MSE to buffer further ahead.
+  player.configure(HevcShaka.recommendedBufferConfig());
   // Use Shaka's built-in config to route HEVC through our transmuxer even
   // when the browser supports HEVC natively (Safari, recent Chrome on macOS).
   player.configure({ mediaSource: { forceTransmux: forceTranscode } });
