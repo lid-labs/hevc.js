@@ -94,32 +94,35 @@ int32_t transform_buf[64 * 64];  // precision etendue pour transform
 - 64*64*4 = 16KB par buffer, ~48KB total — acceptable sur la stack
 - WASM : la stack par defaut Emscripten est ~64KB (le heap est extensible, pas la stack). Prevoir `-sSTACK_SIZE=1048576` en Phase 8, ou restructurer pour allouer les buffers au niveau CTU
 
-## AD-007 : DPB — L'appelant décide de l'enveloppe mémoire, le décodeur ne libère qu'au bump
+## AD-007 : DPB — the caller sets the memory envelope; the decoder only frees on a bump
 
-**Contexte** : Un buffer d'image n'est recyclé que lorsqu'elle n'est ni référence ni
-en attente de sortie. `drain()` n'évince pas lui-même : il retourne des `Picture*`
-bruts qui doivent rester valides jusqu'au prochain `feed()`. L'éviction est donc
-différée à `alloc_picture()`.
+*Written in English per the repo's documentation convention (CLAUDE.md). AD-001
+to AD-006 predate it and are still in French — see the follow-up issue.*
 
-Conséquence : un appelant qui enchaîne les `feed()` avant de drainer retient une
-image par frame décodée (~24 Mo en 4K), et la longueur de segment qu'il peut
-traiter devient bornée par le plafond WASM de 2 Go.
+**Context**: A picture's storage buffer is reclaimed only once it is neither a
+reference nor pending output. `drain()` does not evict: it returns raw
+`Picture*` that must stay valid until the next `feed()`, so eviction is
+deferred to `alloc_picture()`.
 
-**Décision** : Ne pas faire évincer `drain()`, et exiger des appelants qu'ils
-alternent `feed()` / `drain()`. Le wrapper JS copie les plans hors du tas WASM,
-donc drainer tôt ne coûte rien.
+Consequence: a caller that chains `feed()` calls before draining retains one
+picture per decoded frame (~24 MB at 4K), and the segment length it can handle
+becomes bounded by the 2 GB WASM ceiling.
 
-**Justification** :
-- Faire évincer `drain()` invaliderait les pointeurs qu'il vient de retourner
-- L'API batch (`decode()` + `get_frame(i)`) a besoin de la rétention : c'est son
-  contrat, pas une fuite
-- Déplacer la décision chez l'appelant garde un seul modèle mémoire pour les deux
+**Decision**: Do not make `drain()` evict, and require callers to interleave
+`feed()` / `drain()`. The JS wrapper copies planes out of the WASM heap, so
+draining early costs nothing.
 
-**Conséquence** : `DPB::drain` est appelé une fois par image et non une fois par
-segment, ce qui met ses conditions §C.5.2.2 sur le chemin critique. Elles doivent
-donc exclure l'image courante (le processus s'applique avant son stockage) et
-mesurer le remplissage du DPB en buffers occupés — un compteur qui décroît à
-mesure qu'on bump. Avec `pictures_.size()`, qui ne décroît jamais, la condition
-reste vraie et vide tout le DPB en ordre de décodage.
+**Rationale**:
+- Evicting inside `drain()` would invalidate the pointers it just returned
+- The batch API (`decode()` + `get_frame(i)`) needs the retention: that is its
+  contract, not a leak
+- Moving the decision to the caller keeps a single memory model for both
 
-Enveloppe chiffrée et garde-fous : `docs/memory-envelope.md`.
+**Consequence**: `DPB::drain` is called once per picture rather than once per
+segment, which puts its §C.5.2.2 conditions on the hot path. They must
+therefore exclude the current picture (the process runs before it is stored)
+and measure DPB fullness in occupied buffers — a count that falls as pictures
+are bumped. With `pictures_.size()`, which never falls, the condition stays
+true and drains the whole DPB in decode order.
+
+Figures and guard rails: `docs/memory-envelope.md`.
