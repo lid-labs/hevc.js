@@ -20,16 +20,17 @@ public:
         bytes_.back() |= static_cast<uint8_t>((v & 1) << (7 - nbits_ % 8));
         nbits_++;
     }
-    void bits(uint32_t v, int n) {
-        for (int i = n - 1; i >= 0; i--) bit(v >> i);
+    // 64-bit throughout: ue(0xffffffff) emits 33 information bits, which neither a
+    // uint32_t value nor a shift by 32 can carry.
+    void bits(uint64_t v, int n) {
+        for (int i = n - 1; i >= 0; i--) bit(static_cast<uint32_t>(v >> i));
     }
     void ue(uint32_t v) {
-        // Widened: probing the bit length of a uint32_t shifts by 32 on the last test.
         uint64_t code = static_cast<uint64_t>(v) + 1;
         int n = 0;
         while (code >> (n + 1)) n++;
         bits(0, n);
-        bits(static_cast<uint32_t>(code), n + 1);
+        bits(code, n + 1);
     }
     // Trailing zeros keep the reader inside the buffer past the rejection point.
     std::vector<uint8_t> data() const {
