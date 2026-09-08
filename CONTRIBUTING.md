@@ -10,7 +10,8 @@ Thanks for your interest in contributing! Here's how to get started.
 - [pnpm](https://pnpm.io/)
 - CMake >= 3.16
 - C++17 compiler (clang or gcc)
-- [Emscripten SDK](https://emscripten.org/docs/getting_started/downloads.html) (for WASM builds)
+- For WASM builds: Docker, or a local
+  [Emscripten SDK](https://emscripten.org/docs/getting_started/downloads.html)
 
 ### Build
 
@@ -25,10 +26,12 @@ cmake -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
 cd build && ctest --output-on-failure
 
-# WASM build
-source ~/emsdk/emsdk_env.sh
-emcmake cmake -B build-wasm -DBUILD_WASM=ON -DCMAKE_BUILD_TYPE=Release
-cmake --build build-wasm
+# WASM build — pins the version CI uses, installs nothing
+docker run --rm --user $(id -u):$(id -g) -v "$PWD":/src -w /src \
+  emscripten/emsdk:6.0.8 \
+  sh -c "emcmake cmake -B build-wasm -DBUILD_WASM=ON -DCMAKE_BUILD_TYPE=Release \
+         && cmake --build build-wasm"
+# With a local SDK: source its emsdk_env.sh, then run the two cmake commands directly
 
 # JS packages
 pnpm -r build
@@ -37,7 +40,7 @@ pnpm -r build
 ### Running tests
 
 ```bash
-# C++ unit + oracle tests (128 tests)
+# C++ unit + oracle tests (153 tests)
 pnpm test:native
 
 # E2E browser tests (requires built WASM + demo bundles)
