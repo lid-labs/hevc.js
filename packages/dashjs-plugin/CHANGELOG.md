@@ -1,5 +1,12 @@
 # @hevcjs/dashjs-plugin
 
+## 1.1.7
+
+### Patch Changes
+
+- Updated dependencies [[`486261b`](https://github.com/lid-labs/hevc.js/commit/486261b042d0acfc758651fa3bcea4c171ebec12)]:
+  - @hevcjs/core@1.4.4
+
 ## 1.1.6
 
 ### Patch Changes
