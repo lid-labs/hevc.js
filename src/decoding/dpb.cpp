@@ -264,10 +264,10 @@ void DPB::construct_ref_pic_lists(const SliceHeader& sh, const SPS& /*sps*/,
         return;
     }
 
-    // §7.4.7.1 caps num_ref_idx at 14 and the parser enforces it, but this entry
-    // point is public: clamp to what list_entry_l0 can hold before sizing anything.
-    int numRefIdxL0 = std::min<int>(static_cast<int>(sh.num_ref_idx_l0_active_minus1) + 1,
-                                    static_cast<int>(sh.list_entry_l0.size()));
+    // §7.4.7.1 caps num_ref_idx at 14 and the parser enforces it, but this entry point
+    // is public: clamp while still unsigned, converting first can overflow int.
+    uint32_t maxIdxL0 = static_cast<uint32_t>(sh.list_entry_l0.size()) - 1;
+    int numRefIdxL0 = static_cast<int>(std::min(sh.num_ref_idx_l0_active_minus1, maxIdxL0) + 1);
 
     // §8.3.4 eq 8-8: Build RefPicListTemp0
     int NumRpsCurrTempList0 = std::max<int>(numRefIdxL0, NumPicTotalCurr);
@@ -297,8 +297,8 @@ void DPB::construct_ref_pic_lists(const SliceHeader& sh, const SPS& /*sps*/,
 
     // §8.3.4 eq 8-10, 8-11: Build RefPicList1 (B slices only)
     if (sh.slice_type == SliceType::B) {
-        int numRefIdxL1 = std::min<int>(static_cast<int>(sh.num_ref_idx_l1_active_minus1) + 1,
-                                        static_cast<int>(sh.list_entry_l1.size()));
+        uint32_t maxIdxL1 = static_cast<uint32_t>(sh.list_entry_l1.size()) - 1;
+        int numRefIdxL1 = static_cast<int>(std::min(sh.num_ref_idx_l1_active_minus1, maxIdxL1) + 1);
         int NumRpsCurrTempList1 = std::max<int>(numRefIdxL1, NumPicTotalCurr);
         std::vector<Picture*> RefPicListTemp1;
         {
