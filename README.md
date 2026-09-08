@@ -16,7 +16,7 @@
 
 A from-scratch HEVC decoder written in C++17, compiled to WebAssembly, with drop-in plugins for dash.js, Shaka Player and hls.js. Transcodes HEVC to H.264 in real-time, client-side, via WebCodecs inside a Web Worker. Works on Chrome, Edge, and Firefox where WebCodecs H.264 encoding is available.
 
-1080p @ 60fps. 262 KB WASM, ~97 KB gzipped over the wire. Zero dependencies. No special server headers required. Compute-aware quality control caps the player's ABR ceiling when the device can't transcode at real-time, so the buffer never starves — automatic with the dash.js plugin, one call away with hls.js and Shaka.
+1080p @ 60fps. 262 KB WASM, ~97 KB gzip-compressed. Zero dependencies. No special server headers required. Compute-aware quality control caps the player's ABR ceiling when the device can't transcode at real-time, so the buffer never starves — automatic with the dash.js plugin, one call away with hls.js and Shaka.
 
 Built in 8 days by one developer, assisted by AI — [read the story](https://www.developpement.ai/blog/hevcjs-decodeur-h265-navigateur-wasm).
 
@@ -315,7 +315,7 @@ Single-threaded, Apple Silicon (M-series):
 | **4K decode** | 28 fps | 21 fps | — |
 | **1080p transcode** | — | ~2.5x realtime (6s segment in 2.4s) | — |
 
-The WASM decoder is within 20% of native C++ performance, and reaches **83% the speed of libde265** (a mature, 10-year-old optimized HEVC decoder) when both are compiled to WASM — in **1/8th the binary size** (262 KB vs ~2 MB; ~97 KB gzipped over the wire).
+The WASM decoder is within 20% of native C++ performance, and reaches **83% the speed of libde265** (a mature, 10-year-old optimized HEVC decoder) when both are compiled to WASM — in **1/8th the binary size** (262 KB vs ~2 MB; ~97 KB gzip-compressed).
 
 ### Spec conformance
 
