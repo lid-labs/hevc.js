@@ -131,7 +131,7 @@ Figures and guard rails: `docs/memory-envelope.md`.
 ## AD-008 : Bitstream conformance belongs to the parser, memory safety to the decoder
 
 **Context**: §8.3.4's reference list construction trusted two conformance
-requirements nothing enforced — `NumPicTotalCurr != 0` on a P/B slice (§7.4.7.1)
+requirements that nothing enforced — `NumPicTotalCurr != 0` on a P/B slice (§7.4.7.1)
 and `list_entry_lX < NumPicTotalCurr` (§7.4.7.2). The first made a loop
 non-terminating, the second read past the end of a vector.
 
