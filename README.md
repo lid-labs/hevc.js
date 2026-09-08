@@ -298,8 +298,8 @@ cd build && ctest --output-on-failure    # 153 tests
 
 #### WebAssembly
 
-Needs Emscripten. The container route needs nothing installed and pins the same
-version CI uses:
+Needs Emscripten. The container route needs no local SDK install and pins the
+same version CI uses:
 
 ```bash
 docker run --rm --user $(id -u):$(id -g) -v "$PWD":/src -w /src \

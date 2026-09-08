@@ -26,7 +26,7 @@ cmake -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
 cd build && ctest --output-on-failure
 
-# WASM build — pins the version CI uses, installs nothing
+# WASM build — pins the version CI uses, needs no local Emscripten SDK
 docker run --rm --user $(id -u):$(id -g) -v "$PWD":/src -w /src \
   emscripten/emsdk:6.0.8 \
   sh -c "emcmake cmake -B build-wasm -DBUILD_WASM=ON -DCMAKE_BUILD_TYPE=Release \

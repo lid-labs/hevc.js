@@ -239,7 +239,7 @@ cd build && ctest --output-on-failure    # 153 个测试
 
 #### WebAssembly
 
-需要 Emscripten。使用容器无需安装任何东西,且与 CI 使用的版本一致:
+需要 Emscripten。使用容器则无需安装本地 SDK,且与 CI 使用的版本一致:
 
 ```bash
 docker run --rm --user $(id -u):$(id -g) -v "$PWD":/src -w /src \

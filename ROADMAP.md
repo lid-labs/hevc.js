@@ -4,9 +4,10 @@ What's coming next, roughly in priority order. Open a
 [Discussion](https://github.com/lid-labs/hevc.js/discussions) or an issue if
 you'd like to influence it — real-world usage reports carry the most weight.
 
-Open issues carry a `priority: high` / `medium` / `low` label, which is the
-finer-grained view of the same ordering:
-[high](https://github.com/lid-labs/hevc.js/issues?q=is%3Aissue+is%3Aopen+label%3A%22priority%3A+high%22).
+Open issues carry a priority label, which is the finer-grained view of the same
+ordering: [high](https://github.com/lid-labs/hevc.js/issues?q=is%3Aissue+is%3Aopen+label%3A%22priority%3A+high%22),
+[medium](https://github.com/lid-labs/hevc.js/issues?q=is%3Aissue+is%3Aopen+label%3A%22priority%3A+medium%22),
+[low](https://github.com/lid-labs/hevc.js/issues?q=is%3Aissue+is%3Aopen+label%3A%22priority%3A+low%22).
 
 ## Near term
 
