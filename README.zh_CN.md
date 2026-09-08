@@ -234,18 +234,28 @@ int hevc_decoder_get_frame(HEVCDecoder* dec, int index, HEVCFrame* frame);
 ```bash
 cmake -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
-cd build && ctest --output-on-failure    # 128 个测试
+cd build && ctest --output-on-failure    # 153 个测试
 ```
 
 #### WebAssembly
 
-需要 [Emscripten SDK](https://emscripten.org/docs/getting_started/downloads.html)。
+需要 Emscripten。使用容器则无需安装本地 SDK,且与 CI 使用的版本一致:
 
 ```bash
-source ~/emsdk/emsdk_env.sh
+docker run --rm --user $(id -u):$(id -g) -v "$PWD":/src -w /src \
+  emscripten/emsdk:6.0.8 \
+  sh -c "emcmake cmake -B build-wasm -DBUILD_WASM=ON -DCMAKE_BUILD_TYPE=Release \
+         && cmake --build build-wasm"
+# 输出:build-wasm/hevc-decode.js + hevc-decode.wasm(262 KB)
+```
+
+若已安装本地 [Emscripten SDK](https://emscripten.org/docs/getting_started/downloads.html),
+先加载环境,再执行同样的两条命令:
+
+```bash
+source /path/to/emsdk/emsdk_env.sh
 emcmake cmake -B build-wasm -DBUILD_WASM=ON -DCMAKE_BUILD_TYPE=Release
 cmake --build build-wasm
-# 输出:build-wasm/hevc-decode.js + hevc-decode.wasm(262 KB)
 ```
 
 ### 性能

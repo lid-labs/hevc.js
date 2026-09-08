@@ -293,18 +293,29 @@ int hevc_decoder_get_frame(HEVCDecoder* dec, int index, HEVCFrame* frame);
 ```bash
 cmake -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
-cd build && ctest --output-on-failure    # 128 tests
+cd build && ctest --output-on-failure    # 153 tests
 ```
 
 #### WebAssembly
 
-Requires [Emscripten SDK](https://emscripten.org/docs/getting_started/downloads.html).
+Needs Emscripten. The container route needs no local SDK install and pins the
+same version CI uses:
 
 ```bash
-source ~/emsdk/emsdk_env.sh
+docker run --rm --user $(id -u):$(id -g) -v "$PWD":/src -w /src \
+  emscripten/emsdk:6.0.8 \
+  sh -c "emcmake cmake -B build-wasm -DBUILD_WASM=ON -DCMAKE_BUILD_TYPE=Release \
+         && cmake --build build-wasm"
+# Output: build-wasm/hevc-decode.js + hevc-decode.wasm (262 KB)
+```
+
+With a local [Emscripten SDK](https://emscripten.org/docs/getting_started/downloads.html)
+instead, source it and run the same two commands:
+
+```bash
+source /path/to/emsdk/emsdk_env.sh
 emcmake cmake -B build-wasm -DBUILD_WASM=ON -DCMAKE_BUILD_TYPE=Release
 cmake --build build-wasm
-# Output: build-wasm/hevc-decode.js + hevc-decode.wasm (262 KB)
 ```
 
 ### Performance
