@@ -32,9 +32,9 @@ TEST_FILE="${1:-tests/e2e/bugfix-validation.spec.ts}"
 echo "=== Running E2E tests on BrowserStack (local tunnel) ==="
 echo "Test file: $TEST_FILE"
 
-# The default target is the local demo, which is what puts browserstack.local
-# in the caps and starts the demo server.
-npx playwright test \
+# Pinned rather than left to the default: an E2E_BASE_URL already exported in the
+# shell would send these remote browsers somewhere the tunnel does not serve.
+E2E_BASE_URL=http://localhost:8090 npx playwright test \
   --project=bs-chrome-windows \
   --project=bs-edge-windows \
   --project=bs-firefox-windows \

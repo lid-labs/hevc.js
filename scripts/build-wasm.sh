@@ -31,6 +31,11 @@ if [ -z "$MODE" ]; then
   fi
 fi
 
+if [ "$MODE" != local ] && [ "$MODE" != docker ]; then
+  echo "Error: WASM_BUILDER must be 'local' or 'docker', got '$MODE'" >&2
+  exit 1
+fi
+
 if [ "$MODE" = docker ] && ! command -v docker >/dev/null 2>&1; then
   echo "Error: WASM_BUILDER=docker but docker is not in PATH" >&2
   exit 1
