@@ -112,6 +112,8 @@ hls.loadSource('https://example.com/playlist.m3u8');
 
 目前支持 fMP4 HLS:纯视频、音视频分离,以及音视频混装(muxed)的多码率流。对于混装轨道(单个 audiovideo 轨),HEVC 视频会被转码,AAC 音频直接透传,再重新封装为一个合并分片(主线程路径,仅支持 AAC)。详见[插件 README](packages/hlsjs-plugin/README.md)(英文)。
 
+![hevc.js 通过 hls.js 播放 HEVC HLS 流 — 强制 WASM 转码为 H.264,并在播放器下方实时显示每段转码速度](docs/assets/hlsjs-demo.gif)
+
 ### 转码工作原理
 
 1. **MSE 拦截** — 在播放器初始化前对 `MediaSource.addSourceBuffer()` 打补丁。当播放器创建 HEVC SourceBuffer 时,我们返回一个代理对象,它接收 HEVC 数据但向真正的 SourceBuffer 推送 H.264。

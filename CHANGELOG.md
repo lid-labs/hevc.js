@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **HLS demo page** (`demo/hls.html`) with the same four presets as the DASH demo (BBB 30s ABR + three test patterns), repackaged from the DASH streams by `tools/gen_hls_streams.sh` (`-c copy`, CODECS attribute injected from the DASH manifest, hvc1 tagging). E2E spec `tests/e2e/hls.spec.ts`.
 
 ### Changed
+- **hls.js demo GIF in both READMEs**: a 6s capture of `demo/hls.html` with forced transcoding on, showing playback and the per-segment speed readout, placed under the `hls.js` setup section. `docs/assets/hlsjs-demo.gif`, 800px/12fps, 1.3 MB.
 - **Documented WASM size**: 261 KB → 262 KB. The shipped `hevc-decode.wasm` is 267,853 bytes, which the old figure rounded down rather than to the nearest. The gzip-compressed size is now stated alongside it — ~97 KB (98,922 bytes), which is what a browser downloads wherever the server serves the `.wasm` compressed. Applied to both READMEs, `@hevcjs/core`'s README and the comparison page.
 
 ### Fixed

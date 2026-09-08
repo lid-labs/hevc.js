@@ -132,6 +132,8 @@ hls.loadSource('https://example.com/playlist.m3u8');
 
 No player instance needed to attach: hls.js keeps HEVC levels in its ladder as long as the (patched) `MediaSource.isTypeSupported` accepts them. Supported today: fMP4 HLS with video-only, demuxed-audio, or muxed audio+video renditions. For muxed A/V (single `audiovideo` track) the HEVC video is transcoded and the AAC audio is passed through, re-muxed into one combined segment (main-thread path; AAC only). Validated end-to-end with a muxed test stream. See the [plugin README](packages/hlsjs-plugin/README.md) for details.
 
+![hevc.js playing an HEVC HLS stream through hls.js — forced WASM transcoding to H.264, with the live per-segment transcode speed reported under the player](docs/assets/hlsjs-demo.gif)
+
 ### How the transcoding works
 
 1. **MSE intercept** — Patches `MediaSource.addSourceBuffer()` before the player initializes. When the player creates an HEVC SourceBuffer, we return a proxy that accepts HEVC data but feeds H.264 to the real SourceBuffer.
