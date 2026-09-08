@@ -293,6 +293,14 @@ bool SliceHeader::parse(BitstreamReader& bs, const SPS& sps, const PPS& pps,
             if (used) NumPicTotalCurr++;
         }
 
+        // §7.4.7.1: with no picture marked as used by the current picture, §8.3.4's
+        // RefPicListTemp loops have nothing to advance on and never terminate.
+        if (NumPicTotalCurr == 0) {
+            HEVC_LOG(PARSE, "Slice rejected: NumPicTotalCurr == 0 on slice_type=%d",
+                     static_cast<int>(slice_type));
+            return false;
+        }
+
         // ref_pic_lists_modification()
         if (pps.lists_modification_present_flag && NumPicTotalCurr > 1) {
             int listEntryBits = ceil_log2(NumPicTotalCurr);
@@ -301,6 +309,13 @@ bool SliceHeader::parse(BitstreamReader& bs, const SPS& sps, const PPS& pps,
             if (ref_pic_list_modification_flag_l0) {
                 for (uint32_t i = 0; i <= num_ref_idx_l0_active_minus1; i++) {
                     list_entry_l0[i] = bs.read_bits(listEntryBits);
+                    // §7.4.7.2: range 0..NumPicTotalCurr-1 — listEntryBits holds larger
+                    // values whenever NumPicTotalCurr is not a power of two.
+                    if (list_entry_l0[i] >= static_cast<uint32_t>(NumPicTotalCurr)) {
+                        HEVC_LOG(PARSE, "Slice rejected: list_entry_l0[%u]=%u >= NumPicTotalCurr=%d",
+                                 i, list_entry_l0[i], NumPicTotalCurr);
+                        return false;
+                    }
                 }
             }
 
@@ -309,6 +324,11 @@ bool SliceHeader::parse(BitstreamReader& bs, const SPS& sps, const PPS& pps,
                 if (ref_pic_list_modification_flag_l1) {
                     for (uint32_t i = 0; i <= num_ref_idx_l1_active_minus1; i++) {
                         list_entry_l1[i] = bs.read_bits(listEntryBits);
+                        if (list_entry_l1[i] >= static_cast<uint32_t>(NumPicTotalCurr)) {
+                            HEVC_LOG(PARSE, "Slice rejected: list_entry_l1[%u]=%u >= NumPicTotalCurr=%d",
+                                     i, list_entry_l1[i], NumPicTotalCurr);
+                            return false;
+                        }
                     }
                 }
             }

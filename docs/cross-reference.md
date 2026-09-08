@@ -27,7 +27,7 @@ Quand tu travailles sur une section de la spec, ce tableau te dit exactement que
 | §8.4.4 | Intra prediction | `08-05-intra-prediction.md` | `intra-tables.md` | `decoding/intra_prediction.*` | `test_intra.cpp` | 4 |
 | §8.6.2 | Scaling (dequant) | `08-06-transform-quant.md` | `scaling-list-defaults.md` | `decoding/transform.*` | `test_transform.cpp` | 4 |
 | §8.6.3 | Transform inverse | `08-06-transform-quant.md` | `transform-matrices.md` | `decoding/transform.*` | `test_transform.cpp` | 4 |
-| §8.3 | Ref pic management | `08-03-reference-pictures.md` | — | `decoding/ref_pictures.*` | `test_ref_pictures.cpp` | 5 |
+| §8.3 | Ref pic management | `08-03-reference-pictures.md` | — | `decoding/dpb.*` | `test_ref_pic_lists.cpp` | 5 |
 | §8.5.3 | Inter prediction | `08-04-inter-prediction.md` | `merge-table.md` | `decoding/inter_prediction.*` | `test_inter.cpp` | 5 |
 | §8.5.3.2 | Luma interpolation | `08-04-inter-prediction.md` | — | `decoding/inter_prediction.*` | `test_inter.cpp` | 5 |
 | §8.7.2 | Deblocking | `08-07-deblocking.md` | — | `filters/deblocking.*` | `test_deblocking.cpp` | 6 |

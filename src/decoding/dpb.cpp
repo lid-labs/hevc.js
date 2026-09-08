@@ -244,6 +244,11 @@ void DPB::derive_rps(const SliceHeader& sh, const SPS& sps,
 
 void DPB::construct_ref_pic_lists(const SliceHeader& sh, const SPS& /*sps*/,
                                    const PPS& /*pps*/) {
+    // Cleared before any early return: resetting per branch left L1 holding the
+    // previous B slice's entries on a P slice, and every early return leaking state.
+    ref_pic_list0_.clear();
+    ref_pic_list1_.clear();
+
     if (sh.slice_type == SliceType::I) return;  // No ref lists for I slices
 
     int NumPocStCurrBefore = static_cast<int>(ref_pic_set_st_curr_before_.size());
@@ -251,8 +256,21 @@ void DPB::construct_ref_pic_lists(const SliceHeader& sh, const SPS& /*sps*/,
     int NumPocLtCurr       = static_cast<int>(ref_pic_set_lt_curr_.size());
     int NumPicTotalCurr    = NumPocStCurrBefore + NumPocStCurrAfter + NumPocLtCurr;
 
+    // The loops below would spin: no set to advance rIdx on. Rejected by the parser
+    // (§7.4.7.1), but re-derived here and also 0 for SPS long-term refs — see #249.
+    if (NumPicTotalCurr == 0) {
+        HEVC_LOG(PARSE, "RefPicLists: NumPicTotalCurr == 0, no list built (slice_type=%d)",
+                 static_cast<int>(sh.slice_type));
+        return;
+    }
+
+    // §7.4.7.1 caps num_ref_idx at 14 and the parser enforces it, but this entry point
+    // is public: clamp while still unsigned, converting first can overflow int.
+    uint32_t maxIdxL0 = static_cast<uint32_t>(sh.list_entry_l0.size()) - 1;
+    int numRefIdxL0 = static_cast<int>(std::min(sh.num_ref_idx_l0_active_minus1, maxIdxL0) + 1);
+
     // §8.3.4 eq 8-8: Build RefPicListTemp0
-    int NumRpsCurrTempList0 = std::max<int>(sh.num_ref_idx_l0_active_minus1 + 1, NumPicTotalCurr);
+    int NumRpsCurrTempList0 = std::max<int>(numRefIdxL0, NumPicTotalCurr);
     std::vector<Picture*> RefPicListTemp0;
     {
         int rIdx = 0;
@@ -267,19 +285,21 @@ void DPB::construct_ref_pic_lists(const SliceHeader& sh, const SPS& /*sps*/,
     }
 
     // §8.3.4 eq 8-9: Build RefPicList0
-    ref_pic_list0_.clear();
-    for (int rIdx = 0; rIdx <= static_cast<int>(sh.num_ref_idx_l0_active_minus1); rIdx++) {
-        Picture* pic;
-        if (sh.ref_pic_list_modification_flag_l0)
-            pic = RefPicListTemp0[sh.list_entry_l0[rIdx]];
-        else
-            pic = RefPicListTemp0[rIdx];
+    for (int rIdx = 0; rIdx < numRefIdxL0; rIdx++) {
+        // §7.4.7.2 bounds list_entry and the parser rejects violations, so an index
+        // past the end here reads as a missing reference rather than out of bounds.
+        size_t idx = sh.ref_pic_list_modification_flag_l0
+                         ? sh.list_entry_l0[rIdx]
+                         : static_cast<size_t>(rIdx);
+        Picture* pic = idx < RefPicListTemp0.size() ? RefPicListTemp0[idx] : nullptr;
         ref_pic_list0_.push_back({pic});
     }
 
     // §8.3.4 eq 8-10, 8-11: Build RefPicList1 (B slices only)
     if (sh.slice_type == SliceType::B) {
-        int NumRpsCurrTempList1 = std::max<int>(sh.num_ref_idx_l1_active_minus1 + 1, NumPicTotalCurr);
+        uint32_t maxIdxL1 = static_cast<uint32_t>(sh.list_entry_l1.size()) - 1;
+        int numRefIdxL1 = static_cast<int>(std::min(sh.num_ref_idx_l1_active_minus1, maxIdxL1) + 1);
+        int NumRpsCurrTempList1 = std::max<int>(numRefIdxL1, NumPicTotalCurr);
         std::vector<Picture*> RefPicListTemp1;
         {
             int rIdx = 0;
@@ -294,13 +314,11 @@ void DPB::construct_ref_pic_lists(const SliceHeader& sh, const SPS& /*sps*/,
             }
         }
 
-        ref_pic_list1_.clear();
-        for (int rIdx = 0; rIdx <= static_cast<int>(sh.num_ref_idx_l1_active_minus1); rIdx++) {
-            Picture* pic;
-            if (sh.ref_pic_list_modification_flag_l1)
-                pic = RefPicListTemp1[sh.list_entry_l1[rIdx]];
-            else
-                pic = RefPicListTemp1[rIdx];
+        for (int rIdx = 0; rIdx < numRefIdxL1; rIdx++) {
+            size_t idx = sh.ref_pic_list_modification_flag_l1
+                             ? sh.list_entry_l1[rIdx]
+                             : static_cast<size_t>(rIdx);
+            Picture* pic = idx < RefPicListTemp1.size() ? RefPicListTemp1[idx] : nullptr;
             ref_pic_list1_.push_back({pic});
         }
     }
