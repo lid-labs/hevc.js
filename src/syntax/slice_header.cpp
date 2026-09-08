@@ -296,7 +296,8 @@ bool SliceHeader::parse(BitstreamReader& bs, const SPS& sps, const PPS& pps,
         // §7.4.7.1: with no picture marked as used by the current picture, §8.3.4's
         // RefPicListTemp loops have nothing to advance on and never terminate.
         if (NumPicTotalCurr == 0) {
-            HEVC_LOG(PARSE, "Slice rejected: NumPicTotalCurr == 0 on a P/B slice%s", "");
+            HEVC_LOG(PARSE, "Slice rejected: NumPicTotalCurr == 0 on slice_type=%d",
+                     static_cast<int>(slice_type));
             return false;
         }
 

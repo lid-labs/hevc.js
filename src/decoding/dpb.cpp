@@ -259,7 +259,8 @@ void DPB::construct_ref_pic_lists(const SliceHeader& sh, const SPS& /*sps*/,
     // The loops below would spin: no set to advance rIdx on. Rejected by the parser
     // (§7.4.7.1), but re-derived here and also 0 for SPS long-term refs — see #249.
     if (NumPicTotalCurr == 0) {
-        HEVC_LOG(PARSE, "RefPicLists: NumPicTotalCurr == 0, no list built%s", "");
+        HEVC_LOG(PARSE, "RefPicLists: NumPicTotalCurr == 0, no list built (slice_type=%d)",
+                 static_cast<int>(sh.slice_type));
         return;
     }
 
