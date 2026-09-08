@@ -1,11 +1,5 @@
 import { defineConfig } from '@playwright/test';
-
-// LOCAL_DEMO=1 → serve demo/ locally (for both local-chromium and BrowserStack Local)
-const LOCAL_DEMO = process.env.LOCAL_DEMO === '1';
-const LOCAL_PORT = 8090;
-const BASE_URL = LOCAL_DEMO
-  ? `http://localhost:${LOCAL_PORT}`
-  : 'https://hevcjs.dev/demo';
+import { BASE_URL, IS_LOCAL, LOCAL_PORT } from './tests/e2e/target';
 
 const BS_USER = process.env.BROWSERSTACK_USERNAME || '';
 const BS_KEY = process.env.BROWSERSTACK_ACCESS_KEY || '';
@@ -33,7 +27,7 @@ function bsEndpoint(b: typeof bsBrowsers[0]) {
     project: 'hevc.js',
     build: 'E2E Cross-Browser — Bug Fixes',
     // BrowserStack Local tunnel — access localhost from remote browsers
-    ...(LOCAL_DEMO && { 'browserstack.local': 'true' }),
+    ...(IS_LOCAL && { 'browserstack.local': 'true' }),
   };
   return `wss://cdp.browserstack.com/playwright?caps=${encodeURIComponent(JSON.stringify(caps))}`;
 }
@@ -50,8 +44,8 @@ export default defineConfig({
     baseURL: BASE_URL,
     trace: 'on-first-retry',
   },
-  // Local demo server (only when LOCAL_DEMO=1)
-  ...(LOCAL_DEMO && {
+  // Local demo server — only when the target is the local demo
+  ...(IS_LOCAL && {
     webServer: {
       // CORS handler — needed by the cross-origin asset loading test
       // (page on localhost, worker/wasm fetched from 127.0.0.1).

@@ -32,8 +32,9 @@ TEST_FILE="${1:-tests/e2e/bugfix-validation.spec.ts}"
 echo "=== Running E2E tests on BrowserStack (local tunnel) ==="
 echo "Test file: $TEST_FILE"
 
-# Run with LOCAL_DEMO=1 so baseURL = localhost and BS caps include browserstack.local
-LOCAL_DEMO=1 source ~/.zshrc && npx playwright test \
+# The default target is the local demo, which is what puts browserstack.local
+# in the caps and starts the demo server.
+npx playwright test \
   --project=bs-chrome-windows \
   --project=bs-edge-windows \
   --project=bs-firefox-windows \

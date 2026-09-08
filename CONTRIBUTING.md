@@ -26,12 +26,8 @@ cmake -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
 cd build && ctest --output-on-failure
 
-# WASM build — pins the version CI uses, needs no local Emscripten SDK
-docker run --rm --user $(id -u):$(id -g) -v "$PWD":/src -w /src \
-  emscripten/emsdk:6.0.8 \
-  sh -c "emcmake cmake -B build-wasm -DBUILD_WASM=ON -DCMAKE_BUILD_TYPE=Release \
-         && cmake --build build-wasm"
-# With a local SDK: source its emsdk_env.sh, then run the two cmake commands directly
+# WASM build — local Emscripten SDK if emcmake is on the PATH, Docker otherwise
+pnpm build:wasm
 
 # JS packages
 pnpm -r build
@@ -43,9 +39,15 @@ pnpm -r build
 # C++ unit + oracle tests (153 tests)
 pnpm test:native
 
-# E2E browser tests (requires built WASM + demo bundles)
-pnpm build:demo
+# E2E browser tests — builds the WASM and demo bundles, then tests the branch
 pnpm test:e2e
+
+# Same suite without rebuilding, for quick iterations
+pnpm test:e2e:fast
+
+# Against a deployed target instead: a PR preview, or the published site
+E2E_BASE_URL=https://<preview>.vercel.app/demo pnpm test:e2e:fast
+pnpm test:e2e:prod
 ```
 
 ## Pull request process

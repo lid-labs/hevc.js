@@ -298,25 +298,17 @@ cd build && ctest --output-on-failure    # 153 tests
 
 #### WebAssembly
 
-Needs Emscripten. The container route needs no local SDK install and pins the
-same version CI uses:
-
 ```bash
-docker run --rm --user $(id -u):$(id -g) -v "$PWD":/src -w /src \
-  emscripten/emsdk:6.0.8 \
-  sh -c "emcmake cmake -B build-wasm -DBUILD_WASM=ON -DCMAKE_BUILD_TYPE=Release \
-         && cmake --build build-wasm"
-# Output: build-wasm/hevc-decode.js + hevc-decode.wasm (262 KB)
+pnpm build:wasm
+# Output: build-wasm/hevc-decode.js + hevc-decode.wasm (262 KB, ~97 KB gzipped),
+# copied into packages/core/wasm/
 ```
 
-With a local [Emscripten SDK](https://emscripten.org/docs/getting_started/downloads.html)
-instead, source it and run the same two commands:
-
-```bash
-source /path/to/emsdk/emsdk_env.sh
-emcmake cmake -B build-wasm -DBUILD_WASM=ON -DCMAKE_BUILD_TYPE=Release
-cmake --build build-wasm
-```
+Uses a local [Emscripten SDK](https://emscripten.org/docs/getting_started/downloads.html)
+when `emcmake` is on the PATH — source its `emsdk_env.sh` first — and otherwise
+runs `emscripten/emsdk:6.0.8`, the version CI pins, through Docker. No local SDK
+install needed on that route. `WASM_BUILDER=docker` forces the container even
+when an SDK is available.
 
 ### Performance
 

@@ -12,12 +12,10 @@ export function collectConsoleErrors(page: Page): string[] {
   return errors;
 }
 
-/** Navigate to a demo page and wait for initial load */
+/** Navigate to a demo page and wait for initial load. Relative: Playwright
+ *  resolves it against the configured baseURL, so the target stays in one place. */
 export async function loadDemoPage(page: Page, path: string) {
-  const baseURL = page.context().browser()?.version
-    ? (process.env.LOCAL_DEMO === '1' ? 'http://localhost:8090' : 'https://hevcjs.dev/demo')
-    : 'https://hevcjs.dev/demo';
-  await page.goto(`${baseURL}/${path}`, { waitUntil: 'networkidle' });
+  await page.goto(path, { waitUntil: 'networkidle' });
 }
 
 /** Click a preset button */
