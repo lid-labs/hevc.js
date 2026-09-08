@@ -13,6 +13,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Core: `SourceBuffer.changeType()` patched**: HEVC mimes map to their H.264 equivalent on codec switches.
 - **HLS demo page** (`demo/hls.html`) with the same four presets as the DASH demo (BBB 30s ABR + three test patterns), repackaged from the DASH streams by `tools/gen_hls_streams.sh` (`-c copy`, CODECS attribute injected from the DASH manifest, hvc1 tagging). E2E spec `tests/e2e/hls.spec.ts`.
 
+### Changed
+- **Documented WASM size**: 261 KB → 262 KB. The shipped `hevc-decode.wasm` is 267,853 bytes, which the old figure rounded down rather than to the nearest. The gzip-compressed size is now stated alongside it — ~97 KB (98,922 bytes), which is what a browser downloads wherever the server serves the `.wasm` compressed. Applied to both READMEs, `@hevcjs/core`'s README and the comparison page.
+
 ### Fixed
 - **Decoder memory grew with segment length instead of staying bounded** (`segment-transcoder.ts`, `dpb.cpp`): both transcoder paths now drain after every feed rather than feeding a whole segment and draining once. A deferred drain retained one DPB picture per decoded frame (~24 MB each at 4K), overrunning the 2 GB WASM ceiling on a 2s 4K segment. `processMediaSegmentStreaming` also ships each batch as it is encoded, bounding the JS heap. Memory envelope documented in `docs/memory-envelope.md`.
 - **Pictures emitted out of display order on streams with B-frames** (`dpb.cpp`): `DPB::drain` evaluated its §C.5.2.2 bumping conditions with the current picture included (the process runs before it is stored), and measured DPB fullness with `pictures_.size()`, which never shrinks because eviction is deferred to keep drained pointers valid — so once the condition held it drained the whole DPB in decode order. Latent while callers drained once per segment; load-bearing now that draining is per picture.
