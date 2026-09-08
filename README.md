@@ -16,7 +16,7 @@
 
 A from-scratch HEVC decoder written in C++17, compiled to WebAssembly, with drop-in plugins for dash.js, Shaka Player and hls.js. Transcodes HEVC to H.264 in real-time, client-side, via WebCodecs inside a Web Worker. Works on Chrome, Edge, and Firefox where WebCodecs H.264 encoding is available.
 
-1080p @ 60fps. 262KB WASM, ~97KB gzipped over the wire. Zero dependencies. No special server headers required. Compute-aware quality control caps the player's ABR ceiling when the device can't transcode at real-time, so the buffer never starves — automatic with the dash.js plugin, one call away with hls.js and Shaka.
+1080p @ 60fps. 262 KB WASM, ~97 KB gzipped over the wire. Zero dependencies. No special server headers required. Compute-aware quality control caps the player's ABR ceiling when the device can't transcode at real-time, so the buffer never starves — automatic with the dash.js plugin, one call away with hls.js and Shaka.
 
 Built in 8 days by one developer, assisted by AI — [read the story](https://www.developpement.ai/blog/hevcjs-decodeur-h265-navigateur-wasm).
 
@@ -68,7 +68,7 @@ The plugin relies on 3 static files from `@hevcjs/core` (installed as a transiti
 
 - `transcode-worker.js` — Web Worker (IIFE, standalone)
 - `wasm/hevc-decode.js` — Emscripten glue code
-- `wasm/hevc-decode.wasm` — WASM binary (262KB, ~97KB gzipped)
+- `wasm/hevc-decode.wasm` — WASM binary (262 KB, ~97 KB gzipped)
 
 Copy them from `node_modules/@hevcjs/core/dist/` to your public directory:
 
@@ -302,7 +302,7 @@ Requires [Emscripten SDK](https://emscripten.org/docs/getting_started/downloads.
 source ~/emsdk/emsdk_env.sh
 emcmake cmake -B build-wasm -DBUILD_WASM=ON -DCMAKE_BUILD_TYPE=Release
 cmake --build build-wasm
-# Output: build-wasm/hevc-decode.js + hevc-decode.wasm (262KB)
+# Output: build-wasm/hevc-decode.js + hevc-decode.wasm (262 KB)
 ```
 
 ### Performance
