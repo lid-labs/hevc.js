@@ -24,10 +24,12 @@ public:
         for (int i = n - 1; i >= 0; i--) bit(v >> i);
     }
     void ue(uint32_t v) {
+        // Widened: probing the bit length of a uint32_t shifts by 32 on the last test.
+        uint64_t code = static_cast<uint64_t>(v) + 1;
         int n = 0;
-        while ((v + 1) >> (n + 1)) n++;
+        while (code >> (n + 1)) n++;
         bits(0, n);
-        bits(v + 1, n + 1);
+        bits(static_cast<uint32_t>(code), n + 1);
     }
     // Trailing zeros keep the reader inside the buffer past the rejection point.
     std::vector<uint8_t> data() const {
