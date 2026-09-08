@@ -126,3 +126,30 @@ are bumped. With `pictures_.size()`, which never falls, the condition stays
 true and drains the whole DPB in decode order.
 
 Figures and guard rails: `docs/memory-envelope.md`.
+
+
+## AD-008 : Bitstream conformance belongs to the parser, memory safety to the decoder
+
+**Context**: §8.3.4's reference list construction trusted two conformance
+requirements nothing enforced — `NumPicTotalCurr != 0` on a P/B slice (§7.4.7.1)
+and `list_entry_lX < NumPicTotalCurr` (§7.4.7.2). The first made a loop
+non-terminating, the second read past the end of a vector.
+
+**Decision**: Reject non-conforming streams in `SliceHeader::parse`, and keep a
+local guard at the point of use in `DPB`.
+
+**Rationale**:
+- The parser already owns this role (`num_ref_idx > 14`, `slice_segment_address`,
+  `lt_idx_sps`) and returning false there makes `decode_picture` fail before a
+  picture is allocated, so no state has to be unwound
+- The two are not duplicates: the parser decides whether a stream is admissible,
+  the DPB makes an indexing operation safe whatever its input. `construct_ref_pic_lists`
+  is public and its `NumPicTotalCurr` is re-derived from DPB state, not carried over
+  from the parser — the two counts can disagree
+- A guard at the point of use is testable directly; testing the parser path alone
+  requires hand-building a bitstream
+
+**Consequence**: A decoder-side guard firing means the two derivations diverged,
+not that the stream is bad. One such divergence is known and tracked in #249:
+long-term references declared in the SPS are never copied into the slice header,
+so the DPB counts 0 where the parser counted 1.

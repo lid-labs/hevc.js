@@ -112,6 +112,7 @@ if(BUILD_TESTS AND NOT BUILD_WASM)
         tests/unit/test_parameter_sets.cpp
         tests/unit/test_cabac.cpp
         tests/unit/test_incremental.cpp
+        tests/unit/test_ref_pic_lists.cpp
     )
 
     target_link_libraries(hevc_tests PRIVATE
@@ -124,7 +125,8 @@ if(BUILD_TESTS AND NOT BUILD_WASM)
     )
 
     include(GoogleTest)
-    gtest_discover_tests(hevc_tests)
+    # A non-terminating decode loop must fail the suite, not stall it.
+    gtest_discover_tests(hevc_tests PROPERTIES TIMEOUT 120)
 
     # Oracle tests — compare decoded YUV MD5 against reference
     # These tests require the decoder to produce YUV output (-o flag)
