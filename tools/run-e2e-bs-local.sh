@@ -34,16 +34,20 @@ echo "Test file: $TEST_FILE"
 
 # Pinned rather than left to the default: an E2E_BASE_URL already exported in the
 # shell would send these remote browsers somewhere the tunnel does not serve.
+# Status is kept rather than swallowed, so the tunnel still stops on failure.
+status=0
 E2E_BASE_URL=http://localhost:8090 npx playwright test \
   --project=bs-chrome-windows \
   --project=bs-edge-windows \
   --project=bs-firefox-windows \
   --project=bs-chrome-macos \
   --project=bs-safari-macos \
-  "$TEST_FILE" || true
+  "$TEST_FILE" || status=$?
 
 echo "=== Stopping BrowserStack Local tunnel ==="
 npx browserstack-local --key "$BROWSERSTACK_ACCESS_KEY" --daemon stop 2>/dev/null
 
 echo "=== Done ==="
 echo "Report: npx playwright show-report"
+
+exit "$status"

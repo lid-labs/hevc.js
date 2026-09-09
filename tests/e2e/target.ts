@@ -31,8 +31,10 @@ if (!target.pathname.endsWith('/')) target.pathname += '/';
 
 export const BASE_URL = target.href;
 
-/** Whether the config serves demo/ itself. 127.0.0.1 reaches that server too. */
+/** Whether the config serves demo/ itself. 127.0.0.1 reaches that server too,
+ *  but it speaks HTTP only — an https:// target is somebody else's server. */
 export const IS_LOCAL =
+  target.protocol === 'http:' &&
   (target.hostname === 'localhost' || target.hostname === '127.0.0.1') &&
   target.port === String(LOCAL_PORT);
 
