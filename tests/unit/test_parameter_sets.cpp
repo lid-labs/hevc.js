@@ -642,3 +642,27 @@ TEST(SliceHeader, ParseConformanceEdgeCases) {
         }
     }
 }
+
+// 4:2:2 and 4:4:4 reach inter chroma prediction with buffers sized for 4:2:0:
+// coding_tree.cpp hands perform_inter_prediction an int16_t[32*32] while
+// nSamples is (cbSize/SubWidthC) * (cbSize/SubHeightC) — 2048 at 4:2:2 and 4096
+// at 4:4:4 for a 64x64 CB. Rejecting the SPS is what keeps that unreachable.
+TEST(SPSValidation, RejectsUnsupportedChromaFormats) {
+    for (uint32_t idc : {2u, 3u}) {
+        SpsFields f;
+        f.chroma_format_idc = idc;
+        SPS sps;
+        EXPECT_FALSE(parse_sps_bytes(build_sps_rbsp(f), sps))
+            << "chroma_format_idc=" << idc;
+    }
+}
+
+TEST(SPSValidation, AcceptsMonochromeAnd420) {
+    for (uint32_t idc : {0u, 1u}) {
+        SpsFields f;
+        f.chroma_format_idc = idc;
+        SPS sps;
+        EXPECT_TRUE(parse_sps_bytes(build_sps_rbsp(f), sps))
+            << "chroma_format_idc=" << idc;
+    }
+}

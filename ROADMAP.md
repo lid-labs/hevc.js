@@ -31,12 +31,6 @@ ordering: [high](https://github.com/lid-labs/hevc.js/issues?q=is%3Aissue+is%3Aop
 Decoder defects found by review rather than by playback, so none of them has a
 fixture: they need one written before they can be fixed.
 
-- **Long-term references from the SPS are dropped** — the slice header parser
-  never copies them in, so the DPB cannot see them.
-  [#249](https://github.com/lid-labs/hevc.js/issues/249).
-- **Uninitialized prediction buffers on a null reference** — reachable whenever
-  decoding starts mid-stream, which is what the segment transcoder does.
-  [#250](https://github.com/lid-labs/hevc.js/issues/250).
 - **`pic_output_flag` is ignored** — honouring it requires reworking how the
   transcoder maps output pictures to timestamps.
   [#243](https://github.com/lid-labs/hevc.js/issues/243).

@@ -147,7 +147,7 @@ void DPB::derive_rps(const SliceHeader& sh, const SPS& sps,
             int32_t pocLt = static_cast<int32_t>(sh.poc_lsb_lt[i]);
             if (sh.delta_poc_msb_present_flag[i]) {
                 pocLt += picOrderCntVal
-                         - static_cast<int32_t>(sh.delta_poc_msb_cycle_lt[i]) * MaxPicOrderCntLsb
+                         - static_cast<int32_t>(sh.DeltaPocMsbCycleLt[i]) * MaxPicOrderCntLsb
                          - (picOrderCntVal & (MaxPicOrderCntLsb - 1));
             }
             if (sh.used_by_curr_pic_lt_flag[i]) {

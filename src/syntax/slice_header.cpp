@@ -217,6 +217,7 @@ bool SliceHeader::parse(BitstreamReader& bs, const SPS& sps, const PPS& pps,
 
             for (uint32_t i = 0; i < num_long_term_sps + num_long_term_pics; i++) {
                 if (i < num_long_term_sps) {
+                    lt_idx_sps[i] = 0;  // §7.4.7.1 infers 0 when it is not coded
                     if (sps.num_long_term_ref_pics_sps > 1) {
                         lt_idx_sps[i] = bs.read_bits(lt_sps_bits);
                         // §7.4.7.1: lt_idx_sps indexes the SPS long-term tables
@@ -225,6 +226,10 @@ bool SliceHeader::parse(BitstreamReader& bs, const SPS& sps, const PPS& pps,
                             return false;
                         }
                     }
+                    // §7.4.7.1: PocLsbLt and UsedByCurrPicLt are derived from the SPS
+                    // tables here, not coded in the slice — the DPB reads them alike.
+                    poc_lsb_lt[i] = sps.lt_ref_pic_poc_lsb_sps[lt_idx_sps[i]];
+                    used_by_curr_pic_lt_flag[i] = sps.used_by_curr_pic_lt_sps_flag[lt_idx_sps[i]];
                 } else {
                     poc_lsb_lt[i] = bs.read_bits(poc_lsb_bits);
                     used_by_curr_pic_lt_flag[i] = bs.read_flag();
@@ -232,7 +237,16 @@ bool SliceHeader::parse(BitstreamReader& bs, const SPS& sps, const PPS& pps,
                 delta_poc_msb_present_flag[i] = bs.read_flag();
                 if (delta_poc_msb_present_flag[i]) {
                     delta_poc_msb_cycle_lt[i] = bs.read_ue();
+                } else {
+                    // §7.4.7.1 infers 0. Written rather than assumed: parse() does
+                    // not reset the header it is handed.
+                    delta_poc_msb_cycle_lt[i] = 0;
                 }
+                // §7.4.7.1: the value accumulates, restarting at the first entry
+                // of each run — the SPS-sourced one and the slice-coded one.
+                DeltaPocMsbCycleLt[i] = (i == 0 || i == num_long_term_sps)
+                    ? delta_poc_msb_cycle_lt[i]
+                    : delta_poc_msb_cycle_lt[i] + DeltaPocMsbCycleLt[i - 1];
             }
         }
 
