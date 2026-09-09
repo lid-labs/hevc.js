@@ -326,8 +326,8 @@ void perform_inter_prediction(DecodingContext& ctx,
     int16_t* predL1 = predL1_buf;
 
     // L0 prediction
-    if (predFlagL0 && refIdxL0 >= 0) {
-        Picture* refPic = ctx.dpb->ref_pic_list0(refIdxL0);
+    if (predFlagL0) {
+        Picture* refPic = (refIdxL0 >= 0) ? ctx.dpb->ref_pic_list0(refIdxL0) : nullptr;
         if (refPic) {
             if (cIdx == 0) {
                 // Luma: MV in 1/4 pel
@@ -361,12 +361,16 @@ void perform_inter_prediction(DecodingContext& ctx,
                 interpolate_chroma(*refPic, cIdx, xInt, yInt, xFrac, yFrac,
                                     compW, compH, bitDepth, predL0);
             }
+        } else {
+            // Nothing wrote predL0: §8.5.3.3.4.2's uni/bi selection has to follow
+            // what the list actually holds, not what the PU asked for.
+            predFlagL0 = false;
         }
     }
 
     // L1 prediction
-    if (predFlagL1 && refIdxL1 >= 0) {
-        Picture* refPic = ctx.dpb->ref_pic_list1(refIdxL1);
+    if (predFlagL1) {
+        Picture* refPic = (refIdxL1 >= 0) ? ctx.dpb->ref_pic_list1(refIdxL1) : nullptr;
         if (refPic) {
             if (cIdx == 0) {
                 int xInt = xPb + (mvL1.x >> 2);
@@ -385,7 +389,18 @@ void perform_inter_prediction(DecodingContext& ctx,
                 interpolate_chroma(*refPic, cIdx, xInt, yInt, xFrac, yFrac,
                                     compW, compH, bitDepth, predL1);
             }
+        } else {
+            predFlagL1 = false;
         }
+    }
+
+    // Both lists came up empty — a mid-stream start referencing pictures the DPB
+    // never received. Conceal with neutral grey instead of reading the buffers.
+    if (!predFlagL0 && !predFlagL1) {
+        HEVC_LOG(INTER, "PU concealed: no reference at (%d,%d) cIdx=%d refIdx=%d/%d",
+                 xPb, yPb, cIdx, refIdxL0, refIdxL1);
+        std::fill_n(pred_samples, nSamples, static_cast<int16_t>(1 << (bitDepth - 1)));
+        return;
     }
 
     // §8.5.3.3.4.1: Determine weightedPredFlag

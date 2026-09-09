@@ -98,11 +98,14 @@ public:
     const std::vector<std::shared_ptr<Picture>>& pictures() const { return pictures_; }
 
     // Access ref pic lists (valid after construct_ref_pic_lists)
+    // A negative index reaches here from any caller whose refIdx defaults to -1.
     Picture* ref_pic_list0(int idx) const {
-        return (idx < static_cast<int>(ref_pic_list0_.size())) ? ref_pic_list0_[idx].pic : nullptr;
+        return (idx >= 0 && idx < static_cast<int>(ref_pic_list0_.size()))
+               ? ref_pic_list0_[idx].pic : nullptr;
     }
     Picture* ref_pic_list1(int idx) const {
-        return (idx < static_cast<int>(ref_pic_list1_.size())) ? ref_pic_list1_[idx].pic : nullptr;
+        return (idx >= 0 && idx < static_cast<int>(ref_pic_list1_.size()))
+               ? ref_pic_list1_[idx].pic : nullptr;
     }
     int num_ref_list0() const { return static_cast<int>(ref_pic_list0_.size()); }
     int num_ref_list1() const { return static_cast<int>(ref_pic_list1_.size()); }

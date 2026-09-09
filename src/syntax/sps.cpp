@@ -404,10 +404,18 @@ bool SPS::parse(BitstreamReader& bs) {
 
     sps_seq_parameter_set_id = bs.read_ue();
     chroma_format_idc = bs.read_ue();
-    // §7.4.3.2.1: sps id in 0..15 (indexes the 16-entry SPS store), chroma idc in 0..3
+    // §7.4.3.2.1: sps id in 0..15 (indexes the 16-entry SPS store), chroma idc in 0..3.
+    // 4:2:2 and 4:4:4 are rejected rather than half-decoded: the inter chroma
+    // buffers in coding_tree.cpp are sized for SubWidthC == SubHeightC == 2, so a
+    // wider format overruns them, and the chroma deblocking path only covers 4:2:0.
     if (sps_seq_parameter_set_id > 15 || chroma_format_idc > 3) {
         HEVC_LOG(PARSE, "SPS rejected: id=%u chroma_format_idc=%u",
                  sps_seq_parameter_set_id, chroma_format_idc);
+        return false;
+    }
+    if (chroma_format_idc == 2 || chroma_format_idc == 3) {
+        HEVC_LOG(PARSE, "SPS rejected: chroma_format_idc=%u is not supported",
+                 chroma_format_idc);
         return false;
     }
 
