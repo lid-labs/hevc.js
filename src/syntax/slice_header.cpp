@@ -236,6 +236,10 @@ bool SliceHeader::parse(BitstreamReader& bs, const SPS& sps, const PPS& pps,
                 delta_poc_msb_present_flag[i] = bs.read_flag();
                 if (delta_poc_msb_present_flag[i]) {
                     delta_poc_msb_cycle_lt[i] = bs.read_ue();
+                } else {
+                    // §7.4.7.1 infers 0. Written rather than assumed: parse() does
+                    // not reset the header it is handed.
+                    delta_poc_msb_cycle_lt[i] = 0;
                 }
                 // §7.4.7.1: the value accumulates, restarting at the first entry
                 // of each run — the SPS-sourced one and the slice-coded one.

@@ -399,7 +399,9 @@ void perform_inter_prediction(DecodingContext& ctx,
     if (!predFlagL0 && !predFlagL1) {
         HEVC_LOG(INTER, "PU concealed: no reference at (%d,%d) cIdx=%d refIdx=%d/%d",
                  xPb, yPb, cIdx, refIdxL0, refIdxL1);
-        std::fill_n(pred_samples, nSamples, static_cast<int16_t>(1 << (bitDepth - 1)));
+        // The SPS allows bitDepth 16, where 1 << 15 overflows the int16_t buffer.
+        const int grey = std::min(1 << (bitDepth - 1), 32767);
+        std::fill_n(pred_samples, nSamples, static_cast<int16_t>(grey));
         return;
     }
 

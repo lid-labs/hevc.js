@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <algorithm>
 #include <vector>
 
 #include "bitstream/bitstream_reader.h"
@@ -183,14 +184,19 @@ TEST(InterPrediction, NullReferenceYieldsNeutralGrey) {
     ctx.dpb = &dpb;
 
     constexpr int kSize = 8;
-    int16_t pred[kSize * kSize];
-    std::fill_n(pred, kSize * kSize, static_cast<int16_t>(-1));
+    // 16 is what the SPS allows at most, and 1 << 15 does not fit an int16_t.
+    for (int bitDepth : {8, 10, 16}) {
+        sps.BitDepthY = bitDepth;
+        int16_t pred[kSize * kSize];
+        std::fill_n(pred, kSize * kSize, static_cast<int16_t>(-1));
 
-    perform_inter_prediction(ctx, 0, 0, kSize, kSize, 0, MV{}, MV{}, 0, -1,
-                             true, false, pred);
+        perform_inter_prediction(ctx, 0, 0, kSize, kSize, 0, MV{}, MV{}, 0, -1,
+                                 true, false, pred);
 
-    for (int i = 0; i < kSize * kSize; i++)
-        EXPECT_EQ(pred[i], 1 << (sps.BitDepthY - 1)) << "sample " << i;
+        const int expected = std::min(1 << (bitDepth - 1), 32767);
+        for (int i = 0; i < kSize * kSize; i++)
+            EXPECT_EQ(pred[i], expected) << "bitDepth " << bitDepth << " sample " << i;
+    }
 }
 
 // A B slice whose list0 starts on the missing picture and list1 on the present
