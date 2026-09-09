@@ -45,7 +45,8 @@ E2E_BASE_URL=http://localhost:8090 npx playwright test \
   "$TEST_FILE" || status=$?
 
 echo "=== Stopping BrowserStack Local tunnel ==="
-npx browserstack-local --key "$BROWSERSTACK_ACCESS_KEY" --daemon stop 2>/dev/null
+# A failing stop must not overwrite the status set -e would exit on.
+npx browserstack-local --key "$BROWSERSTACK_ACCESS_KEY" --daemon stop 2>/dev/null || true
 
 echo "=== Done ==="
 echo "Report: npx playwright show-report"
