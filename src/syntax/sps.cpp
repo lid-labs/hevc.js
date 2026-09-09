@@ -419,9 +419,8 @@ bool SPS::parse(BitstreamReader& bs) {
         return false;
     }
 
-    if (chroma_format_idc == 3) {
-        separate_colour_plane_flag = bs.read_flag();
-    }
+    // Unreachable since 4:4:4 is rejected above; §7.4.3.2.1 infers 0 otherwise.
+    separate_colour_plane_flag = false;
 
     pic_width_in_luma_samples = bs.read_ue();
     pic_height_in_luma_samples = bs.read_ue();

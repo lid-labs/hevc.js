@@ -217,6 +217,7 @@ bool SliceHeader::parse(BitstreamReader& bs, const SPS& sps, const PPS& pps,
 
             for (uint32_t i = 0; i < num_long_term_sps + num_long_term_pics; i++) {
                 if (i < num_long_term_sps) {
+                    lt_idx_sps[i] = 0;  // §7.4.7.1 infers 0 when it is not coded
                     if (sps.num_long_term_ref_pics_sps > 1) {
                         lt_idx_sps[i] = bs.read_bits(lt_sps_bits);
                         // §7.4.7.1: lt_idx_sps indexes the SPS long-term tables
