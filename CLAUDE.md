@@ -65,12 +65,14 @@ manage versioning and publishing.
 | Command | What it does |
 |---|---|
 | `pnpm install` | Install workspace dependencies |
-| `pnpm build` | Full build (WASM + JS) — requires Emscripten |
+| `pnpm build` | Full build (WASM + JS) — needs Emscripten or Docker |
 | `pnpm build:js` | JS-only build (fast) |
 | `pnpm build:demo` | Bundle for `demo/` (served on GitHub Pages) |
 | `pnpm test` | C++ unit tests (ctest) — fastest signal on decoder logic |
 | `pnpm test:unit` | JS unit tests (vitest) |
-| `pnpm test:e2e` | E2E Playwright tests (use `LOCAL_DEMO=1 pnpm test:e2e` for the local web server variant) |
+| `pnpm test:e2e` | E2E Playwright tests against the branch (builds WASM + demo first) |
+| `pnpm test:e2e:fast` | Same suite, no rebuild |
+| `pnpm test:e2e:prod` | Same suite against the published site |
 
 ## Testing discipline
 
@@ -83,10 +85,14 @@ manage versioning and publishing.
   `Array.prototype.at`, etc.).
 - C++ decoder changes MUST keep `pnpm test` green (146+ unit tests +
   pixel-perfect oracle suite). Do not skip oracle tests.
-- E2E (`pnpm test:e2e`) is not in CI yet. Run it locally before merging
-  any change touching `mse-intercept.ts`, `segment-transcoder.ts`,
-  `fmp4-muxer.ts`, `fmp4-demuxer.ts`, or the `dashjs-plugin` /
-  `shaka-plugin` / `hlsjs-plugin` glue code.
+- E2E runs in CI against the PR preview (`preview.yml`, non-blocking for
+  now). Run it locally too before merging any change touching
+  `mse-intercept.ts`, `segment-transcoder.ts`, `fmp4-muxer.ts`,
+  `fmp4-demuxer.ts`, or the `dashjs-plugin` / `shaka-plugin` /
+  `hlsjs-plugin` glue code.
+- The e2e target is `E2E_BASE_URL`, defaulting to the local demo. Point it
+  at a deployed URL to test that instead — `pnpm test:e2e:prod` for the
+  published site. Only the local target exercises the cross-origin test.
 
 ## Security
 

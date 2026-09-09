@@ -9,6 +9,7 @@ import {
   enableForceTranscode,
   hasAudioSourceBuffer,
 } from './helpers';
+import { IS_LOCALHOST, LOCAL_PORT } from './target';
 
 test.describe('DASH Player', () => {
   test('page loads without fatal errors', async ({ page }) => {
@@ -155,19 +156,19 @@ test.describe('DASH Player — cross-origin asset loading', () => {
   // auto-fetch + blob URL fallback in TranscodeWorkerClient and the
   // wasmBinaryUrl plumbing through to Emscripten's locateFile.
   test.skip(
-    process.env.LOCAL_DEMO !== '1',
-    'cross-origin test relies on the LOCAL_DEMO Python server bound to 0.0.0.0',
+    !IS_LOCALHOST,
+    'cross-origin test needs the page on localhost, served by the local Python server',
   );
 
   test('worker + wasm loaded from a different origin', async ({ page }) => {
     const errors = collectConsoleErrors(page);
-    const crossOriginBase = 'http://127.0.0.1:8090';
+    const crossOriginBase = `http://127.0.0.1:${LOCAL_PORT}`;
     const params = new URLSearchParams({
       workerUrl: `${crossOriginBase}/transcode-worker.js`,
       wasmUrl: `${crossOriginBase}/hevc-decode.js`,
       wasmBinaryUrl: `${crossOriginBase}/hevc-decode.wasm`,
     });
-    await page.goto(`http://localhost:8090/dash.html?${params}`, { waitUntil: 'networkidle' });
+    await page.goto(`dash.html?${params}`, { waitUntil: 'networkidle' });
     await enableForceTranscode(page);
     await loadPreset(page, '720p (10s)');
 

@@ -25,7 +25,7 @@
     "packages/shaka-plugin/dist/"
   ],
   "scripts": {
-    "build:wasm": "emcmake cmake -B build-wasm -DBUILD_WASM=ON -DCMAKE_BUILD_TYPE=Release && cmake --build build-wasm && cp build-wasm/hevc-decode.js build-wasm/hevc-decode.wasm packages/core/wasm/",
+    "build:wasm": "bash scripts/build-wasm.sh",
     "build:core": "pnpm --filter @hevcjs/core build",
     "build:dashjs": "pnpm --filter @hevcjs/dashjs-plugin build",
     "build:shaka": "pnpm --filter @hevcjs/shaka-plugin build",
@@ -43,11 +43,13 @@
     "test": "cd build && ctest --output-on-failure",
     "test:native": "cmake -B build -DCMAKE_BUILD_TYPE=Debug && cmake --build build && cd build && ctest --output-on-failure",
     "test:unit": "pnpm -r --if-present test",
-    "test:e2e": "npx playwright test --project=local-chromium",
+    "test:e2e": "pnpm build:wasm && pnpm build:demo && pnpm test:e2e:fast",
+    "test:e2e:fast": "npx playwright test --project=local-chromium",
+    "test:e2e:prod": "E2E_BASE_URL=https://hevcjs.dev/demo pnpm test:e2e:fast",
     "changeset": "changeset",
     "version": "changeset version && pnpm install --lockfile-only",
     "release": "pnpm build:js && changeset publish",
-    "test:e2e:bs": "npx playwright test --project=bs-chrome-windows --project=bs-edge-windows --project=bs-firefox-windows --project=bs-chrome-macos --project=bs-safari-macos",
+    "test:e2e:bs": "E2E_BASE_URL=https://hevcjs.dev/demo npx playwright test --project=bs-chrome-windows --project=bs-edge-windows --project=bs-firefox-windows --project=bs-chrome-macos --project=bs-safari-macos",
     "clean": "rm -rf build build-wasm packages/*/dist",
     "typecheck": "pnpm -r --if-present typecheck"
   },

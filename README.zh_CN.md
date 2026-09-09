@@ -239,24 +239,15 @@ cd build && ctest --output-on-failure    # 153 个测试
 
 #### WebAssembly
 
-需要 Emscripten。使用容器则无需安装本地 SDK,且与 CI 使用的版本一致:
-
 ```bash
-docker run --rm --user $(id -u):$(id -g) -v "$PWD":/src -w /src \
-  emscripten/emsdk:6.0.8 \
-  sh -c "emcmake cmake -B build-wasm -DBUILD_WASM=ON -DCMAKE_BUILD_TYPE=Release \
-         && cmake --build build-wasm"
-# 输出:build-wasm/hevc-decode.js + hevc-decode.wasm(262 KB)
+pnpm build:wasm
+# 输出:build-wasm/hevc-decode.js + hevc-decode.wasm(262 KB,gzip 后约 97 KB),
+# 并复制到 packages/core/wasm/
 ```
 
-若已安装本地 [Emscripten SDK](https://emscripten.org/docs/getting_started/downloads.html),
-先加载环境,再执行同样的两条命令:
-
-```bash
-source /path/to/emsdk/emsdk_env.sh
-emcmake cmake -B build-wasm -DBUILD_WASM=ON -DCMAKE_BUILD_TYPE=Release
-cmake --build build-wasm
-```
+若 `emcmake` 已在 PATH 中,则使用本地 [Emscripten SDK](https://emscripten.org/docs/getting_started/downloads.html)
+(需先加载其 `emsdk_env.sh`);否则通过 Docker 运行 CI 所固定的 `emscripten/emsdk:6.0.8`,
+此路径无需安装本地 SDK。设置 `WASM_BUILDER=docker` 可强制使用容器。
 
 ### 性能
 
