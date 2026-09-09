@@ -32,11 +32,13 @@ if (!target.pathname.endsWith('/')) target.pathname += '/';
 export const BASE_URL = target.href;
 
 /** Whether the config serves demo/ itself. 127.0.0.1 reaches that server too,
- *  but it speaks HTTP only — an https:// target is somebody else's server. */
+ *  but it speaks HTTP only, and serves demo/ at the web root — so a path such
+ *  as /demo, copied from the preview shape, is not it either. */
 export const IS_LOCAL =
   target.protocol === 'http:' &&
   (target.hostname === 'localhost' || target.hostname === '127.0.0.1') &&
-  target.port === String(LOCAL_PORT);
+  target.port === String(LOCAL_PORT) &&
+  target.pathname === '/';
 
 /** The cross-origin test loads the page from localhost and its assets from
  *  127.0.0.1, so it only holds when the page itself is on localhost. */
