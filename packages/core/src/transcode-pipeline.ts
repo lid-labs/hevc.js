@@ -94,6 +94,11 @@ export class TranscodePipeline {
       this._decoder.feed(nalBuffer);
     }
 
+    // This pipeline times frames off its own clock rather than off the sample
+    // PTS, so a suppressed picture costs it nothing to re-map — but the list
+    // the decoder keeps for callers that do is only emptied by reading it.
+    this._decoder.takeSuppressedPocs();
+
     // 3. Drain decoded frames
     const frames = this._decoder.drain();
     if (frames.length === 0) return;

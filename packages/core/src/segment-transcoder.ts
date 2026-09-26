@@ -666,6 +666,9 @@ export class SegmentTranscoder {
    */
   private _extrapolate(segmentBaseTime: number, index: number): AssignedTimestamp {
     const frameTicks = this._timescale / this._fps;
+    // Nothing downstream can tell a fabricated timestamp from a real one, and
+    // the symptom — a drifting timeline — points nowhere near here.
+    log.warn(`Segment produced output frame ${index} past its sample list; extrapolating its timestamp`);
     return {
       pts: segmentBaseTime + Math.round(index * frameTicks),
       nominalDuration: Math.round(frameTicks),

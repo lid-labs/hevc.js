@@ -41,7 +41,9 @@ public:
     // Returns all pictures still marked as "needed for output", in POC order.
     std::vector<Picture*> flush();
 
-    // Get decoded pictures — batch mode (legacy, returns ALL pictures ever decoded)
+    // Get decoded pictures — batch mode (legacy, returns every picture the DPB
+    // still holds for output). Pictures with PicOutputFlag = 0 are skipped, as
+    // the incremental path skips them.
     std::vector<Picture*> output_pictures();
 
     // POCs of the pictures decoded since the last call whose PicOutputFlag
