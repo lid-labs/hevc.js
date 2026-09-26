@@ -488,7 +488,7 @@ export class SegmentTranscoder {
 
     // Encode and ship one BATCH_SIZE batch as soon as it is full.
     let initEmitted = false;
-    const emitBatch = async (batch: TimedFrame[], batchStart: number) => {
+    const emitBatch = async (batch: TimedFrame[], batchStart: number, nextPts?: number) => {
       const batchChunks: EncodedChunk[] = [];
       this._encoder!.onChunk = (chunk) => batchChunks.push(chunk);
 
@@ -517,12 +517,14 @@ export class SegmentTranscoder {
       const batchBaseTime = batch[0]!.pts;
 
       const muxerSamples = batchChunks.map((c, i) => {
-        // The next frame's timestamp closes this one. The batch's last frame
-        // has no successor yet — it falls back to its slot's own duration,
-        // and the next batch carries its own base time anyway.
+        // The next frame's timestamp closes this one — including across the
+        // batch boundary, which is why a full batch is held back until the
+        // frame after it is decoded. Only the segment's very last frame has
+        // no successor, and falls back to its slot's own duration.
         const timed = batch[i];
+        const successor = i + 1 < batch.length ? batch[i + 1]!.pts : nextPts;
         const duration = timed
-          ? (i + 1 < batch.length ? batch[i + 1]!.pts - timed.pts : timed.nominalDuration)
+          ? (successor !== undefined ? successor - timed.pts : timed.nominalDuration)
           : Math.round(c.duration * this._timescale / 1_000_000);
         return {
           data: c.data,
@@ -563,8 +565,13 @@ export class SegmentTranscoder {
         frameCount++;
         pending.push({ frame, pts: ts.pts, nominalDuration: ts.nominalDuration });
       }
-      while (pending.length >= BATCH_SIZE) {
-        await emitBatch(pending.splice(0, BATCH_SIZE), encodedCount);
+      // One frame past the batch, not just a full one: the last frame of a
+      // batch is closed by the first frame of the next, and a suppressed
+      // picture landing on the boundary makes that gap wider than the slot's
+      // nominal duration. One frame of extra latency, bounded all the same.
+      while (pending.length > BATCH_SIZE) {
+        const nextPts = pending[BATCH_SIZE]!.pts;
+        await emitBatch(pending.splice(0, BATCH_SIZE), encodedCount, nextPts);
         encodedCount += BATCH_SIZE;
       }
     };
@@ -794,10 +801,18 @@ export interface AssignedTimestamp {
  * but never output: its sample's slot must be skipped, or every later frame
  * of the segment lands one slot early and the muxed base time shifts with it.
  *
- * The decoder reports such pictures by POC. A suppressed picture that
- * displays before the frame being timed has already been decoded by the time
- * that frame is bumped — the bumping process releases a picture only once no
- * smaller POC can still arrive — so its slot can be consumed here and then.
+ * The decoder reports such pictures by POC, and a suppressed picture that
+ * displays before the frame being timed has, in practice, been decoded by the
+ * time that frame is bumped: §C.5.2.2 releases a picture once the reorder
+ * bound says no smaller POC is still to come.
+ *
+ * That bound counts pictures pending output, and a suppressed picture is not
+ * one of them — so a bitstream may still decode one whose POC falls inside a
+ * range already emitted. Nothing in the spec forbids it, since such a picture
+ * has no place in the output order to disturb. The frame that was timed too
+ * early then holds the slot that belonged to the suppressed picture; the
+ * report still arrives before any later frame is timed, so the frames after
+ * it land on their own slots and the error does not accumulate.
  */
 export class DisplayPtsAssigner {
   private _next = 0;

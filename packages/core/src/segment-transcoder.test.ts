@@ -418,6 +418,26 @@ describe("SegmentTranscoder.processMediaSegment decode/encode interleaving", () 
     expect(muxed[0]!.baseTime).toBe(0);
   });
 
+  /**
+   * A suppressed picture landing on a batch boundary is the same defect at a
+   * smaller scale: the last frame of the batch is closed by the first frame
+   * of the next one, so its duration has to span the hole between them.
+   */
+  it("spans a suppressed picture that falls on a streaming batch boundary", async () => {
+    // BATCH_SIZE is 30, so slot 30 is the first frame of the second batch.
+    const { t, muxed } = setup(70, new Set([30]));
+
+    await t.processMediaSegmentStreaming(new Uint8Array(8), () => {});
+
+    expect(muxed.length).toBeGreaterThan(1);
+    const first = muxed[0]!.samples.map((s) => s.duration);
+    expect(first).toHaveLength(30);
+    // Frame 29 is the batch's last; slot 30 has no frame, so it holds the
+    // screen until slot 31 — two sample durations, not one.
+    expect(first[29]).toBe(7200);
+    expect(first.slice(0, 29).every((d) => d === 3600)).toBe(true);
+  });
+
   /** A suppressed first picture moves the segment's base decode time. */
   it("bases the muxed segment on the first frame actually output", async () => {
     const { t, muxed } = setup(10, new Set([0]));
@@ -464,6 +484,24 @@ describe("DisplayPtsAssigner", () => {
     // differencing the assigned timestamps, which is what matters here
     expect(second.pts - first.pts).toBe(7200);
     expect(first.nominalDuration).toBe(3600);
+  });
+
+  /**
+   * The bumping bound counts pictures pending output, so a suppressed picture
+   * can be decoded after a frame with a higher POC was already timed. That
+   * frame keeps the slot it took; the ones after it must not inherit the
+   * error.
+   */
+  it("does not let a late report shift the frames that follow", () => {
+    const a = new DisplayPtsAssigner(pts, 3600);
+    expect(a.next(0)!.pts).toBe(0);
+    // POC 2 is timed before the decoder has seen the suppressed POC 1, so it
+    // lands on slot 1 instead of slot 2
+    expect(a.next(2)!.pts).toBe(3600);
+    a.noteSuppressed([1]);
+    // POC 3 still lands on its own slot: the error stops there
+    expect(a.next(3)!.pts).toBe(10800);
+    expect(a.next(4)!.pts).toBe(14400);
   });
 
   it("uses the fallback duration on the last slot and returns null past it", () => {
