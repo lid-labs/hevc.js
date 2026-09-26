@@ -10685,10 +10685,8 @@ var HevcHls = (() => {
         const codec = this._audioConfig ? `${this._encoder.codec},mp4a.40.2` : this._encoder.codec;
         this._initResult = { initSegment, codec };
       }
-      const durations = [];
-      for (let i = 0; i < assigned.length; i++) {
-        durations.push(i + 1 < assigned.length ? assigned[i + 1].pts - assigned[i].pts : assigned[i].nominalDuration);
-      }
+      const segmentEnd = ptsAssigner.segmentEnd();
+      const durations = assigned.map((ts, i) => closeDuration(ts, i + 1 < assigned.length ? assigned[i + 1].pts : segmentEnd));
       const muxerSamples = chunks.map((c, i) => ({
         data: c.data,
         duration: i < durations.length ? durations[i] : Math.round(c.duration * this._timescale / 1e6),
@@ -10789,8 +10787,8 @@ var HevcHls = (() => {
         const batchBaseTime = batch[0].pts;
         const muxerSamples = batchChunks.map((c, i) => {
           const timed = batch[i];
-          const successor = i + 1 < batch.length ? batch[i + 1].pts : nextPts;
-          const duration = timed ? successor !== void 0 ? successor - timed.pts : timed.nominalDuration : Math.round(c.duration * this._timescale / 1e6);
+          const successor = i + 1 < batch.length ? batch[i + 1].pts : nextPts ?? ptsAssigner.segmentEnd();
+          const duration = timed ? closeDuration(timed, successor) : Math.round(c.duration * this._timescale / 1e6);
           return {
             data: c.data,
             duration,
@@ -10985,6 +10983,9 @@ var HevcHls = (() => {
     }
     return sets;
   }
+  function closeDuration(ts, successor) {
+    return successor != null && successor > ts.pts ? successor - ts.pts : ts.nominalDuration;
+  }
   var DisplayPtsAssigner = class {
     /**
      * @param sortedPts the segment's sample PTS, ascending
@@ -10999,6 +11000,15 @@ var HevcHls = (() => {
     /** POCs the decoder reported as decoded-but-not-output. */
     noteSuppressed(pocs) {
       for (const poc of pocs) this._suppressed.push(poc);
+    }
+    /**
+     * One slot past the last sample — where the segment's media time ends. The
+     * last frame holds the screen up to here, which is past its own slot as
+     * soon as the slots after it went to suppressed pictures.
+     */
+    segmentEnd() {
+      if (this._sortedPts.length === 0) return null;
+      return this._sortedPts[this._sortedPts.length - 1] + this._fallbackDuration;
     }
     /**
      * The timestamp for the output frame with this POC, or null once the
