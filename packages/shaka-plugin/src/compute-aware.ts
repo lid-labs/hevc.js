@@ -47,11 +47,20 @@ export interface ShakaComputeAwareOptions extends ComputeAwareConfig {
    * Shaka's default is 8, and `abr.restrictions` is a soft constraint applied
    * at the next ABR decision — which `SimpleAbrManager.suggestStreams_()`
    * declines to make until `switchInterval` has elapsed. A cap is therefore
-   * correct and unapplied for up to that long: measured on a device
-   * transcoding at ~0.35x, 4s and 26s on two runs before the variant on screen
-   * obeyed a cap, against ~0.2s at 2. Every segment in between is transcoded at
-   * the resolution the cap already rejected, which is the moment that can least
-   * afford it.
+   * correct and unapplied for up to that long. Measured against one deployment
+   * on a device transcoding at ~0.4x, six runs each: the played variant obeyed
+   * a cap after 9.3-9.9s at 8, against 3.3-6.9s at 2. Every segment in between
+   * is transcoded at the resolution the cap already rejected, which is the
+   * moment that can least afford it.
+   *
+   * Lowering this does not make the cap instant: what remains is how fast
+   * segments arrive, ~5s for 2s of media at 0.4x, which is also why 2 is low
+   * enough.
+   *
+   * Measure this against a deployed target. Shaka's ABR decisions come from
+   * NetworkingEngine progress events, and a local server hands over a whole
+   * segment at once — so few events, few decisions, and a latency that says
+   * more about the server than about this setting.
    *
    * Only lowered, never raised: a player already more reactive than this keeps
    * its value.
@@ -80,10 +89,13 @@ export interface ShakaComputeAwareOptions extends ComputeAwareConfig {
  * `player.load()`: variants are looked up lazily as segments arrive.
  *
  * @returns cleanup function — unsubscribes the perf-bus listener.
- *   Does NOT clear any restriction already applied to the player. If you
- *   want to restore an unbounded ABR, call
+ *   Does NOT undo what was applied to the player. If you want to restore an
+ *   unbounded ABR, call
  *   `player.configure({ abr: { restrictions: { maxHeight: Infinity, maxBandwidth: Infinity }}})`
- *   after detaching.
+ *   after detaching. The shortened `abr.switchInterval` is likewise left in
+ *   place: read `player.getConfiguration().abr.switchInterval` before
+ *   attaching if you mean to put it back, or pass `switchInterval: null` to
+ *   leave it untouched in the first place.
  */
 export function attachShakaComputeAware(
   player: ShakaPlayer,

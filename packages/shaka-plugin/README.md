@@ -79,7 +79,7 @@ This is a mitigation, not a cure: it buys headroom, it does not make transcoding
 
 ### How fast the cap reaches the screen
 
-Compute-aware ABR narrows `abr.restrictions`, which Shaka honours at its next ABR decision — and `SimpleAbrManager` declines to take one while `abr.switchInterval` has not elapsed. At Shaka's default of 8s, a cap that fired on time can sit unapplied for several segments, and every one of them is transcoded at the resolution the cap already rejected. Measured against the published demo on a device transcoding at ~0.4x: 2.9s and 10.4s on two runs before the variant on screen obeyed the cap.
+Compute-aware ABR narrows `abr.restrictions`, which Shaka honours at its next ABR decision — and `SimpleAbrManager` declines to take one while `abr.switchInterval` has not elapsed. At Shaka's default of 8s, a cap that fired on time can sit unapplied for several segments, and every one of them is transcoded at the resolution the cap already rejected. Measured against one deployment on a device transcoding at ~0.4x, six runs per setting: the variant on screen obeyed the cap after 9.3-9.9s at Shaka's default, against 3.3-6.9s at 2s. What is left at 2s is the rate segments arrive at — ~5s for 2s of media at 0.4x — so lowering it further buys nothing.
 
 `attachComputeAware` therefore shortens `abr.switchInterval` to 2s when it attaches, which is about one segment for this pipeline. It only ever lowers the value: a player already configured to be more reactive keeps its own. Opt out with `switchInterval: null`, or set your own:
 
