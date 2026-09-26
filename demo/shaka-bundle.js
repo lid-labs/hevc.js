@@ -31,6 +31,7 @@ var HevcShaka = (() => {
   __export(shaka_entry_exports, {
     HevcTransmuxer: () => HevcTransmuxer,
     recommendedBufferConfig: () => recommendedBufferConfig,
+    recommendedPlayerConfig: () => recommendedPlayerConfig,
     registerHevcTransmuxer: () => registerHevcTransmuxer,
     subscribeSegmentStat: () => subscribeSegmentStat
   });
@@ -10514,6 +10515,7 @@ var HevcShaka = (() => {
       await this._demuxer.parseInit(data);
       const track = this._demuxer.videoTrack;
       if (track) {
+        this._dropEncoderIfResolutionChanged(track.width, track.height);
         this._timescale = track.timescale;
         this._width = track.width;
         this._height = track.height;
@@ -10536,6 +10538,8 @@ var HevcShaka = (() => {
         this._audioConfig = null;
       }
       const paramSets = extractParameterSetsFromInit(data);
+      this._paramSetsFed = false;
+      this._paramSetsBuffer = null;
       if (paramSets.length > 0) {
         const psSize = paramSets.reduce((s, n) => s + 4 + n.byteLength, 0);
         this._paramSetsBuffer = new Uint8Array(psSize);
@@ -10561,12 +10565,7 @@ var HevcShaka = (() => {
      * will skip the lazy init-generation path on its first call.
      */
     async prepareInit(data) {
-      if (this._encoder) {
-        this._encoder.close();
-        this._encoder = null;
-      }
-      this._paramSetsFed = false;
-      this._initResult = null;
+      this._dropEncoder();
       await this.processInitSegment(data);
       if (this._width === 0 || this._height === 0) {
         throw new Error("prepareInit: missing dimensions in HEVC init segment");
@@ -10890,11 +10889,21 @@ var HevcShaka = (() => {
     }
     /** Release all resources */
     destroy() {
-      this._encoder?.close();
+      this._dropEncoder();
       this._decoder?.destroy();
       this._decoder = null;
-      this._encoder = null;
       this._demuxer = null;
+    }
+    /**
+     * Close the encoder, if any.
+     *
+     * `_initResult` goes with it: the H.264 init segment describes the encoder
+     * that produced it, so keeping one without the other is what ships frames
+     * under a descriptor that no longer matches them.
+     */
+    _dropEncoder() {
+      this._encoder?.close();
+      this._encoder = null;
       this._initResult = null;
     }
     /**
@@ -10911,14 +10920,23 @@ var HevcShaka = (() => {
         nominalDuration: Math.round(frameTicks)
       };
     }
+    /**
+     * Drop the encoder when it no longer matches the resolution about to be
+     * encoded — the single place that decides it.
+     *
+     * Both entry points need this, against different sources: the init
+     * segment's track dimensions (`processInitSegment`) and the decoded frames'
+     * own (`_prepareEncoder`). #258 was exactly the two drifting apart, one
+     * enforcing the rule and the other not, so they share the check.
+     */
+    _dropEncoderIfResolutionChanged(width, height) {
+      if (!this._encoder || width === this._width && height === this._height) return;
+      log.info(`Resolution changed ${this._width}x${this._height} \u2192 ${width}x${height}, recreating encoder`);
+      this._dropEncoder();
+    }
     /** Create the H.264 encoder, or recreate it when the resolution changed (ABR). */
     _prepareEncoder(width, height) {
-      if (this._encoder && (width !== this._width || height !== this._height)) {
-        log.info(`Resolution changed ${this._width}x${this._height} \u2192 ${width}x${height}, recreating encoder`);
-        this._encoder.close();
-        this._encoder = null;
-        this._initResult = null;
-      }
+      this._dropEncoderIfResolutionChanged(width, height);
       if (!this._encoder) {
         this._encoder = new H264Encoder({
           width,
@@ -11646,8 +11664,9 @@ var HevcShaka = (() => {
 
   // packages/shaka-plugin/src/compute-aware.ts
   function attachShakaComputeAware(player, options = {}) {
-    const { onObservation, ...deciderConfig } = options;
+    const { onObservation, switchInterval = DEFAULT_SWITCH_INTERVAL, ...deciderConfig } = options;
     const decider = new ComputeAwareDecider(deciderConfig);
+    if (switchInterval != null) makeCapReactive(player, switchInterval);
     const unsubscribe = subscribeSegmentStat((stat) => {
       const ladder = readLadder(player);
       if (ladder.length === 0) return;
@@ -11704,6 +11723,17 @@ var HevcShaka = (() => {
     const idx = ladder.findIndex((v) => v.bandwidth === bw);
     return idx >= 0 ? idx : ladder.length - 1;
   }
+  var DEFAULT_SWITCH_INTERVAL = null;
+  function makeCapReactive(player, seconds) {
+    if (typeof player.configure !== "function") return;
+    try {
+      const current = player.getConfiguration?.()?.abr?.switchInterval;
+      if (typeof current === "number" && current <= seconds) return;
+      player.configure({ abr: { switchInterval: seconds } });
+    } catch (err) {
+      console.warn("[hevc.js/shaka] could not shorten abr.switchInterval:", err);
+    }
+  }
   function applyCap(player, ladder, capIndex) {
     const cap = ladder[capIndex];
     if (!cap || typeof player.configure !== "function") return;
@@ -11722,6 +11752,15 @@ var HevcShaka = (() => {
         // slower-than-real-time transcoding drains the buffer instead of
         // letting the playback head catch up with it. Shaka's default is 10.
         bufferingGoal: 30
+      }
+    };
+  }
+  function recommendedPlayerConfig() {
+    return {
+      ...recommendedBufferConfig(),
+      abr: {
+        // About one segment for this pipeline.
+        switchInterval: 2
       }
     };
   }

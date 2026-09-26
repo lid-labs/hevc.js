@@ -9,6 +9,7 @@ import {
   HevcTransmuxer,
   registerHevcTransmuxer,
   recommendedBufferConfig,
+  recommendedPlayerConfig,
   subscribeSegmentStat,
 } from "../packages/shaka-plugin/src/index.js";
 import type {
@@ -17,5 +18,11 @@ import type {
 } from "../packages/shaka-plugin/src/index.js";
 
 // Re-export for the demo HTML
-export { HevcTransmuxer, registerHevcTransmuxer, recommendedBufferConfig, subscribeSegmentStat };
+export {
+  HevcTransmuxer,
+  registerHevcTransmuxer,
+  recommendedBufferConfig,
+  recommendedPlayerConfig,
+  subscribeSegmentStat,
+};
 export type { HevcShakaPluginConfig, SegmentPerfStat };
