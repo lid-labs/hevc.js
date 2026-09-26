@@ -41,8 +41,11 @@ interface LadderRank {
 export interface ShakaComputeAwareOptions extends ComputeAwareConfig {
   /**
    * Seconds Shaka may wait before acting on a cap we just changed
-   * (`abr.switchInterval`). Default 2; pass `null` to leave the player's own
-   * value alone.
+   * (`abr.switchInterval`). Defaults to `null`: the player's own value is left
+   * alone, because this setting governs network-driven ABR too and belongs to
+   * the application, not to a transmuxer. `recommendedPlayerConfig()` carries
+   * the value to apply; pass a number here only if you would rather this
+   * adapter set it.
    *
    * Shaka's default is 8, and `abr.restrictions` is a soft constraint applied
    * at the next ABR decision — which `SimpleAbrManager.suggestStreams_()`
@@ -92,10 +95,9 @@ export interface ShakaComputeAwareOptions extends ComputeAwareConfig {
  *   Does NOT undo what was applied to the player. If you want to restore an
  *   unbounded ABR, call
  *   `player.configure({ abr: { restrictions: { maxHeight: Infinity, maxBandwidth: Infinity }}})`
- *   after detaching. The shortened `abr.switchInterval` is likewise left in
- *   place: read `player.getConfiguration().abr.switchInterval` before
- *   attaching if you mean to put it back, or pass `switchInterval: null` to
- *   leave it untouched in the first place.
+ *   after detaching. A `switchInterval` passed to this function is likewise
+ *   left in place, so read `player.getConfiguration().abr.switchInterval`
+ *   beforehand if you mean to put it back.
  */
 export function attachShakaComputeAware(
   player: ShakaPlayer,
@@ -190,10 +192,11 @@ function findCurrentIndex(player: ShakaPlayer, ladder: LadderRank[]): number {
 }
 
 /**
- * Seconds. Two-second segments are the common shape for this pipeline, so a cap
- * lands within about one segment of the decision at this value.
+ * Not applied unless the caller asks. See the option's documentation: the
+ * recommended value lives in `recommendedPlayerConfig()`, which the application
+ * applies itself.
  */
-const DEFAULT_SWITCH_INTERVAL = 2;
+const DEFAULT_SWITCH_INTERVAL = null;
 
 /**
  * Shorten `abr.switchInterval` so a cap change reaches the screen promptly.

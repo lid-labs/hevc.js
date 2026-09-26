@@ -195,24 +195,26 @@ describe("attachShakaComputeAware", () => {
   describe("abr.switchInterval", () => {
     // Shaka applies abr.restrictions at its next ABR decision, and declines to
     // decide while switchInterval has not elapsed — so a cap sits unapplied for
-    // up to that long. Attaching shortens it.
-    it("shortens the player's switchInterval on attach", () => {
+    // up to that long. The value to use ships in recommendedPlayerConfig(),
+    // which the application applies: the setting governs network-driven ABR
+    // too, so a transmuxer has no business changing it unasked.
+    it("leaves the player's switchInterval alone by default", () => {
       const player = makePlayer([{ active: true, height: 1080 }], 8);
       const detach = attachShakaComputeAware(player);
-      expect(player.configure).toHaveBeenCalledWith({ abr: { switchInterval: 2 } });
+      expect(player.configure).not.toHaveBeenCalled();
       detach();
     });
 
-    it("honours an explicit interval", () => {
+    it("shortens it when the caller asks", () => {
       const player = makePlayer([{ active: true, height: 1080 }], 8);
-      const detach = attachShakaComputeAware(player, { switchInterval: 1 });
-      expect(player.configure).toHaveBeenCalledWith({ abr: { switchInterval: 1 } });
+      const detach = attachShakaComputeAware(player, { switchInterval: 2 });
+      expect(player.configure).toHaveBeenCalledWith({ abr: { switchInterval: 2 } });
       detach();
     });
 
     it("leaves a player that is already at least as reactive alone", () => {
       const player = makePlayer([{ active: true, height: 1080 }], 1);
-      const detach = attachShakaComputeAware(player);
+      const detach = attachShakaComputeAware(player, { switchInterval: 2 });
       expect(player.configure).not.toHaveBeenCalled();
       detach();
     });
@@ -233,7 +235,11 @@ describe("attachShakaComputeAware", () => {
         ]),
         configure: vi.fn(),
       };
-      const detach = attachShakaComputeAware(player, { measureWindow: 2, lowerAfter: 1 });
+      const detach = attachShakaComputeAware(player, {
+        measureWindow: 2,
+        lowerAfter: 1,
+        switchInterval: 2,
+      });
       fireN(0.5, 20);
       expect(capCalls(player).length).toBeGreaterThan(0);
       detach();
