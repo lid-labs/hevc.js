@@ -47,7 +47,8 @@
   <video id="player" class="demo-video" controls></video>
   <div id="status" class="demo-status">Loading...</div>
   <div id="perf-overlay" class="demo-status" style="font-family:monospace;font-size:13px;">
-    <span id="perf-quality">quality: —</span> ·
+    <span id="perf-quality">source: —</span> ·
+    <span id="perf-onscreen">on screen: —</span> ·
     <span id="perf-speed">speedX: —</span> ·
     <span id="perf-cap">cap: —</span> ·
     <span id="perf-reason">reason: —</span>
@@ -102,7 +103,7 @@ let busHits = 0;
 busDetach = HevcHls.subscribeSegmentStat((stat) => {
   busHits++;
   document.getElementById('perf-quality').textContent =
-    'quality: ' + stat.width + 'x' + stat.height;
+    'source: ' + stat.width + 'x' + stat.height;
   document.getElementById('perf-speed').textContent =
     'speedX: ' + stat.speedX.toFixed(2);
   console.log('[demo/perf-bus]', '#' + busHits,
@@ -213,6 +214,10 @@ async function loadM3U8(presetUrl) {
   document.getElementById('status').textContent = 'Loaded — playback should start';
 }
 
+hevcDemo.trackDecodedResolution(
+  document.getElementById('player'),
+  document.getElementById('perf-onscreen'),
+);
 document.getElementById('status').textContent = 'Ready — choose a preset or enter an m3u8 URL';
 </script>
 <script data-goatcounter="https://privaloops.goatcounter.com/count"

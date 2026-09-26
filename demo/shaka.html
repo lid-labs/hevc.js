@@ -47,6 +47,7 @@
   <div id="status" class="demo-status">Loading...</div>
   <div id="compute-overlay" class="demo-status" style="font-family:monospace;font-size:13px;">
     <span id="cmp-quality">quality: —</span> ·
+    <span id="cmp-onscreen">on screen: —</span> ·
     <span id="cmp-speed">speedX: —</span> ·
     <span id="cmp-cap">cap: —</span> ·
     <span id="cmp-reason">reason: —</span>
@@ -239,6 +240,10 @@ async function loadMPD(presetUrl) {
   }
 }
 
+hevcDemo.trackDecodedResolution(
+  document.getElementById('player'),
+  document.getElementById('cmp-onscreen'),
+);
 document.getElementById('status').textContent = 'Ready — choose a preset or enter an MPD URL';
 </script>
 <script data-goatcounter="https://privaloops.goatcounter.com/count"
