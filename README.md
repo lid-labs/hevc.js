@@ -276,6 +276,12 @@ int hevc_decoder_drain(HEVCDecoder* dec);
 // Access decoded frames (display order)
 int hevc_decoder_get_frame_count(HEVCDecoder* dec);
 int hevc_decoder_get_frame(HEVCDecoder* dec, int index, HEVCFrame* frame);
+
+// Pictures decoded with PicOutputFlag = 0 (H.265 §C.3.1): decoded, usable as
+// references, never output. Read the count, then copy the POCs out — the copy
+// clears the list, and fails rather than truncate if `max` is too small.
+int hevc_decoder_get_suppressed_poc_count(HEVCDecoder* dec);
+int hevc_decoder_take_suppressed_pocs(HEVCDecoder* dec, int32_t* out, int max);
 ```
 
 | HEVCFrame field | Type | Description |
@@ -293,7 +299,7 @@ int hevc_decoder_get_frame(HEVCDecoder* dec, int index, HEVCFrame* frame);
 ```bash
 cmake -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
-cd build && ctest --output-on-failure    # 153 tests
+cd build && ctest --output-on-failure    # 158 tests
 ```
 
 #### WebAssembly

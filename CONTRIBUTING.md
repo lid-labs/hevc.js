@@ -36,7 +36,7 @@ pnpm -r build
 ### Running tests
 
 ```bash
-# C++ unit + oracle tests (153 tests)
+# C++ unit + oracle tests (158 tests)
 pnpm test:native
 
 # E2E browser tests — builds the WASM and demo bundles, then tests the branch
