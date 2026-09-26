@@ -23,6 +23,8 @@ interface DecoderAPI {
   drain: (dec: number, countPtr: number) => number;
   getDrainedFrame: (dec: number, index: number, framePtr: number) => number;
   flush: (dec: number) => number;
+  getSuppressedPocCount: (dec: number) => number;
+  takeSuppressedPocs: (dec: number, out: number, max: number) => number;
 }
 
 /**
@@ -54,6 +56,8 @@ export class HEVCDecoder {
       drain: module.cwrap("hevc_decoder_drain", "number", ["number", "number"]) as (dec: number, countPtr: number) => number,
       getDrainedFrame: module.cwrap("hevc_decoder_get_drained_frame", "number", ["number", "number", "number"]) as (dec: number, index: number, framePtr: number) => number,
       flush: module.cwrap("hevc_decoder_flush", "number", ["number"]) as (dec: number) => number,
+      getSuppressedPocCount: module.cwrap("hevc_decoder_get_suppressed_poc_count", "number", ["number"]) as (dec: number) => number,
+      takeSuppressedPocs: module.cwrap("hevc_decoder_take_suppressed_pocs", "number", ["number", "number", "number"]) as (dec: number, out: number, max: number) => number,
     };
     this._dec = this._api.create();
     if (!this._dec) throw new Error("Failed to create HEVC decoder");
@@ -257,6 +261,33 @@ export class HEVCDecoder {
       return frames;
     } finally {
       m._free(countPtr);
+    }
+  }
+
+  /**
+   * POCs of the pictures decoded since the last call whose PicOutputFlag was
+   * 0 (§C.3.1) — decoded, possibly used as a reference, never output. Empties
+   * the list.
+   *
+   * A caller that maps output frames onto per-sample timestamps needs these:
+   * the sample that carried such a picture produces no frame, and without
+   * knowing which one it was, every later frame of the segment takes the
+   * timestamp of its predecessor.
+   */
+  takeSuppressedPocs(): number[] {
+    const m = this._m;
+    const count = this._api.getSuppressedPocCount(this._dec);
+    if (count <= 0) return [];
+
+    const ptr = m._malloc(count * 4);
+    try {
+      const written = this._api.takeSuppressedPocs(this._dec, ptr, count);
+      if (written < 0) return [];
+      const out: number[] = [];
+      for (let i = 0; i < written; i++) out.push(m.getValue(ptr + i * 4, "i32"));
+      return out;
+    } finally {
+      m._free(ptr);
     }
   }
 
