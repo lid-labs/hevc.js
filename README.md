@@ -301,7 +301,7 @@ int hevc_decoder_take_suppressed_pictures(HEVCDecoder* dec, int32_t* out, int ma
 ```bash
 cmake -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
-cd build && ctest --output-on-failure    # 159 tests
+cd build && ctest --output-on-failure    # 160 tests
 ```
 
 #### WebAssembly

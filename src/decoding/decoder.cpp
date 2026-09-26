@@ -107,9 +107,12 @@ DecodeStatus Decoder::decode_picture(const std::vector<NalUnit>& nals,
     // §8.3.2 — RPS derivation and picture marking
     dpb_.derive_rps(first_sh, *sps, nal.header.nal_unit_type, poc);
 
-    // §8.3.4 — Reference picture list construction (P and B slices)
+    // §8.3.4 — Reference picture list construction. Called on I slices too,
+    // where it just clears the lists: skipping it left the previous picture's
+    // entries in place, and they dangle as soon as alloc_picture() evicts one
+    // of them — which is what an IRAP does to the sequence that just ended.
+    dpb_.construct_ref_pic_lists(first_sh, *sps, *pps);
     if (first_sh.slice_type != SliceType::I) {
-        dpb_.construct_ref_pic_lists(first_sh, *sps, *pps);
         // §8.3.5 — Collocated picture derivation
         dpb_.derive_colpic(first_sh);
     }
