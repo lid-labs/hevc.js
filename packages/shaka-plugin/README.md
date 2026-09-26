@@ -77,6 +77,19 @@ This is a mitigation, not a cure: it buys headroom, it does not make transcoding
 - **Use the Worker** (`workerUrl`), which keeps decoding off the main thread.
 - **Leave compute-aware ABR on** (the default), so the variant ceiling drops when the device cannot keep up.
 
+### How fast the cap reaches the screen
+
+Compute-aware ABR narrows `abr.restrictions`, which Shaka honours at its next ABR decision — and `SimpleAbrManager` declines to take one while `abr.switchInterval` has not elapsed. At Shaka's default of 8s, a cap that fired on time can sit unapplied for several segments, and every one of them is transcoded at the resolution the cap already rejected. Measured against the published demo on a device transcoding at ~0.4x: 2.9s and 10.4s on two runs before the variant on screen obeyed the cap.
+
+`attachComputeAware` therefore shortens `abr.switchInterval` to 2s when it attaches, which is about one segment for this pipeline. It only ever lowers the value: a player already configured to be more reactive keeps its own. Opt out with `switchInterval: null`, or set your own:
+
+```js
+handle.attachComputeAware(player, { switchInterval: 4 });   // seconds
+handle.attachComputeAware(player, { switchInterval: null }); // leave Shaka's value alone
+```
+
+A shorter interval lets network-driven ABR react faster too. The cap has its own hysteresis (`raiseAfter` defaults to 6 windows against `lowerAfter` 1), so it does not oscillate on the back of this.
+
 `subscribeSegmentStat` reports the per-segment `speedX` if you want to see where a given device actually lands.
 
 ## How It Works
