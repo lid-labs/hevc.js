@@ -15,11 +15,21 @@ interface MockVariant {
   videoCodec?: string;
 }
 
-function makePlayer(variants: MockVariant[]) {
+function makePlayer(variants: MockVariant[], switchInterval = 8) {
   return {
     getVariantTracks: vi.fn(() => variants),
+    getConfiguration: vi.fn(() => ({ abr: { switchInterval } })),
     configure: vi.fn(),
   };
+}
+
+// Attaching also shortens abr.switchInterval, so a cap assertion has to look at
+// the configure() calls that carry restrictions rather than at call 0.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function capCalls(player: { configure: { mock: { calls: any[][] } } }): any[] {
+  return player.configure.mock.calls
+    .map((c) => c[0])
+    .filter((arg) => arg?.abr?.restrictions != null);
 }
 
 // Build a perf stat with a given speedX (segDurMs/totalMs ratio).
@@ -51,7 +61,7 @@ describe("attachShakaComputeAware", () => {
     const player = makePlayer([]);
     const detach = attachShakaComputeAware(player, { lowerAfter: 1, measureWindow: 2 });
     fireN(0.5, 20);
-    expect(player.configure).not.toHaveBeenCalled();
+    expect(capCalls(player)).toHaveLength(0);
     detach();
   });
 
@@ -68,9 +78,9 @@ describe("attachShakaComputeAware", () => {
 
     fireN(0.5, 20);
 
-    expect(player.configure).toHaveBeenCalled();
+    expect(capCalls(player).length).toBeGreaterThan(0);
     // First cap from currentIdx (2) → 1, applies 720p
-    const firstCall = player.configure.mock.calls[0]![0];
+    const firstCall = capCalls(player)[0];
     expect(firstCall).toEqual({
       abr: { restrictions: { maxBandwidth: 2_000_000, maxHeight: 720 } },
     });
@@ -88,8 +98,8 @@ describe("attachShakaComputeAware", () => {
     });
     fireN(0.5, 20);
 
-    expect(player.configure).toHaveBeenCalled();
-    const restrictions = player.configure.mock.calls[0]![0].abr.restrictions;
+    expect(capCalls(player).length).toBeGreaterThan(0);
+    const restrictions = capCalls(player)[0].abr.restrictions;
     expect(restrictions.maxBandwidth).toBe(500_000);
     expect(restrictions.maxHeight).toBeUndefined();
     detach();
@@ -110,7 +120,7 @@ describe("attachShakaComputeAware", () => {
     });
     fireN(0.5, 20);
     // Ladder is [720, 1080] (size 2). Cap from current (1080, idx 1) → idx 0 = 720.
-    const restrictions = player.configure.mock.calls[0]![0].abr.restrictions;
+    const restrictions = capCalls(player)[0].abr.restrictions;
     expect(restrictions.maxHeight).toBe(720);
     detach();
   });
@@ -126,7 +136,7 @@ describe("attachShakaComputeAware", () => {
     });
     detach();
     fireN(0.5, 20);
-    expect(player.configure).not.toHaveBeenCalled();
+    expect(capCalls(player)).toHaveLength(0);
   });
 
   it("invokes onObservation telemetry on every stat (not just cap changes)", () => {
@@ -182,6 +192,60 @@ describe("attachShakaComputeAware", () => {
     warnSpy.mockRestore();
   });
 
+  describe("abr.switchInterval", () => {
+    // Shaka applies abr.restrictions at its next ABR decision, and declines to
+    // decide while switchInterval has not elapsed — so a cap sits unapplied for
+    // up to that long. The value to use ships in recommendedPlayerConfig(),
+    // which the application applies: the setting governs network-driven ABR
+    // too, so a transmuxer has no business changing it unasked.
+    it("leaves the player's switchInterval alone by default", () => {
+      const player = makePlayer([{ active: true, height: 1080 }], 8);
+      const detach = attachShakaComputeAware(player);
+      expect(player.configure).not.toHaveBeenCalled();
+      detach();
+    });
+
+    it("shortens it when the caller asks", () => {
+      const player = makePlayer([{ active: true, height: 1080 }], 8);
+      const detach = attachShakaComputeAware(player, { switchInterval: 2 });
+      expect(player.configure).toHaveBeenCalledWith({ abr: { switchInterval: 2 } });
+      detach();
+    });
+
+    it("leaves a player that is already at least as reactive alone", () => {
+      const player = makePlayer([{ active: true, height: 1080 }], 1);
+      const detach = attachShakaComputeAware(player, { switchInterval: 2 });
+      expect(player.configure).not.toHaveBeenCalled();
+      detach();
+    });
+
+    it("touches nothing when given null", () => {
+      const player = makePlayer([{ active: true, height: 1080 }], 8);
+      const detach = attachShakaComputeAware(player, { switchInterval: null });
+      expect(player.configure).not.toHaveBeenCalled();
+      detach();
+    });
+
+    it("still caps when the interval cannot be read", () => {
+      // A player surface without getConfiguration must not break the loop.
+      const player = {
+        getVariantTracks: vi.fn(() => [
+          { active: false, height: 720, videoBandwidth: 2_000_000 },
+          { active: true, height: 1080, videoBandwidth: 5_000_000 },
+        ]),
+        configure: vi.fn(),
+      };
+      const detach = attachShakaComputeAware(player, {
+        measureWindow: 2,
+        lowerAfter: 1,
+        switchInterval: 2,
+      });
+      fireN(0.5, 20);
+      expect(capCalls(player).length).toBeGreaterThan(0);
+      detach();
+    });
+  });
+
   it("ignores audio-only variant tracks", () => {
     const player = makePlayer([
       // Audio-only: no height, no videoBandwidth, no videoCodec → skip
@@ -195,7 +259,7 @@ describe("attachShakaComputeAware", () => {
     fireN(0.5, 20);
     // Ladder has only the one video variant → can't lower (already at 0).
     // No cap should be applied.
-    expect(player.configure).not.toHaveBeenCalled();
+    expect(capCalls(player)).toHaveLength(0);
     detach();
   });
 });

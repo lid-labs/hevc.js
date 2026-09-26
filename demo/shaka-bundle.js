@@ -31,6 +31,7 @@ var HevcShaka = (() => {
   __export(shaka_entry_exports, {
     HevcTransmuxer: () => HevcTransmuxer,
     recommendedBufferConfig: () => recommendedBufferConfig,
+    recommendedPlayerConfig: () => recommendedPlayerConfig,
     registerHevcTransmuxer: () => registerHevcTransmuxer,
     subscribeSegmentStat: () => subscribeSegmentStat
   });
@@ -11551,8 +11552,9 @@ var HevcShaka = (() => {
 
   // packages/shaka-plugin/src/compute-aware.ts
   function attachShakaComputeAware(player, options = {}) {
-    const { onObservation, ...deciderConfig } = options;
+    const { onObservation, switchInterval = DEFAULT_SWITCH_INTERVAL, ...deciderConfig } = options;
     const decider = new ComputeAwareDecider(deciderConfig);
+    if (switchInterval != null) makeCapReactive(player, switchInterval);
     const unsubscribe = subscribeSegmentStat((stat) => {
       const ladder = readLadder(player);
       if (ladder.length === 0) return;
@@ -11609,6 +11611,17 @@ var HevcShaka = (() => {
     const idx = ladder.findIndex((v) => v.bandwidth === bw);
     return idx >= 0 ? idx : ladder.length - 1;
   }
+  var DEFAULT_SWITCH_INTERVAL = null;
+  function makeCapReactive(player, seconds) {
+    if (typeof player.configure !== "function") return;
+    try {
+      const current = player.getConfiguration?.()?.abr?.switchInterval;
+      if (typeof current === "number" && current <= seconds) return;
+      player.configure({ abr: { switchInterval: seconds } });
+    } catch (err) {
+      console.warn("[hevc.js/shaka] could not shorten abr.switchInterval:", err);
+    }
+  }
   function applyCap(player, ladder, capIndex) {
     const cap = ladder[capIndex];
     if (!cap || typeof player.configure !== "function") return;
@@ -11627,6 +11640,15 @@ var HevcShaka = (() => {
         // slower-than-real-time transcoding drains the buffer instead of
         // letting the playback head catch up with it. Shaka's default is 10.
         bufferingGoal: 30
+      }
+    };
+  }
+  function recommendedPlayerConfig() {
+    return {
+      ...recommendedBufferConfig(),
+      abr: {
+        // About one segment for this pipeline.
+        switchInterval: 2
       }
     };
   }

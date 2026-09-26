@@ -275,3 +275,33 @@ export async function getPlaybackState(page: Page): Promise<PlaybackState> {
     };
   });
 }
+
+// Both helpers below reach the demo's `let player` by name, for the reason
+// given above SHAKA_ABR_STATE_EXPR.
+
+/** Read one dotted path out of `player.getConfiguration()`. */
+export async function readShakaConfigValue<T>(page: Page, path: string): Promise<T | null> {
+  return page.evaluate<T | null>(`(() => {
+    if (typeof player === 'undefined' || !player || !player.getConfiguration) return null;
+    var node = player.getConfiguration();
+    var parts = ${JSON.stringify(path)}.split('.');
+    for (var i = 0; i < parts.length; i++) {
+      if (node == null) return null;
+      node = node[parts[i]];
+    }
+    return node === undefined ? null : node;
+  })()`);
+}
+
+/**
+ * Apply a configuration patch to the demo's player, the way an application
+ * would. Serialised into the expression, so it must be plain JSON data.
+ */
+export async function configureShaka(page: Page, patch: Record<string, unknown>): Promise<void> {
+  await page.evaluate(`(() => {
+    if (typeof player === 'undefined' || !player || !player.configure) {
+      throw new Error('no shaka player on the page to configure');
+    }
+    player.configure(${JSON.stringify(patch)});
+  })()`);
+}
