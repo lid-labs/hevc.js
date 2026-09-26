@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { loadDemoPage, loadPreset, waitForPlaying } from './helpers';
+import { loadDemoPage, loadPreset, waitForPlaying, readComputeOverlay } from './helpers';
 
 /**
  * The quality readouts must name the rendition that is actually on screen.
@@ -29,9 +29,9 @@ interface DemoPage {
 
 /** `quality: 1080p · 3989 kbps` — the variant the player selected. */
 async function announcedVariantHeight(page: Page): Promise<number | null> {
-  const text = (await page.locator('#cmp-quality').textContent()) ?? '';
-  const m = /quality:\s*(\d+)p/.exec(text);
-  return m ? Number(m[1]) : null;
+  // The compute overlay reader already parses this line, on the `cmp-*` ids
+  // the dash.js and Shaka pages use. hls.js has its own overlay, below.
+  return (await readComputeOverlay(page)).announcedHeight;
 }
 
 /** `source: 1920x1080` — the resolution of the segment being transcoded. */

@@ -643,12 +643,10 @@ export class SegmentTranscoder {
 
   /** Release all resources */
   destroy(): void {
-    this._encoder?.close();
+    this._dropEncoder();
     this._decoder?.destroy();
     this._decoder = null;
-    this._encoder = null;
     this._demuxer = null;
-    this._initResult = null;
   }
 
   /**

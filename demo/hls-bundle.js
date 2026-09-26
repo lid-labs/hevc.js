@@ -10841,12 +10841,10 @@ var HevcHls = (() => {
     }
     /** Release all resources */
     destroy() {
-      this._encoder?.close();
+      this._dropEncoder();
       this._decoder?.destroy();
       this._decoder = null;
-      this._encoder = null;
       this._demuxer = null;
-      this._initResult = null;
     }
     /**
      * Close the encoder, if any.
