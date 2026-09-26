@@ -141,3 +141,113 @@ export async function hasAudioSourceBuffer(page: Page): Promise<boolean> {
     return false;
   });
 }
+
+/**
+ * Slow the page's CPU down by `rate`x through CDP, so a machine that
+ * transcodes faster than real time can be pushed below it on purpose.
+ * The WASM decode is CPU-bound; WebCodecs encoding, being hardware
+ * accelerated, is largely unaffected — which is exactly the shape of the
+ * hardware issue #126 was reported on.
+ *
+ * Chromium only (CDP). Returns a restore function; call it in a finally
+ * block, since the throttle outlives the test otherwise on a reused context.
+ */
+export async function throttleCpu(page: Page, rate: number): Promise<() => Promise<void>> {
+  const session = await page.context().newCDPSession(page);
+  await session.send('Emulation.setCPUThrottlingRate', { rate });
+  return async () => {
+    try {
+      await session.send('Emulation.setCPUThrottlingRate', { rate: 1 });
+      await session.detach();
+    } catch {
+      // Page or context already gone — nothing left to restore.
+    }
+  };
+}
+
+/** One reading of the compute-aware overlay on demo/shaka.html (same ids on dash.html). */
+export interface ComputeOverlaySample {
+  /** Per-segment speedX, as published on the perf bus. */
+  speedX: number | null;
+  /** Decider's smoothed speedX over its rolling window. */
+  avgSpeedX: number | null;
+  /** Cap index in the ladder, or null while the cap has never been applied. */
+  capIndex: number | null;
+  /** `init` | `hold` | `lower` | `raise`, or null before the first observation. */
+  reason: string | null;
+  /** Height the page announces for the active variant, in pixels. */
+  announcedHeight: number | null;
+  /** Raw overlay text, used to deduplicate consecutive samples. */
+  raw: string;
+}
+
+/**
+ * Read the four overlay spans in one evaluate, so a sample can't straddle
+ * an update and mix two segments' values.
+ */
+export async function readComputeOverlay(page: Page): Promise<ComputeOverlaySample> {
+  const raw = await page.evaluate(() => {
+    const text = (id: string) => document.getElementById(id)?.textContent ?? '';
+    return {
+      quality: text('cmp-quality'),
+      speed: text('cmp-speed'),
+      cap: text('cmp-cap'),
+      reason: text('cmp-reason'),
+    };
+  });
+
+  const num = (s: string, re: RegExp): number | null => {
+    const m = re.exec(s);
+    return m ? Number(m[1]) : null;
+  };
+
+  return {
+    speedX: num(raw.speed, /speedX:\s*([\d.]+)/),
+    avgSpeedX: num(raw.speed, /avg\s*([\d.]+)/),
+    capIndex: num(raw.cap, /cap:\s*idx\s*(\d+)/),
+    reason: /reason:\s*(\w+)/.exec(raw.reason)?.[1] ?? null,
+    announcedHeight: num(raw.quality, /quality:\s*(\d+)p/),
+    raw: `${raw.quality} | ${raw.speed} | ${raw.cap} | ${raw.reason}`,
+  };
+}
+
+/** Shaka ladder + ABR restrictions actually configured on the player. */
+export interface ShakaAbrState {
+  /** Tallest variant the manifest offers, in pixels. */
+  topHeight: number | null;
+  /** Height of the variant Shaka is currently playing. */
+  activeHeight: number | null;
+  /** `abr.restrictions.maxHeight`, or null while unrestricted (Infinity). */
+  maxHeight: number | null;
+  /** `abr.restrictions.maxBandwidth`, or null while unrestricted. */
+  maxBandwidth: number | null;
+}
+
+// demo/shaka.html declares `let player` at the top level of a classic script:
+// a global lexical binding, reachable by name but absent from `window`. A
+// serialized Playwright callback cannot close over it, so this is evaluated
+// as source instead.
+const SHAKA_ABR_STATE_EXPR = `(() => {
+  if (typeof player === 'undefined' || !player) return null;
+  var tracks = player.getVariantTracks ? player.getVariantTracks() : [];
+  var heights = tracks.map(function (t) { return t.height; })
+                      .filter(function (h) { return typeof h === 'number'; });
+  var active = tracks.filter(function (t) { return t.active; })[0] || null;
+  var cfg = player.getConfiguration ? player.getConfiguration() : null;
+  var r = cfg && cfg.abr ? cfg.abr.restrictions : null;
+  return {
+    topHeight: heights.length ? Math.max.apply(null, heights) : null,
+    activeHeight: active && active.height != null ? active.height : null,
+    maxHeight: r && Number.isFinite(r.maxHeight) ? r.maxHeight : null,
+    maxBandwidth: r && Number.isFinite(r.maxBandwidth) ? r.maxBandwidth : null,
+  };
+})()`;
+
+export async function readShakaAbrState(page: Page): Promise<ShakaAbrState | null> {
+  return page.evaluate<ShakaAbrState | null>(SHAKA_ABR_STATE_EXPR);
+}
+
+/** Current playback position, for checking that playback keeps advancing. */
+export async function getCurrentTime(page: Page): Promise<number> {
+  return page.evaluate(() => document.querySelector<HTMLVideoElement>('#player')?.currentTime ?? 0);
+}
