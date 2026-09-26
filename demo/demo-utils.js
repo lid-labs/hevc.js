@@ -31,5 +31,27 @@
     return undefined;
   }
 
-  global.hevcDemo = { safeAssetUrl: safeAssetUrl };
+  /**
+   * Mirror the resolution the video element actually decodes into `el`.
+   *
+   * The other readouts name the variant the player decided to fetch, which
+   * is not necessarily what reaches the screen: on an ABR switch the two
+   * parted ways for a whole stream (issue #258). `resize` fires whenever the
+   * intrinsic dimensions change, so the screen always has the last word.
+   */
+  function trackDecodedResolution(video, el) {
+    function show() {
+      el.textContent = "on screen: " +
+        (video.videoWidth ? video.videoWidth + "x" + video.videoHeight : "—");
+    }
+    video.addEventListener("resize", show);
+    video.addEventListener("loadedmetadata", show);
+    video.addEventListener("emptied", show);
+    show();
+  }
+
+  global.hevcDemo = {
+    safeAssetUrl: safeAssetUrl,
+    trackDecodedResolution: trackDecodedResolution,
+  };
 })(window);
