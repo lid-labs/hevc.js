@@ -9479,7 +9479,9 @@ var HevcShaka = (() => {
         feed: module.cwrap("hevc_decoder_feed", "number", ["number", "number", "number"]),
         drain: module.cwrap("hevc_decoder_drain", "number", ["number", "number"]),
         getDrainedFrame: module.cwrap("hevc_decoder_get_drained_frame", "number", ["number", "number", "number"]),
-        flush: module.cwrap("hevc_decoder_flush", "number", ["number"])
+        flush: module.cwrap("hevc_decoder_flush", "number", ["number"]),
+        getSuppressedPocCount: module.cwrap("hevc_decoder_get_suppressed_poc_count", "number", ["number"]),
+        takeSuppressedPocs: module.cwrap("hevc_decoder_take_suppressed_pocs", "number", ["number", "number", "number"])
       };
       this._dec = this._api.create();
       if (!this._dec) throw new Error("Failed to create HEVC decoder");
@@ -9518,13 +9520,13 @@ var HevcShaka = (() => {
         const ret = this._api.decode(this._dec, ptr, data.length);
         if (ret !== 0) throw new Error(`Decode failed (code ${ret})`);
         const count = this._api.getFrameCount(this._dec);
-        const frames2 = [];
+        const frames = [];
         for (let i = 0; i < count; i++) {
           const frame = this._extractFrame(i);
-          if (frame) frames2.push(frame);
+          if (frame) frames.push(frame);
         }
         const info = this._extractInfo();
-        return { frames: frames2, info };
+        return { frames, info };
       } finally {
         m._free(ptr);
       }
@@ -9628,12 +9630,12 @@ var HevcShaka = (() => {
         const ret = this._api.drain(this._dec, countPtr);
         if (ret !== 0) return [];
         const count = m.getValue(countPtr, "i32");
-        const frames2 = [];
+        const frames = [];
         for (let i = 0; i < count; i++) {
           const frame = this._extractDrainedFrame(i);
-          if (frame) frames2.push(frame);
+          if (frame) frames.push(frame);
         }
-        return frames2;
+        return frames;
       } finally {
         m._free(countPtr);
       }
@@ -9648,20 +9650,45 @@ var HevcShaka = (() => {
       const m = this._m;
       const countPtr = m._malloc(4);
       try {
-        const frames2 = [];
+        const frames = [];
         const framePtr = m._malloc(48);
         try {
           for (let i = 0; ; i++) {
             const r = this._api.getDrainedFrame(this._dec, i, framePtr);
             if (r !== 0) break;
-            frames2.push(this._readFrameFromPtr(framePtr));
+            frames.push(this._readFrameFromPtr(framePtr));
           }
         } finally {
           m._free(framePtr);
         }
-        return frames2;
+        return frames;
       } finally {
         m._free(countPtr);
+      }
+    }
+    /**
+     * POCs of the pictures decoded since the last call whose PicOutputFlag was
+     * 0 (§C.3.1) — decoded, possibly used as a reference, never output. Empties
+     * the list.
+     *
+     * A caller that maps output frames onto per-sample timestamps needs these:
+     * the sample that carried such a picture produces no frame, and without
+     * knowing which one it was, every later frame of the segment takes the
+     * timestamp of its predecessor.
+     */
+    takeSuppressedPocs() {
+      const m = this._m;
+      const count = this._api.getSuppressedPocCount(this._dec);
+      if (count <= 0) return [];
+      const ptr = m._malloc(count * 4);
+      try {
+        const written = this._api.takeSuppressedPocs(this._dec, ptr, count);
+        if (written < 0) return [];
+        const out = [];
+        for (let i = 0; i < written; i++) out.push(m.getValue(ptr + i * 4, "i32"));
+        return out;
+      } finally {
+        m._free(ptr);
       }
     }
     /** Release decoder resources */
@@ -10590,6 +10617,8 @@ var HevcShaka = (() => {
         log.debug(`Auto-detected fps: ${this._fps.toFixed(2)} (timescale=${this._timescale}, sample_duration=${samples[0].duration})`);
       }
       const sortedPts = samples.map((s) => s.pts).sort((a, b) => a - b);
+      const ptsAssigner = new DisplayPtsAssigner(sortedPts, samples[0].duration);
+      const assigned = [];
       if (!this._paramSetsFed && this._paramSetsBuffer) {
         this._decoder.feed(this._paramSetsBuffer);
         this._paramSetsFed = true;
@@ -10600,34 +10629,47 @@ var HevcShaka = (() => {
       let frameH = 0;
       let decodeMs = 0;
       let encodeMs = 0;
+      const encodeDrained = (frames) => {
+        if (frames.length === 0) return;
+        if (frameCount === 0) {
+          frameW = frames[0].width;
+          frameH = frames[0].height;
+          this._prepareEncoder(frameW, frameH);
+          this._encoder.onChunk = (chunk) => chunks.push(chunk);
+        }
+        for (const frame of frames) {
+          const i = frameCount++;
+          const ts = ptsAssigner.next(frame.poc) ?? this._extrapolate(segmentBaseTime, i);
+          assigned.push(ts);
+          this._encoder.encode(
+            frame,
+            Math.round(ts.pts / this._timescale * 1e6),
+            i === 0
+          );
+        }
+      };
       for (const sample of samples) {
         const tFeed0 = performance.now();
         this._decoder.feed(toAnnexB(sample.nalUnits));
-        const frames2 = this._decoder.drain();
+        ptsAssigner.noteSuppressed(this._decoder.takeSuppressedPocs());
+        const frames = this._decoder.drain();
         const tDrainEnd = performance.now();
         decodeMs += tDrainEnd - tFeed0;
-        if (frames2.length > 0) {
-          if (frameCount === 0) {
-            frameW = frames2[0].width;
-            frameH = frames2[0].height;
-            this._prepareEncoder(frameW, frameH);
-            this._encoder.onChunk = (chunk) => chunks.push(chunk);
-          }
-          for (const frame of frames2) {
-            const i = frameCount++;
-            const timestampUs = i < sortedPts.length ? Math.round(sortedPts[i] / this._timescale * 1e6) : Math.round(segmentBaseTime / this._timescale * 1e6) + Math.round(i / this._fps * 1e6);
-            this._encoder.encode(frame, timestampUs, i === 0);
-          }
-        }
+        encodeDrained(frames);
         encodeMs += performance.now() - tDrainEnd;
       }
+      const tSegFlush = performance.now();
+      const tail = this._decoder.flush();
+      decodeMs += performance.now() - tSegFlush;
+      const tTailEncode = performance.now();
+      encodeDrained(tail);
+      encodeMs += performance.now() - tTailEncode;
       if (frameCount === 0) {
         this.lastPerfStats = null;
         return null;
       }
-      const tFlush0 = performance.now();
+      const tTail0 = performance.now();
       await this._encoder.flush();
-      encodeMs += performance.now() - tFlush0;
       if (chunks.length === 0) return null;
       if (!this._initResult) {
         const avcC = this._encoder.codecDescription;
@@ -10642,21 +10684,17 @@ var HevcShaka = (() => {
         const codec = this._audioConfig ? `${this._encoder.codec},mp4a.40.2` : this._encoder.codec;
         this._initResult = { initSegment, codec };
       }
-      const tMux0 = performance.now();
-      const sortedDurations = [];
-      for (let i = 0; i < sortedPts.length - 1; i++) {
-        sortedDurations.push(sortedPts[i + 1] - sortedPts[i]);
-      }
-      if (sortedPts.length > 0) {
-        sortedDurations.push(samples[0].duration);
+      const durations = [];
+      for (let i = 0; i < assigned.length; i++) {
+        durations.push(i + 1 < assigned.length ? assigned[i + 1].pts - assigned[i].pts : assigned[i].nominalDuration);
       }
       const muxerSamples = chunks.map((c, i) => ({
         data: c.data,
-        duration: i < sortedDurations.length ? sortedDurations[i] : Math.round(c.duration * this._timescale / 1e6),
+        duration: i < durations.length ? durations[i] : Math.round(c.duration * this._timescale / 1e6),
         isKeyframe: c.isKeyframe,
         compositionTimeOffset: 0
       }));
-      const muxBaseTime = sortedPts.length > 0 ? sortedPts[0] : segmentBaseTime;
+      const muxBaseTime = assigned.length > 0 ? assigned[0].pts : segmentBaseTime;
       let mediaSegment;
       const audioSamples = this._audioConfig ? this._demuxer.drainAudioSamples() : [];
       if (this._audioConfig && audioSamples.length > 0) {
@@ -10670,7 +10708,7 @@ var HevcShaka = (() => {
         mediaSegment = this._muxer.muxSegment(muxerSamples, muxBaseTime);
       }
       const demuxMs = tDemuxEnd - tDemux0;
-      encodeMs += performance.now() - tMux0;
+      encodeMs += performance.now() - tTail0;
       const segDurTicks = samples.reduce((sum, s) => sum + s.duration, 0);
       const segDurMs = segDurTicks / this._timescale * 1e3;
       this._baseDecodeTime = segmentBaseTime + segDurTicks;
@@ -10689,7 +10727,7 @@ var HevcShaka = (() => {
           totalMs,
           segDurMs,
           speedX: segDurMs / totalMs,
-          frames: frames.length,
+          frames: frameCount,
           width: frameW,
           height: frameH
         });
@@ -10715,56 +10753,25 @@ var HevcShaka = (() => {
         this._fpsAutoDetected = true;
       }
       const sortedPts = samples.map((s) => s.pts).sort((a, b) => a - b);
+      const ptsAssigner = new DisplayPtsAssigner(sortedPts, samples[0].duration);
       if (!this._paramSetsFed && this._paramSetsBuffer) {
         this._decoder.feed(this._paramSetsBuffer);
         this._paramSetsFed = true;
       }
-      for (const sample of samples) {
-        const totalSize = sample.nalUnits.reduce((sum, n) => sum + 4 + n.length, 0);
-        const nalBuffer = new Uint8Array(totalSize);
-        let offset = 0;
-        for (const nal of sample.nalUnits) {
-          nalBuffer[offset++] = 0;
-          nalBuffer[offset++] = 0;
-          nalBuffer[offset++] = 0;
-          nalBuffer[offset++] = 1;
-          nalBuffer.set(nal, offset);
-          offset += nal.length;
-        }
-        this._decoder.feed(nalBuffer);
-      }
-      const frames2 = this._decoder.drain();
-      const tDecodeEnd = performance.now();
-      if (frames2.length === 0) return;
-      const frameW = frames2[0].width;
-      const frameH = frames2[0].height;
-      if (this._encoder && (frameW !== this._width || frameH !== this._height)) {
-        this._encoder.close();
-        this._encoder = null;
-        this._initResult = null;
-      }
-      if (!this._encoder) {
-        this._encoder = new H264Encoder({
-          width: frameW,
-          height: frameH,
-          fps: this._fps,
-          bitrate: this._config.bitrate
-        });
-        this._width = frameW;
-        this._height = frameH;
-      }
       let initEmitted = false;
-      const tEncode0 = performance.now();
-      for (let batchStart = 0; batchStart < frames2.length; batchStart += BATCH_SIZE) {
-        const batchEnd = Math.min(batchStart + BATCH_SIZE, frames2.length);
+      const emitBatch = async (batch, batchStart) => {
         const batchChunks = [];
         this._encoder.onChunk = (chunk) => batchChunks.push(chunk);
-        for (let i = batchStart; i < batchEnd; i++) {
-          const timestampUs = i < sortedPts.length ? Math.round(sortedPts[i] / this._timescale * 1e6) : Math.round(segmentBaseTime / this._timescale * 1e6) + Math.round(i / this._fps * 1e6);
-          this._encoder.encode(frames2[i], timestampUs, i === 0);
+        for (let i = 0; i < batch.length; i++) {
+          const { frame, pts } = batch[i];
+          this._encoder.encode(
+            frame,
+            Math.round(pts / this._timescale * 1e6),
+            batchStart + i === 0
+          );
         }
         await this._encoder.flush();
-        if (batchChunks.length === 0) continue;
+        if (batchChunks.length === 0) return;
         if (!this._initResult) {
           const avcC = this._encoder.codecDescription;
           if (!avcC) throw new Error("No avcC description from encoder");
@@ -10778,10 +10785,10 @@ var HevcShaka = (() => {
             codec: this._encoder.codec
           };
         }
-        const batchBaseTime = batchStart < sortedPts.length ? sortedPts[batchStart] : segmentBaseTime;
+        const batchBaseTime = batch[0].pts;
         const muxerSamples = batchChunks.map((c, i) => {
-          const ptsIdx = batchStart + i;
-          const duration = ptsIdx < sortedPts.length - 1 ? sortedPts[ptsIdx + 1] - sortedPts[ptsIdx] : samples[0].duration;
+          const timed = batch[i];
+          const duration = timed ? i + 1 < batch.length ? batch[i + 1].pts - timed.pts : timed.nominalDuration : Math.round(c.duration * this._timescale / 1e6);
           return {
             data: c.data,
             duration,
@@ -10792,11 +10799,53 @@ var HevcShaka = (() => {
         const mediaSegment = this._muxer.muxSegment(muxerSamples, batchBaseTime);
         await onChunk(mediaSegment, !initEmitted ? this._initResult : null);
         initEmitted = true;
+      };
+      let decodeMs = 0;
+      let encodeMs = 0;
+      let frameW = 0;
+      let frameH = 0;
+      let frameCount = 0;
+      let encodedCount = 0;
+      let pending = [];
+      const ingest = async (frames) => {
+        if (frames.length === 0) return;
+        if (frameCount === 0) {
+          frameW = frames[0].width;
+          frameH = frames[0].height;
+          this._prepareEncoder(frameW, frameH);
+        }
+        for (const frame of frames) {
+          const ts = ptsAssigner.next(frame.poc) ?? this._extrapolate(segmentBaseTime, frameCount);
+          frameCount++;
+          pending.push({ frame, pts: ts.pts, nominalDuration: ts.nominalDuration });
+        }
+        while (pending.length >= BATCH_SIZE) {
+          await emitBatch(pending.splice(0, BATCH_SIZE), encodedCount);
+          encodedCount += BATCH_SIZE;
+        }
+      };
+      for (const sample of samples) {
+        const tFeed0 = performance.now();
+        this._decoder.feed(toAnnexB(sample.nalUnits));
+        ptsAssigner.noteSuppressed(this._decoder.takeSuppressedPocs());
+        const frames = this._decoder.drain();
+        const tDrainEnd = performance.now();
+        decodeMs += tDrainEnd - tFeed0;
+        await ingest(frames);
+        encodeMs += performance.now() - tDrainEnd;
       }
-      const tEncodeEnd = performance.now();
+      const tSegFlush = performance.now();
+      const tail = this._decoder.flush();
+      decodeMs += performance.now() - tSegFlush;
+      const tTail0 = performance.now();
+      await ingest(tail);
+      if (frameCount === 0) return;
+      if (pending.length > 0) {
+        await emitBatch(pending, encodedCount);
+        pending = [];
+      }
+      encodeMs += performance.now() - tTail0;
       const demuxMs = tDemuxEnd - tDemux0;
-      const decodeMs = tDecodeEnd - tDemuxEnd;
-      const encodeMs = tEncodeEnd - tEncode0;
       const segDurTicks = samples.reduce((sum, s) => sum + s.duration, 0);
       const segDurMs = segDurTicks / this._timescale * 1e3;
       this._baseDecodeTime = segmentBaseTime + segDurTicks;
@@ -10804,7 +10853,7 @@ var HevcShaka = (() => {
         demuxMs,
         decodeMs,
         encodeMs,
-        frames: frames2.length,
+        frames: frameCount,
         segDurMs,
         width: frameW,
         height: frameH
@@ -10815,7 +10864,7 @@ var HevcShaka = (() => {
           totalMs,
           segDurMs,
           speedX: segDurMs / totalMs,
-          frames: frames2.length,
+          frames: frameCount,
           width: frameW,
           height: frameH
         });
@@ -10840,6 +10889,19 @@ var HevcShaka = (() => {
       this._demuxer = null;
       this._initResult = null;
     }
+    /**
+     * Timestamp for a frame past the end of the segment's sample list — the
+     * decoder returned more output pictures than the segment had samples, which
+     * the per-segment flush should rule out. Extrapolating at the nominal frame
+     * rate keeps the timeline monotonic rather than reusing the last slot.
+     */
+    _extrapolate(segmentBaseTime, index) {
+      const frameTicks = this._timescale / this._fps;
+      return {
+        pts: segmentBaseTime + Math.round(index * frameTicks),
+        nominalDuration: Math.round(frameTicks)
+      };
+    }
     /** Create the H.264 encoder, or recreate it when the resolution changed (ABR). */
     _prepareEncoder(width, height) {
       if (this._encoder && (width !== this._width || height !== this._height)) {
@@ -10859,13 +10921,13 @@ var HevcShaka = (() => {
         this._height = height;
       }
     }
-    async _encodeFrames(frames2) {
-      if (!this._encoder || frames2.length === 0) return null;
+    async _encodeFrames(frames) {
+      if (!this._encoder || frames.length === 0) return null;
       const chunks = [];
       this._encoder.onChunk = (chunk) => chunks.push(chunk);
-      for (let i = 0; i < frames2.length; i++) {
+      for (let i = 0; i < frames.length; i++) {
         const timestampUs = Math.round(this._baseDecodeTime / this._timescale * 1e6) + Math.round(i / this._fps * 1e6);
-        this._encoder.encode(frames2[i], timestampUs, i === 0);
+        this._encoder.encode(frames[i], timestampUs, i === 0);
       }
       await this._encoder.flush();
       if (chunks.length === 0) return null;
@@ -10920,6 +10982,41 @@ var HevcShaka = (() => {
     }
     return sets;
   }
+  var DisplayPtsAssigner = class {
+    /**
+     * @param sortedPts the segment's sample PTS, ascending
+     * @param fallbackDuration duration for the last slot, which has no successor
+     */
+    constructor(_sortedPts, _fallbackDuration) {
+      this._sortedPts = _sortedPts;
+      this._fallbackDuration = _fallbackDuration;
+      this._next = 0;
+      this._suppressed = [];
+    }
+    /** POCs the decoder reported as decoded-but-not-output. */
+    noteSuppressed(pocs) {
+      for (const poc of pocs) this._suppressed.push(poc);
+    }
+    /**
+     * The timestamp for the output frame with this POC, or null once the
+     * segment's samples are exhausted (the caller then extrapolates).
+     */
+    next(poc) {
+      for (let i = this._suppressed.length - 1; i >= 0; i--) {
+        if (this._suppressed[i] < poc) {
+          this._suppressed.splice(i, 1);
+          this._next++;
+        }
+      }
+      const slot = this._next++;
+      if (slot >= this._sortedPts.length) return null;
+      const pts = this._sortedPts[slot];
+      return {
+        pts,
+        nominalDuration: slot + 1 < this._sortedPts.length ? this._sortedPts[slot + 1] - pts : this._fallbackDuration
+      };
+    }
+  };
   function rebaseSamplesToTfdt(samples, tfdt) {
     if (samples.length === 0) return tfdt ?? 0;
     if (tfdt === null) return samples[0].dts;
