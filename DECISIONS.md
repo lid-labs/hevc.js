@@ -168,17 +168,21 @@ Nothing else tells the caller a sample produced no frame. Frames carry their
 POC, but a POC missing from the output is indistinguishable from one the DPB
 has not bumped yet.
 
-**Decision**: The decoder reports the POC of each suppressed picture
-(`hevc_decoder_take_suppressed_pocs`), and the caller consumes the matching
-timestamp slot itself (`DisplayPtsAssigner`).
+**Decision**: The decoder reports each suppressed picture as `(cvs_id, poc)`
+(`hevc_decoder_take_suppressed_pictures`), and the caller consumes the
+matching timestamp slot itself (`DisplayPtsAssigner`).
 
 **Rationale**:
 - The decoder is the only component that knows a picture was suppressed; the
   timestamps are the caller's, from the container, and the decoder knows
   nothing of them
-- Reporting POCs rather than a count keeps the mapping usable on B-frame
-  streams: a suppressed picture that displays *after* the frame being timed
-  must not consume a slot ahead of it
+- Reporting the pictures rather than a count keeps the mapping usable on
+  B-frame streams: a suppressed picture that displays *after* the frame being
+  timed must not consume a slot ahead of it
+- The pair, not the POC alone: POC restarts at every IRAP (§8.3.1), so across
+  a CVS boundary it would place a picture of the new sequence before the
+  pictures of the previous one still pending output. `DPB::bump` orders by the
+  same pair, and `HEVCFrame` now carries `cvs_id` so the caller can too
 - The alternative — having the decoder emit a placeholder frame — would put a
   picture that must not be displayed back on the encode path
 
@@ -186,5 +190,6 @@ timestamp slot itself (`DisplayPtsAssigner`).
 once no smaller POC can still arrive: every suppressed picture that displays
 earlier has been decoded by then, so its slot can be consumed on the spot.
 Callers that assign timestamps positionally must poll
-`takeSuppressedPocs()` after every `feed()`; one that ignores it keeps the
-pre-fix behaviour, off by one slot per suppressed picture.
+`takeSuppressedPictures()` after every `feed()`; one that ignores it keeps the
+pre-fix behaviour, off by one slot per suppressed picture — and leaves the
+decoder's list growing, since reading it is what empties it.
