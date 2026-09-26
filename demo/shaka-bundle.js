@@ -9480,7 +9480,9 @@ var HevcShaka = (() => {
         feed: module.cwrap("hevc_decoder_feed", "number", ["number", "number", "number"]),
         drain: module.cwrap("hevc_decoder_drain", "number", ["number", "number"]),
         getDrainedFrame: module.cwrap("hevc_decoder_get_drained_frame", "number", ["number", "number", "number"]),
-        flush: module.cwrap("hevc_decoder_flush", "number", ["number"])
+        flush: module.cwrap("hevc_decoder_flush", "number", ["number"]),
+        getSuppressedPictureCount: module.cwrap("hevc_decoder_get_suppressed_picture_count", "number", ["number"]),
+        takeSuppressedPictures: module.cwrap("hevc_decoder_take_suppressed_pictures", "number", ["number", "number", "number"])
       };
       this._dec = this._api.create();
       if (!this._dec) throw new Error("Failed to create HEVC decoder");
@@ -9573,10 +9575,11 @@ var HevcShaka = (() => {
       const ch = m.getValue(framePtr + 32, "i32");
       const bd = m.getValue(framePtr + 36, "i32");
       const poc = m.getValue(framePtr + 40, "i32");
+      const cvsId = m.getValue(framePtr + 44, "i32");
       const y = copyPlane(m, yPtr, width, height, strideY);
       const cb = copyPlane(m, cbPtr, cw, ch, strideC);
       const cr = copyPlane(m, crPtr, cw, ch, strideC);
-      return { y, cb, cr, width, height, chromaWidth: cw, chromaHeight: ch, bitDepth: bd, poc };
+      return { y, cb, cr, width, height, chromaWidth: cw, chromaHeight: ch, bitDepth: bd, poc, cvsId };
     }
     _extractInfo() {
       const m = this._m;
@@ -9663,6 +9666,37 @@ var HevcShaka = (() => {
         return frames;
       } finally {
         m._free(countPtr);
+      }
+    }
+    /**
+     * The pictures decoded since the last call whose PicOutputFlag was 0
+     * (§C.3.1) — decoded, possibly used as a reference, never output. Empties
+     * the list.
+     *
+     * A caller that maps output frames onto per-sample timestamps needs these:
+     * the sample that carried such a picture produces no frame, and without
+     * knowing which one it was, every later frame of the segment takes the
+     * timestamp of its predecessor. Each one comes with its CVS, since POC
+     * restarts at every IRAP and alone cannot order pictures across one.
+     */
+    takeSuppressedPictures() {
+      const m = this._m;
+      const count = this._api.getSuppressedPictureCount(this._dec);
+      if (count <= 0) return [];
+      const ptr = m._malloc(count * 8);
+      try {
+        const written = this._api.takeSuppressedPictures(this._dec, ptr, count);
+        if (written < 0) return [];
+        const out = [];
+        for (let i = 0; i < written; i++) {
+          out.push({
+            cvsId: m.getValue(ptr + i * 8, "i32"),
+            poc: m.getValue(ptr + i * 8 + 4, "i32")
+          });
+        }
+        return out;
+      } finally {
+        m._free(ptr);
       }
     }
     /** Release decoder resources */
@@ -10553,7 +10587,8 @@ var HevcShaka = (() => {
         chromaWidth: cw,
         chromaHeight: ch,
         bitDepth: 8,
-        poc: 0
+        poc: 0,
+        cvsId: 0
       };
       warmup.onChunk = () => {
       };
@@ -10589,6 +10624,8 @@ var HevcShaka = (() => {
         log.debug(`Auto-detected fps: ${this._fps.toFixed(2)} (timescale=${this._timescale}, sample_duration=${samples[0].duration})`);
       }
       const sortedPts = samples.map((s) => s.pts).sort((a, b) => a - b);
+      const ptsAssigner = new DisplayPtsAssigner(sortedPts, samples[0].duration);
+      const assigned = [];
       if (!this._paramSetsFed && this._paramSetsBuffer) {
         this._decoder.feed(this._paramSetsBuffer);
         this._paramSetsFed = true;
@@ -10609,13 +10646,19 @@ var HevcShaka = (() => {
         }
         for (const frame of frames) {
           const i = frameCount++;
-          const timestampUs = i < sortedPts.length ? Math.round(sortedPts[i] / this._timescale * 1e6) : Math.round(segmentBaseTime / this._timescale * 1e6) + Math.round(i / this._fps * 1e6);
-          this._encoder.encode(frame, timestampUs, i === 0);
+          const ts = ptsAssigner.next(frame) ?? this._extrapolate(segmentBaseTime, i);
+          assigned.push(ts);
+          this._encoder.encode(
+            frame,
+            Math.round(ts.pts / this._timescale * 1e6),
+            i === 0
+          );
         }
       };
       for (const sample of samples) {
         const tFeed0 = performance.now();
         this._decoder.feed(toAnnexB(sample.nalUnits));
+        ptsAssigner.noteSuppressed(this._decoder.takeSuppressedPictures());
         const frames = this._decoder.drain();
         const tDrainEnd = performance.now();
         decodeMs += tDrainEnd - tFeed0;
@@ -10648,20 +10691,15 @@ var HevcShaka = (() => {
         const codec = this._audioConfig ? `${this._encoder.codec},mp4a.40.2` : this._encoder.codec;
         this._initResult = { initSegment, codec };
       }
-      const sortedDurations = [];
-      for (let i = 0; i < sortedPts.length - 1; i++) {
-        sortedDurations.push(sortedPts[i + 1] - sortedPts[i]);
-      }
-      if (sortedPts.length > 0) {
-        sortedDurations.push(samples[0].duration);
-      }
+      const segmentEnd = ptsAssigner.segmentEnd();
+      const durations = assigned.map((ts, i) => closeDuration(ts, i + 1 < assigned.length ? assigned[i + 1].pts : segmentEnd));
       const muxerSamples = chunks.map((c, i) => ({
         data: c.data,
-        duration: i < sortedDurations.length ? sortedDurations[i] : Math.round(c.duration * this._timescale / 1e6),
+        duration: i < durations.length ? durations[i] : Math.round(c.duration * this._timescale / 1e6),
         isKeyframe: c.isKeyframe,
         compositionTimeOffset: 0
       }));
-      const muxBaseTime = sortedPts.length > 0 ? sortedPts[0] : segmentBaseTime;
+      const muxBaseTime = assigned.length > 0 ? assigned[0].pts : segmentBaseTime;
       let mediaSegment;
       const audioSamples = this._audioConfig ? this._demuxer.drainAudioSamples() : [];
       if (this._audioConfig && audioSamples.length > 0) {
@@ -10720,18 +10758,22 @@ var HevcShaka = (() => {
         this._fpsAutoDetected = true;
       }
       const sortedPts = samples.map((s) => s.pts).sort((a, b) => a - b);
+      const ptsAssigner = new DisplayPtsAssigner(sortedPts, samples[0].duration);
       if (!this._paramSetsFed && this._paramSetsBuffer) {
         this._decoder.feed(this._paramSetsBuffer);
         this._paramSetsFed = true;
       }
       let initEmitted = false;
-      const emitBatch = async (batch, batchStart) => {
+      const emitBatch = async (batch, batchStart, nextPts) => {
         const batchChunks = [];
         this._encoder.onChunk = (chunk) => batchChunks.push(chunk);
         for (let i = 0; i < batch.length; i++) {
-          const idx = batchStart + i;
-          const timestampUs = idx < sortedPts.length ? Math.round(sortedPts[idx] / this._timescale * 1e6) : Math.round(segmentBaseTime / this._timescale * 1e6) + Math.round(idx / this._fps * 1e6);
-          this._encoder.encode(batch[i], timestampUs, idx === 0);
+          const { frame, pts } = batch[i];
+          this._encoder.encode(
+            frame,
+            Math.round(pts / this._timescale * 1e6),
+            batchStart + i === 0
+          );
         }
         await this._encoder.flush();
         if (batchChunks.length === 0) return;
@@ -10748,10 +10790,11 @@ var HevcShaka = (() => {
             codec: this._encoder.codec
           };
         }
-        const batchBaseTime = batchStart < sortedPts.length ? sortedPts[batchStart] : segmentBaseTime;
+        const batchBaseTime = batch[0].pts;
         const muxerSamples = batchChunks.map((c, i) => {
-          const ptsIdx = batchStart + i;
-          const duration = ptsIdx < sortedPts.length - 1 ? sortedPts[ptsIdx + 1] - sortedPts[ptsIdx] : samples[0].duration;
+          const timed = batch[i];
+          const successor = i + 1 < batch.length ? batch[i + 1].pts : nextPts ?? ptsAssigner.segmentEnd();
+          const duration = timed ? closeDuration(timed, successor) : Math.round(c.duration * this._timescale / 1e6);
           return {
             data: c.data,
             duration,
@@ -10777,16 +10820,21 @@ var HevcShaka = (() => {
           frameH = frames[0].height;
           this._prepareEncoder(frameW, frameH);
         }
-        frameCount += frames.length;
-        pending.push(...frames);
-        while (pending.length >= BATCH_SIZE) {
-          await emitBatch(pending.splice(0, BATCH_SIZE), encodedCount);
+        for (const frame of frames) {
+          const ts = ptsAssigner.next(frame) ?? this._extrapolate(segmentBaseTime, frameCount);
+          frameCount++;
+          pending.push({ frame, pts: ts.pts, nominalDuration: ts.nominalDuration });
+        }
+        while (pending.length > BATCH_SIZE) {
+          const nextPts = pending[BATCH_SIZE].pts;
+          await emitBatch(pending.splice(0, BATCH_SIZE), encodedCount, nextPts);
           encodedCount += BATCH_SIZE;
         }
       };
       for (const sample of samples) {
         const tFeed0 = performance.now();
         this._decoder.feed(toAnnexB(sample.nalUnits));
+        ptsAssigner.noteSuppressed(this._decoder.takeSuppressedPictures());
         const frames = this._decoder.drain();
         const tDrainEnd = performance.now();
         decodeMs += tDrainEnd - tFeed0;
@@ -10857,6 +10905,20 @@ var HevcShaka = (() => {
       this._encoder?.close();
       this._encoder = null;
       this._initResult = null;
+    }
+    /**
+     * Timestamp for a frame past the end of the segment's sample list — the
+     * decoder returned more output pictures than the segment had samples, which
+     * the per-segment flush should rule out. Extrapolating at the nominal frame
+     * rate keeps the timeline monotonic rather than reusing the last slot.
+     */
+    _extrapolate(segmentBaseTime, index) {
+      const frameTicks = this._timescale / this._fps;
+      log.warn(`Segment produced output frame ${index} past its sample list; extrapolating its timestamp`);
+      return {
+        pts: segmentBaseTime + Math.round(index * frameTicks),
+        nominalDuration: Math.round(frameTicks)
+      };
     }
     /**
      * Drop the encoder when it no longer matches the resolution about to be
@@ -10947,6 +11009,56 @@ var HevcShaka = (() => {
     }
     return sets;
   }
+  function displaysBefore(a, b) {
+    return a.cvsId !== b.cvsId ? a.cvsId < b.cvsId : a.poc < b.poc;
+  }
+  function closeDuration(ts, successor) {
+    return successor != null && successor > ts.pts ? successor - ts.pts : ts.nominalDuration;
+  }
+  var DisplayPtsAssigner = class {
+    /**
+     * @param sortedPts the segment's sample PTS, ascending
+     * @param fallbackDuration duration for the last slot, which has no successor
+     */
+    constructor(_sortedPts, _fallbackDuration) {
+      this._sortedPts = _sortedPts;
+      this._fallbackDuration = _fallbackDuration;
+      this._next = 0;
+      this._suppressed = [];
+    }
+    /** Pictures the decoder reported as decoded-but-not-output. */
+    noteSuppressed(pictures) {
+      for (const picture of pictures) this._suppressed.push(picture);
+    }
+    /**
+     * One slot past the last sample — where the segment's media time ends. The
+     * last frame holds the screen up to here, which is past its own slot as
+     * soon as the slots after it went to suppressed pictures.
+     */
+    segmentEnd() {
+      if (this._sortedPts.length === 0) return null;
+      return this._sortedPts[this._sortedPts.length - 1] + this._fallbackDuration;
+    }
+    /**
+     * The timestamp for this output frame, or null once the segment's samples
+     * are exhausted (the caller then extrapolates).
+     */
+    next(frame) {
+      for (let i = this._suppressed.length - 1; i >= 0; i--) {
+        if (displaysBefore(this._suppressed[i], frame)) {
+          this._suppressed.splice(i, 1);
+          this._next++;
+        }
+      }
+      const slot = this._next++;
+      if (slot >= this._sortedPts.length) return null;
+      const pts = this._sortedPts[slot];
+      return {
+        pts,
+        nominalDuration: slot + 1 < this._sortedPts.length ? this._sortedPts[slot + 1] - pts : this._fallbackDuration
+      };
+    }
+  };
   function rebaseSamplesToTfdt(samples, tfdt) {
     if (samples.length === 0) return tfdt ?? 0;
     if (tfdt === null) return samples[0].dts;

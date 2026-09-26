@@ -21,6 +21,13 @@ enum class DecodeStatus {
     ERROR,
 };
 
+// A picture decoded with PicOutputFlag = 0. The pair orders it the way
+// DPB::bump does — by CVS first, then POC.
+struct SuppressedPicture {
+    int32_t cvs_id;
+    int32_t poc;
+};
+
 class Decoder {
 public:
     Decoder() = default;
@@ -41,8 +48,18 @@ public:
     // Returns all pictures still marked as "needed for output", in POC order.
     std::vector<Picture*> flush();
 
-    // Get decoded pictures — batch mode (legacy, returns ALL pictures ever decoded)
+    // Get decoded pictures — batch mode (legacy, returns every picture the DPB
+    // still holds for output). Pictures with PicOutputFlag = 0 are skipped, as
+    // the incremental path skips them.
     std::vector<Picture*> output_pictures();
+
+    // The pictures decoded since the last call whose PicOutputFlag was 0
+    // (§C.3.1) — decoded, possibly used as reference, never output. Empties
+    // the list. A caller that maps output frames onto per-sample timestamps
+    // needs these to know which samples produced no frame, and needs the CVS
+    // alongside the POC: POC restarts at each IRAP, so it only orders
+    // pictures within one coded video sequence (§8.3.1).
+    std::vector<SuppressedPicture> take_suppressed_pictures();
 
     // Get DPB (for testing)
     const DPB& dpb() const { return dpb_; }
@@ -56,6 +73,10 @@ private:
 
     // Output pictures (accumulated across all decoded pictures)
     std::vector<Picture*> output_pics_;
+
+    // Decoded pictures with PicOutputFlag = 0, drained by
+    // take_suppressed_pictures()
+    std::vector<SuppressedPicture> suppressed_;
 
     // CVS counter — incremented at each IRAP with NoRaslOutputFlag
     int32_t cvs_id_ = 0;

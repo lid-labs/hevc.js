@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { SegmentTranscoder, extractTfdt, rebaseSamplesToTfdt } from "./segment-transcoder.js";
+import { SegmentTranscoder, DisplayPtsAssigner, extractTfdt, rebaseSamplesToTfdt } from "./segment-transcoder.js";
 import { FMP4Demuxer } from "./fmp4-demuxer.js";
 
 /**
@@ -314,7 +314,7 @@ describe("extractTfdt", () => {
  */
 describe("SegmentTranscoder.processMediaSegment decode/encode interleaving", () => {
   /* eslint-disable @typescript-eslint/no-explicit-any */
-  const makeFrame = (poc: number) => ({
+  const makeFrame = (poc: number, cvsId = 0) => ({
     y: new Uint16Array(4),
     cb: new Uint16Array(1),
     cr: new Uint16Array(1),
@@ -324,6 +324,7 @@ describe("SegmentTranscoder.processMediaSegment decode/encode interleaving", () 
     chromaHeight: 32,
     bitDepth: 8,
     poc,
+    cvsId,
   });
 
   /**
@@ -338,36 +339,46 @@ describe("SegmentTranscoder.processMediaSegment decode/encode interleaving", () 
    */
   class FakeDecoder {
     calls: string[] = [];
-    private _held = 0;
+    /** POCs decoded and waiting to be bumped, in display order. */
+    private _queue: number[] = [];
     private _nextPoc = 0;
+    private _suppressedReport: { cvsId: number; poc: number }[] = [];
+
+    /** @param suppressed POCs the bitstream marks with PicOutputFlag = 0 */
+    constructor(private readonly _suppressed: Set<number> = new Set()) {}
+
     feed() {
       this.calls.push("feed");
-      this._held++;
+      const poc = this._nextPoc++;
+      // A suppressed picture is decoded but never enters the output queue —
+      // the decoder reports it instead.
+      if (this._suppressed.has(poc)) this._suppressedReport.push({ cvsId: 0, poc });
+      else this._queue.push(poc);
+    }
+    takeSuppressedPictures() {
+      const out = this._suppressedReport;
+      this._suppressedReport = [];
+      return out;
     }
     drain() {
       this.calls.push("drain");
       const out = [];
-      while (this._held > 2) {
-        this._held--;
-        out.push(makeFrame(this._nextPoc++));
-      }
+      while (this._queue.length > 2) out.push(makeFrame(this._queue.shift()!));
       return out;
     }
     flush() {
       this.calls.push("flush");
       const out = [];
-      while (this._held > 0) {
-        this._held--;
-        out.push(makeFrame(this._nextPoc++));
-      }
+      while (this._queue.length > 0) out.push(makeFrame(this._queue.shift()!));
       return out;
     }
   }
 
-  const setup = (sampleCount: number) => {
+  const setup = (sampleCount: number, suppressed: Set<number> = new Set()) => {
     const t = new SegmentTranscoder();
-    const decoder = new FakeDecoder();
+    const decoder = new FakeDecoder(suppressed);
     const encoded: { timestampUs: number; keyFrame: boolean }[] = [];
+    const muxed: { samples: { duration: number }[]; baseTime: number }[] = [];
 
     const samples = Array.from({ length: sampleCount }, (_, i) => ({
       trackId: 1,
@@ -383,7 +394,12 @@ describe("SegmentTranscoder.processMediaSegment decode/encode interleaving", () 
       parseSegment: () => samples,
       drainAudioSamples: () => [],
     };
-    (t as any)._muxer = { muxSegment: () => new Uint8Array([1, 2, 3]) };
+    (t as any)._muxer = {
+      muxSegment: (muxerSamples: { duration: number }[], baseTime: number) => {
+        muxed.push({ samples: muxerSamples, baseTime });
+        return new Uint8Array([1, 2, 3]);
+      },
+    };
 
     // Encoder stub: emits one chunk per encoded frame, like a real
     // VideoEncoder, so the muxing and batch-emit steps actually run.
@@ -406,7 +422,7 @@ describe("SegmentTranscoder.processMediaSegment decode/encode interleaving", () 
     (t as any)._paramSetsFed = true;
     (t as any)._initResult = { initSegment: new Uint8Array(), codec: "avc1.42" };
 
-    return { t, decoder, encoded, samples };
+    return { t, decoder, encoded, muxed, samples };
   };
 
   /** Longest run of feed() calls with no drain() in between. */
@@ -465,5 +481,205 @@ describe("SegmentTranscoder.processMediaSegment decode/encode interleaving", () 
     expect(encoded.filter((e) => e.keyFrame)).toHaveLength(1);
     expect(encoded[0]!.keyFrame).toBe(true);
   });
+
+  /**
+   * A picture with PicOutputFlag = 0 (§C.3.1) is decoded but never output.
+   * Its sample's timestamp has no frame to carry it: mapping frames onto
+   * timestamps by position would hand it to the next frame, and every frame
+   * after the hole would play one slot early.
+   */
+  it("skips the timestamp of a picture the bitstream marks as not for output", async () => {
+    const { t, encoded, samples } = setup(30, new Set([7]));
+
+    await t.processMediaSegment(new Uint8Array(8));
+
+    expect(encoded).toHaveLength(29);
+    const expectedUs = samples
+      .map((s) => s.pts)
+      .sort((a, b) => a - b)
+      .filter((_, i) => i !== 7)
+      .map((pts) => Math.round((pts / 90000) * 1_000_000));
+    expect(encoded.map((e) => e.timestampUs)).toEqual(expectedUs);
+  });
+
+  it("skips it on the streaming path too", async () => {
+    const { t, encoded, samples } = setup(30, new Set([7]));
+
+    await t.processMediaSegmentStreaming(new Uint8Array(8), () => {});
+
+    expect(encoded).toHaveLength(29);
+    const expectedUs = samples
+      .map((s) => s.pts)
+      .sort((a, b) => a - b)
+      .filter((_, i) => i !== 7)
+      .map((pts) => Math.round((pts / 90000) * 1_000_000));
+    expect(encoded.map((e) => e.timestampUs)).toEqual(expectedUs);
+  });
+
+  /**
+   * The frame before the hole holds the screen across it — otherwise the
+   * muxed segment declares a gap where the suppressed picture would have
+   * been, and the timeline drifts short by one frame.
+   */
+  it("gives the frame before a suppressed picture the gap's duration", async () => {
+    const { t, muxed } = setup(10, new Set([4]));
+
+    await t.processMediaSegment(new Uint8Array(8));
+
+    expect(muxed).toHaveLength(1);
+    const durations = muxed[0]!.samples.map((s) => s.duration);
+    expect(durations).toHaveLength(9);
+    // Slot 4 has no frame, so the frame in slot 3 spans two sample durations
+    expect(durations[3]).toBe(7200);
+    expect(durations.filter((d) => d === 3600)).toHaveLength(8);
+    expect(muxed[0]!.baseTime).toBe(0);
+  });
+
+  /**
+   * A suppressed picture landing on a batch boundary is the same defect at a
+   * smaller scale: the last frame of the batch is closed by the first frame
+   * of the next one, so its duration has to span the hole between them.
+   */
+  it("spans a suppressed picture that falls on a streaming batch boundary", async () => {
+    // BATCH_SIZE is 30, so slot 30 is the first frame of the second batch.
+    const { t, muxed } = setup(70, new Set([30]));
+
+    await t.processMediaSegmentStreaming(new Uint8Array(8), () => {});
+
+    expect(muxed.length).toBeGreaterThan(1);
+    const first = muxed[0]!.samples.map((s) => s.duration);
+    expect(first).toHaveLength(30);
+    // Frame 29 is the batch's last; slot 30 has no frame, so it holds the
+    // screen until slot 31 — two sample durations, not one.
+    expect(first[29]).toBe(7200);
+    expect(first.slice(0, 29).every((d) => d === 3600)).toBe(true);
+  });
+
+  /**
+   * The segment's last picture being the suppressed one is the same hole at
+   * the far edge: the last frame must hold the screen to the end of the
+   * segment, since the next segment's tfdt starts a full segment later.
+   */
+  it("runs the last frame to the end of the segment when the final picture is suppressed", async () => {
+    const { t, muxed } = setup(10, new Set([9]));
+
+    await t.processMediaSegment(new Uint8Array(8));
+
+    const durations = muxed[0]!.samples.map((s) => s.duration);
+    expect(durations).toHaveLength(9);
+    // Slot 9 has no frame, so the frame in slot 8 covers both
+    expect(durations[8]).toBe(7200);
+    expect(durations.slice(0, 8).every((d) => d === 3600)).toBe(true);
+    // The whole segment is still covered: 8 * 3600 + 7200
+    expect(durations.reduce((a, b) => a + b, 0)).toBe(36000);
+  });
+
+  it("does the same on the streaming path", async () => {
+    const { t, muxed } = setup(10, new Set([9]));
+
+    await t.processMediaSegmentStreaming(new Uint8Array(8), () => {});
+
+    const durations = muxed.flatMap((m) => m.samples.map((s) => s.duration));
+    expect(durations).toHaveLength(9);
+    expect(durations[8]).toBe(7200);
+    expect(durations.reduce((a, b) => a + b, 0)).toBe(36000);
+  });
+
+  /** A suppressed first picture moves the segment's base decode time. */
+  it("bases the muxed segment on the first frame actually output", async () => {
+    const { t, muxed } = setup(10, new Set([0]));
+
+    await t.processMediaSegment(new Uint8Array(8));
+
+    expect(muxed[0]!.baseTime).toBe(3600);
+  });
   /* eslint-enable @typescript-eslint/no-explicit-any */
+});
+
+describe("DisplayPtsAssigner", () => {
+  const pts = [0, 3600, 7200, 10800, 14400];
+  /** A display key in the first coded video sequence. */
+  const k = (poc: number, cvsId = 0) => ({ cvsId, poc });
+
+  it("hands out the sample timestamps in order when nothing is suppressed", () => {
+    const a = new DisplayPtsAssigner(pts, 3600);
+    expect([0, 1, 2, 3, 4].map((poc) => a.next(k(poc))!.pts)).toEqual(pts);
+  });
+
+  it("consumes the slot of a suppressed picture that displays earlier", () => {
+    const a = new DisplayPtsAssigner(pts, 3600);
+    expect(a.next(k(0))!.pts).toBe(0);
+    a.noteSuppressed([k(1)]);
+    // POC 1 took slot 1; POC 2 must land on slot 2, not on slot 1
+    expect(a.next(k(2))!.pts).toBe(7200);
+    expect(a.next(k(3))!.pts).toBe(10800);
+  });
+
+  it("leaves the slot alone for a suppressed picture that displays later", () => {
+    const a = new DisplayPtsAssigner(pts, 3600);
+    // Decode order can put a higher-POC picture first: it must not consume a
+    // slot ahead of the frames that display before it.
+    a.noteSuppressed([k(4)]);
+    expect(a.next(k(0))!.pts).toBe(0);
+    expect(a.next(k(1))!.pts).toBe(3600);
+  });
+
+  it("stretches the slot duration across a suppressed picture", () => {
+    const a = new DisplayPtsAssigner(pts, 3600);
+    a.noteSuppressed([k(1)]);
+    const first = a.next(k(0))!;
+    const second = a.next(k(2))!;
+    // nominalDuration is the slot's own gap; the caller spans the hole by
+    // differencing the assigned timestamps, which is what matters here
+    expect(second.pts - first.pts).toBe(7200);
+    expect(first.nominalDuration).toBe(3600);
+  });
+
+  /**
+   * The bumping bound counts pictures pending output, so a suppressed picture
+   * can be decoded after a frame with a higher POC was already timed. That
+   * frame keeps the slot it took; the ones after it must not inherit the
+   * error.
+   */
+  it("does not let a late report shift the frames that follow", () => {
+    const a = new DisplayPtsAssigner(pts, 3600);
+    expect(a.next(k(0))!.pts).toBe(0);
+    // POC 2 is timed before the decoder has seen the suppressed POC 1, so it
+    // lands on slot 1 instead of slot 2
+    expect(a.next(k(2))!.pts).toBe(3600);
+    a.noteSuppressed([k(1)]);
+    // POC 3 still lands on its own slot: the error stops there
+    expect(a.next(k(3))!.pts).toBe(10800);
+    expect(a.next(k(4))!.pts).toBe(14400);
+  });
+
+  /**
+   * POC restarts at each IRAP, so a segment spanning two coded video
+   * sequences repeats its POCs. Comparing POC alone would treat a suppressed
+   * picture of the new sequence as displaying before the pictures of the old
+   * one still pending output, and consume a slot that is not its own.
+   */
+  it("orders a suppressed picture by its CVS before its POC", () => {
+    const a = new DisplayPtsAssigner(pts, 3600);
+    expect(a.next(k(0))!.pts).toBe(0);
+    // A new CVS opens and its first picture, POC 0 again, is suppressed
+    a.noteSuppressed([k(0, 1)]);
+    // POC 8 of the previous CVS is still pending: it displays first, so the
+    // suppressed picture must not have eaten its slot
+    expect(a.next(k(8, 0))!.pts).toBe(3600);
+    // Now the new sequence: its suppressed POC 0 took slot 2
+    expect(a.next(k(1, 1))!.pts).toBe(10800);
+  });
+
+  it("reports the end of the segment one slot past the last sample", () => {
+    expect(new DisplayPtsAssigner(pts, 3600).segmentEnd()).toBe(18000);
+    expect(new DisplayPtsAssigner([], 3600).segmentEnd()).toBeNull();
+  });
+
+  it("uses the fallback duration on the last slot and returns null past it", () => {
+    const a = new DisplayPtsAssigner([0, 3600], 1234);
+    expect(a.next(k(0))!.nominalDuration).toBe(3600);
+    expect(a.next(k(1))!.nominalDuration).toBe(1234);
+    expect(a.next(k(2))).toBeNull();
+  });
 });

@@ -17,7 +17,7 @@ import type { EncodedChunk } from "./h264-encoder.js";
 import { FMP4Muxer } from "./fmp4-muxer.js";
 import type { MuxerAudioConfig } from "./fmp4-muxer.js";
 import { publishSegmentStat } from "./perf-bus.js";
-import type { HEVCFrame } from "./types.js";
+import type { HEVCFrame, SuppressedPicture } from "./types.js";
 import type { DecoderOptions } from "./types.js";
 
 export interface SegmentTranscoderConfig {
@@ -212,6 +212,7 @@ export class SegmentTranscoder {
       chromaHeight: ch,
       bitDepth: 8,
       poc: 0,
+      cvsId: 0,
     };
 
     warmup.onChunk = () => { /* warmup discard */ };
@@ -284,6 +285,10 @@ export class SegmentTranscoder {
     // drain() returns frames in display order (POC), but samples are in decode order.
     // Using DTS-based offsets would assign wrong timestamps when B-frames are present.
     const sortedPts = samples.map(s => s.pts).sort((a, b) => a - b);
+    const ptsAssigner = new DisplayPtsAssigner(sortedPts, samples[0]!.duration);
+    // Timestamps as handed out, which is not sortedPts as soon as a picture
+    // is suppressed: the durations and the muxed base time come from here.
+    const assigned: AssignedTimestamp[] = [];
 
     // 2. Feed VPS/SPS/PPS on first segment (from hvcC in init segment)
     if (!this._paramSetsFed && this._paramSetsBuffer) {
@@ -316,19 +321,21 @@ export class SegmentTranscoder {
         this._encoder!.onChunk = (chunk) => chunks.push(chunk);
       }
       for (const frame of frames) {
-        // Use PTS-sorted timestamps: frames come out in display order, so
-        // the i-th frame of the segment carries the i-th smallest PTS.
         const i = frameCount++;
-        const timestampUs = i < sortedPts.length
-          ? Math.round((sortedPts[i]! / this._timescale) * 1_000_000)
-          : Math.round((segmentBaseTime / this._timescale) * 1_000_000) + Math.round((i / this._fps) * 1_000_000);
-        this._encoder!.encode(frame, timestampUs, i === 0);
+        const ts = ptsAssigner.next(frame) ?? this._extrapolate(segmentBaseTime, i);
+        assigned.push(ts);
+        this._encoder!.encode(
+          frame, Math.round((ts.pts / this._timescale) * 1_000_000), i === 0);
       }
     };
 
     for (const sample of samples) {
       const tFeed0 = performance.now();
       this._decoder.feed(toAnnexB(sample.nalUnits));
+      // A suppressed picture is never bumped, so this poll is the only place
+      // its POC surfaces. Read it before the drain: the frames released here
+      // may display after it, and would otherwise take its slot.
+      ptsAssigner.noteSuppressed(this._decoder.takeSuppressedPictures());
       const frames = this._decoder.drain();
       const tDrainEnd = performance.now();
       decodeMs += tDrainEnd - tFeed0;
@@ -383,26 +390,24 @@ export class SegmentTranscoder {
     }
 
     // 7. Mux H.264 chunks into fMP4 media segment
-    // Use sorted PTS durations for display-order frames.
-    const sortedDurations: number[] = [];
-    for (let i = 0; i < sortedPts.length - 1; i++) {
-      sortedDurations.push(sortedPts[i + 1]! - sortedPts[i]!);
-    }
-    if (sortedPts.length > 0) {
-      sortedDurations.push(samples[0]!.duration); // last frame uses nominal duration
-    }
+    // Durations span the assigned timestamps, not the sample list: a frame
+    // that precedes a suppressed picture holds the screen for that slot too —
+    // including the last frame, when the suppressed picture ended the segment.
+    const segmentEnd = ptsAssigner.segmentEnd();
+    const durations = assigned.map((ts, i) =>
+      closeDuration(ts, i + 1 < assigned.length ? assigned[i + 1]!.pts : segmentEnd));
 
     const muxerSamples = chunks.map((c, i) => ({
       data: c.data,
-      duration: i < sortedDurations.length
-        ? sortedDurations[i]!
+      duration: i < durations.length
+        ? durations[i]!
         : Math.round(c.duration * this._timescale / 1_000_000),
       isKeyframe: c.isKeyframe,
       compositionTimeOffset: 0,
     }));
 
-    // Use the smallest PTS as the base decode time for the muxed segment
-    const muxBaseTime = sortedPts.length > 0 ? sortedPts[0]! : segmentBaseTime;
+    // The first output frame's timestamp is the segment's base decode time
+    const muxBaseTime = assigned.length > 0 ? assigned[0]!.pts : segmentBaseTime;
     let mediaSegment: Uint8Array;
     const audioSamples = this._audioConfig ? this._demuxer.drainAudioSamples() : [];
     if (this._audioConfig && audioSamples.length > 0) {
@@ -485,6 +490,7 @@ export class SegmentTranscoder {
 
     // Sort PTS for display-order timestamp assignment (same fix as sequential path)
     const sortedPts = samples.map(s => s.pts).sort((a, b) => a - b);
+    const ptsAssigner = new DisplayPtsAssigner(sortedPts, samples[0]!.duration);
 
     if (!this._paramSetsFed && this._paramSetsBuffer) {
       this._decoder.feed(this._paramSetsBuffer);
@@ -493,16 +499,14 @@ export class SegmentTranscoder {
 
     // Encode and ship one BATCH_SIZE batch as soon as it is full.
     let initEmitted = false;
-    const emitBatch = async (batch: HEVCFrame[], batchStart: number) => {
+    const emitBatch = async (batch: TimedFrame[], batchStart: number, nextPts?: number) => {
       const batchChunks: EncodedChunk[] = [];
       this._encoder!.onChunk = (chunk) => batchChunks.push(chunk);
 
       for (let i = 0; i < batch.length; i++) {
-        const idx = batchStart + i;
-        const timestampUs = idx < sortedPts.length
-          ? Math.round((sortedPts[idx]! / this._timescale) * 1_000_000)
-          : Math.round((segmentBaseTime / this._timescale) * 1_000_000) + Math.round((idx / this._fps) * 1_000_000);
-        this._encoder!.encode(batch[i]!, timestampUs, idx === 0);
+        const { frame, pts } = batch[i]!;
+        this._encoder!.encode(
+          frame, Math.round((pts / this._timescale) * 1_000_000), batchStart + i === 0);
       }
 
       await this._encoder!.flush();
@@ -520,16 +524,21 @@ export class SegmentTranscoder {
         };
       }
 
-      // Use PTS-sorted base time for each batch
-      const batchBaseTime = batchStart < sortedPts.length
-        ? sortedPts[batchStart]!
-        : segmentBaseTime;
+      // Each batch is muxed on the timestamp of its own first frame
+      const batchBaseTime = batch[0]!.pts;
 
       const muxerSamples = batchChunks.map((c, i) => {
-        const ptsIdx = batchStart + i;
-        const duration = (ptsIdx < sortedPts.length - 1)
-          ? sortedPts[ptsIdx + 1]! - sortedPts[ptsIdx]!
-          : samples[0]!.duration;
+        // The next frame's timestamp closes this one — including across the
+        // batch boundary, which is why a full batch is held back until the
+        // frame after it is decoded. The segment's very last frame has no
+        // successor and runs to the end of the segment instead.
+        const timed = batch[i];
+        const successor = i + 1 < batch.length
+          ? batch[i + 1]!.pts
+          : nextPts ?? ptsAssigner.segmentEnd();
+        const duration = timed
+          ? closeDuration(timed, successor)
+          : Math.round(c.duration * this._timescale / 1_000_000);
         return {
           data: c.data,
           duration,
@@ -554,7 +563,7 @@ export class SegmentTranscoder {
     let frameH = 0;
     let frameCount = 0;
     let encodedCount = 0;
-    let pending: HEVCFrame[] = [];
+    let pending: TimedFrame[] = [];
 
     const ingest = async (frames: HEVCFrame[]) => {
       if (frames.length === 0) return;
@@ -563,10 +572,19 @@ export class SegmentTranscoder {
         frameH = frames[0]!.height;
         this._prepareEncoder(frameW, frameH);
       }
-      frameCount += frames.length;
-      pending.push(...frames);
-      while (pending.length >= BATCH_SIZE) {
-        await emitBatch(pending.splice(0, BATCH_SIZE), encodedCount);
+      for (const frame of frames) {
+        const ts = ptsAssigner.next(frame)
+          ?? this._extrapolate(segmentBaseTime, frameCount);
+        frameCount++;
+        pending.push({ frame, pts: ts.pts, nominalDuration: ts.nominalDuration });
+      }
+      // One frame past the batch, not just a full one: the last frame of a
+      // batch is closed by the first frame of the next, and a suppressed
+      // picture landing on the boundary makes that gap wider than the slot's
+      // nominal duration. One frame of extra latency, bounded all the same.
+      while (pending.length > BATCH_SIZE) {
+        const nextPts = pending[BATCH_SIZE]!.pts;
+        await emitBatch(pending.splice(0, BATCH_SIZE), encodedCount, nextPts);
         encodedCount += BATCH_SIZE;
       }
     };
@@ -574,6 +592,8 @@ export class SegmentTranscoder {
     for (const sample of samples) {
       const tFeed0 = performance.now();
       this._decoder.feed(toAnnexB(sample.nalUnits));
+      // Read before the drain — see the sequential path
+      ptsAssigner.noteSuppressed(this._decoder.takeSuppressedPictures());
       const frames = this._decoder.drain();
       const tDrainEnd = performance.now();
       decodeMs += tDrainEnd - tFeed0;
@@ -660,6 +680,23 @@ export class SegmentTranscoder {
     this._encoder?.close();
     this._encoder = null;
     this._initResult = null;
+  }
+
+  /**
+   * Timestamp for a frame past the end of the segment's sample list — the
+   * decoder returned more output pictures than the segment had samples, which
+   * the per-segment flush should rule out. Extrapolating at the nominal frame
+   * rate keeps the timeline monotonic rather than reusing the last slot.
+   */
+  private _extrapolate(segmentBaseTime: number, index: number): AssignedTimestamp {
+    const frameTicks = this._timescale / this._fps;
+    // Nothing downstream can tell a fabricated timestamp from a real one, and
+    // the symptom — a drifting timeline — points nowhere near here.
+    log.warn(`Segment produced output frame ${index} past its sample list; extrapolating its timestamp`);
+    return {
+      pts: segmentBaseTime + Math.round(index * frameTicks),
+      nominalDuration: Math.round(frameTicks),
+    };
   }
 
   /**
@@ -773,6 +810,120 @@ function extractParameterSetsFromInit(data: Uint8Array): Uint8Array[] {
   }
 
   return sets;
+}
+
+/**
+ * Display order across a whole stream: by coded video sequence first, then by
+ * POC — the order DPB::bump uses. POC alone restarts at every IRAP, so it
+ * would place a picture of a new sequence before the pictures of the previous
+ * one still pending output.
+ */
+function displaysBefore(a: SuppressedPicture, b: SuppressedPicture): boolean {
+  return a.cvsId !== b.cvsId ? a.cvsId < b.cvsId : a.poc < b.poc;
+}
+
+/**
+ * How long a frame holds the screen: up to the next frame's timestamp, or, for
+ * the last one of a segment, up to the end of the segment. Both are past the
+ * frame's own slot whenever the slots in between went to suppressed pictures.
+ * Falls back to the slot's nominal duration for a frame extrapolated past the
+ * sample list, where no successor is known.
+ */
+function closeDuration(ts: AssignedTimestamp, successor: number | null | undefined): number {
+  return successor != null && successor > ts.pts ? successor - ts.pts : ts.nominalDuration;
+}
+
+/** A decoded frame paired with the sample timestamp it was assigned. */
+interface TimedFrame {
+  frame: HEVCFrame;
+  pts: number;
+  /** The slot's own duration, for when the next frame's PTS is not known yet. */
+  nominalDuration: number;
+}
+
+/** What {@link DisplayPtsAssigner.next} hands back for one output frame. */
+export interface AssignedTimestamp {
+  /** Composition time, in the segment's timescale. */
+  pts: number;
+  /** The slot's own duration — the gap to the next sample PTS. */
+  nominalDuration: number;
+}
+
+/**
+ * Hands each output frame of a segment its composition timestamp.
+ *
+ * Frames leave the decoder in display order and the segment's samples sorted
+ * by PTS are in that same order, so the i-th frame takes the i-th smallest
+ * PTS. That holds only while every sample yields an output frame. A picture
+ * whose PicOutputFlag is 0 (§C.3.1) is decoded — it may even be a reference —
+ * but never output: its sample's slot must be skipped, or every later frame
+ * of the segment lands one slot early and the muxed base time shifts with it.
+ *
+ * The decoder reports such pictures by (CVS, POC) — POC restarts at every
+ * IRAP (§8.3.1), so it orders pictures only within one coded video sequence,
+ * and the DPB bumps by the pair. A suppressed picture that displays before
+ * the frame being timed has, in practice, been decoded by the time that frame
+ * is bumped: §C.5.2.2 releases a picture once the reorder bound says nothing
+ * earlier is still to come.
+ *
+ * That bound counts pictures pending output, and a suppressed picture is not
+ * one of them — so a bitstream may still decode one whose POC falls inside a
+ * range already emitted. Nothing in the spec forbids it, since such a picture
+ * has no place in the output order to disturb. The frame that was timed too
+ * early then holds the slot that belonged to the suppressed picture; the
+ * report still arrives before any later frame is timed, so the frames after
+ * it land on their own slots and the error does not accumulate.
+ */
+export class DisplayPtsAssigner {
+  private _next = 0;
+  private readonly _suppressed: SuppressedPicture[] = [];
+
+  /**
+   * @param sortedPts the segment's sample PTS, ascending
+   * @param fallbackDuration duration for the last slot, which has no successor
+   */
+  constructor(
+    private readonly _sortedPts: number[],
+    private readonly _fallbackDuration: number,
+  ) {}
+
+  /** Pictures the decoder reported as decoded-but-not-output. */
+  noteSuppressed(pictures: SuppressedPicture[]): void {
+    for (const picture of pictures) this._suppressed.push(picture);
+  }
+
+  /**
+   * One slot past the last sample — where the segment's media time ends. The
+   * last frame holds the screen up to here, which is past its own slot as
+   * soon as the slots after it went to suppressed pictures.
+   */
+  segmentEnd(): number | null {
+    if (this._sortedPts.length === 0) return null;
+    return this._sortedPts[this._sortedPts.length - 1]! + this._fallbackDuration;
+  }
+
+  /**
+   * The timestamp for this output frame, or null once the segment's samples
+   * are exhausted (the caller then extrapolates).
+   */
+  next(frame: SuppressedPicture): AssignedTimestamp | null {
+    for (let i = this._suppressed.length - 1; i >= 0; i--) {
+      if (displaysBefore(this._suppressed[i]!, frame)) {
+        this._suppressed.splice(i, 1);
+        this._next++;
+      }
+    }
+
+    const slot = this._next++;
+    if (slot >= this._sortedPts.length) return null;
+    const pts = this._sortedPts[slot]!;
+    return {
+      pts,
+      nominalDuration: slot + 1 < this._sortedPts.length
+        ? this._sortedPts[slot + 1]! - pts
+        : this._fallbackDuration,
+    };
+  }
 }
 
 /**

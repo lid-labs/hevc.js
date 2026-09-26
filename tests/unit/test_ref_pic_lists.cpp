@@ -1,10 +1,12 @@
 #include <gtest/gtest.h>
 #include <algorithm>
+#include <fstream>
 #include <vector>
 
 #include "bitstream/bitstream_reader.h"
 #include "common/picture.h"
 #include "decoding/coding_tree.h"
+#include "decoding/decoder.h"
 #include "decoding/dpb.h"
 #include "decoding/interpolation.h"
 #include "syntax/pps.h"
@@ -330,4 +332,46 @@ TEST(RefPicLists, NegativeIndexYieldsNoReference) {
     DPB dpb;
     EXPECT_EQ(dpb.ref_pic_list0(-1), nullptr);
     EXPECT_EQ(dpb.ref_pic_list1(-1), nullptr);
+}
+
+// An intra slice must leave the reference lists empty rather than inherit the
+// previous picture's. They are read unconditionally afterwards (decoder.cpp
+// stores each picture's ref POCs for TMVP scaling), and an IRAP unmarks every
+// reference of the sequence that just ended — so the next alloc_picture()
+// evicts them and the stale entries dangle. AddressSanitizer catches the read;
+// the empty list is what makes it observable without one.
+TEST(RefPicLists, IntraSliceLeavesNoStaleReferences) {
+    const std::string path = std::string(FIXTURES_DIR) + "/full_qcif_10f.265";
+    std::ifstream f(path, std::ios::binary);
+    ASSERT_TRUE(f) << "cannot read " << path;
+    const std::vector<uint8_t> clip{std::istreambuf_iterator<char>(f), {}};
+    ASSERT_FALSE(clip.empty());
+
+    // Everything up to and including the clip's first VCL NAL — its IDR.
+    NalParser parser;
+    const auto nals = parser.parse(clip.data(), clip.size());
+    size_t cut = clip.size();
+    int vcl_seen = 0;
+    for (const auto& nal : nals) {
+        if (!is_vcl(nal.header.nal_unit_type)) continue;
+        if (++vcl_seen < 2) continue;
+        cut = nal.offset;                                  // start of the NAL header
+        if (cut > 0 && clip[cut - 1] == 1) {               // back over its start code
+            cut--;
+            while (cut > 0 && clip[cut - 1] == 0) cut--;
+        }
+        break;
+    }
+    ASSERT_LT(cut, clip.size()) << "the fixture should hold more than one picture";
+
+    // The fixture opens on an IDR, so playing it twice is a legal two-sequence
+    // bitstream: the second IDR arrives with the first sequence still in the DPB.
+    Decoder dec;
+    ASSERT_EQ(dec.feed(clip.data(), clip.size()), DecodeStatus::OK);
+    ASSERT_GT(dec.dpb().num_ref_list0(), 0) << "the first sequence should leave lists behind";
+
+    ASSERT_EQ(dec.feed(clip.data(), cut), DecodeStatus::OK);
+    EXPECT_EQ(dec.dpb().num_ref_list0(), 0)
+        << "the IDR's lists were carried over from the previous sequence";
+    EXPECT_EQ(dec.dpb().num_ref_list1(), 0);
 }

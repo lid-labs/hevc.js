@@ -1,4 +1,4 @@
-import type { HEVCFrame, HEVCStreamInfo, DecodeResult, DecoderOptions } from "./types.js";
+import type { HEVCFrame, HEVCStreamInfo, DecodeResult, DecoderOptions, SuppressedPicture } from "./types.js";
 
 /**
  * Emscripten module interface (subset we use)
@@ -23,6 +23,8 @@ interface DecoderAPI {
   drain: (dec: number, countPtr: number) => number;
   getDrainedFrame: (dec: number, index: number, framePtr: number) => number;
   flush: (dec: number) => number;
+  getSuppressedPictureCount: (dec: number) => number;
+  takeSuppressedPictures: (dec: number, out: number, max: number) => number;
 }
 
 /**
@@ -54,6 +56,8 @@ export class HEVCDecoder {
       drain: module.cwrap("hevc_decoder_drain", "number", ["number", "number"]) as (dec: number, countPtr: number) => number,
       getDrainedFrame: module.cwrap("hevc_decoder_get_drained_frame", "number", ["number", "number", "number"]) as (dec: number, index: number, framePtr: number) => number,
       flush: module.cwrap("hevc_decoder_flush", "number", ["number"]) as (dec: number) => number,
+      getSuppressedPictureCount: module.cwrap("hevc_decoder_get_suppressed_picture_count", "number", ["number"]) as (dec: number) => number,
+      takeSuppressedPictures: module.cwrap("hevc_decoder_take_suppressed_pictures", "number", ["number", "number", "number"]) as (dec: number, out: number, max: number) => number,
     };
     this._dec = this._api.create();
     if (!this._dec) throw new Error("Failed to create HEVC decoder");
@@ -157,12 +161,13 @@ export class HEVCDecoder {
     const ch      = m.getValue(framePtr + 32, "i32");
     const bd      = m.getValue(framePtr + 36, "i32");
     const poc     = m.getValue(framePtr + 40, "i32");
+    const cvsId   = m.getValue(framePtr + 44, "i32");
 
     const y  = copyPlane(m, yPtr, width, height, strideY);
     const cb = copyPlane(m, cbPtr, cw, ch, strideC);
     const cr = copyPlane(m, crPtr, cw, ch, strideC);
 
-    return { y, cb, cr, width, height, chromaWidth: cw, chromaHeight: ch, bitDepth: bd, poc };
+    return { y, cb, cr, width, height, chromaWidth: cw, chromaHeight: ch, bitDepth: bd, poc, cvsId };
   }
 
   private _extractInfo(): HEVCStreamInfo | null {
@@ -257,6 +262,40 @@ export class HEVCDecoder {
       return frames;
     } finally {
       m._free(countPtr);
+    }
+  }
+
+  /**
+   * The pictures decoded since the last call whose PicOutputFlag was 0
+   * (§C.3.1) — decoded, possibly used as a reference, never output. Empties
+   * the list.
+   *
+   * A caller that maps output frames onto per-sample timestamps needs these:
+   * the sample that carried such a picture produces no frame, and without
+   * knowing which one it was, every later frame of the segment takes the
+   * timestamp of its predecessor. Each one comes with its CVS, since POC
+   * restarts at every IRAP and alone cannot order pictures across one.
+   */
+  takeSuppressedPictures(): SuppressedPicture[] {
+    const m = this._m;
+    const count = this._api.getSuppressedPictureCount(this._dec);
+    if (count <= 0) return [];
+
+    // Two int32_t per picture: cvs_id then poc
+    const ptr = m._malloc(count * 8);
+    try {
+      const written = this._api.takeSuppressedPictures(this._dec, ptr, count);
+      if (written < 0) return [];
+      const out: SuppressedPicture[] = [];
+      for (let i = 0; i < written; i++) {
+        out.push({
+          cvsId: m.getValue(ptr + i * 8, "i32"),
+          poc: m.getValue(ptr + i * 8 + 4, "i32"),
+        });
+      }
+      return out;
+    } finally {
+      m._free(ptr);
     }
   }
 
