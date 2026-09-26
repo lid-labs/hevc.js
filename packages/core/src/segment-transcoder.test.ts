@@ -1,5 +1,6 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { SegmentTranscoder, extractTfdt, rebaseSamplesToTfdt } from "./segment-transcoder.js";
+import { FMP4Demuxer } from "./fmp4-demuxer.js";
 
 /**
  * Re-calling prepareInit() must reset the per-stream runtime state.
@@ -59,6 +60,93 @@ describe("SegmentTranscoder.prepareInit re-call", () => {
     expect((t as any)._encoder).toBeNull();
     expect((t as any)._paramSetsFed).toBe(false);
     expect((t as any)._initResult).toBeNull();
+  });
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+});
+
+/**
+ * The same reset, on the path prepareInit() does not cover.
+ *
+ * dash.js and hls.js go through mse-intercept, which calls
+ * processInitSegment() directly: on an ABR switch the player appends a new
+ * HEVC init segment, the new dimensions land in `_width`/`_height`, and the
+ * dim-change check in `_prepareEncoder` then compares the incoming frames
+ * against dims that already match. The encoder stayed configured for the
+ * previous variant and the picture never left the lower rendition (#258).
+ */
+describe("SegmentTranscoder.processInitSegment re-call", () => {
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const stubDemuxer = (width: number, height: number) => {
+    vi.spyOn(FMP4Demuxer.prototype, "parseInit").mockResolvedValue(undefined);
+    vi.spyOn(FMP4Demuxer.prototype, "videoTrack", "get").mockReturnValue({
+      id: 1,
+      timescale: 90000,
+      width,
+      height,
+      codec: "hvc1.1.6.L120.90",
+      hvcC: new Uint8Array(),
+    } as any);
+    vi.spyOn(FMP4Demuxer.prototype, "audioTrack", "get").mockReturnValue(null);
+  };
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("closes the encoder when the new init segment carries different dimensions", async () => {
+    const t = new SegmentTranscoder();
+    const close = vi.fn();
+    (t as any)._encoder = { close };
+    (t as any)._width = 848;
+    (t as any)._height = 480;
+    (t as any)._initResult = { initSegment: new Uint8Array(), codec: "avc1.42" };
+
+    stubDemuxer(1920, 1080);
+    await t.processInitSegment(new Uint8Array(8));
+
+    expect(close).toHaveBeenCalledTimes(1);
+    expect((t as any)._encoder).toBeNull();
+    expect((t as any)._initResult).toBeNull();
+    expect((t as any)._width).toBe(1920);
+    expect((t as any)._height).toBe(1080);
+  });
+
+  it("keeps the encoder when the same init segment is re-parsed (seek)", async () => {
+    const t = new SegmentTranscoder();
+    const close = vi.fn();
+    const initResult = { initSegment: new Uint8Array(), codec: "avc1.42" };
+    (t as any)._encoder = { close };
+    (t as any)._width = 1920;
+    (t as any)._height = 1080;
+    (t as any)._initResult = initResult;
+
+    stubDemuxer(1920, 1080);
+    await t.processInitSegment(new Uint8Array(8));
+
+    expect(close).not.toHaveBeenCalled();
+    expect((t as any)._initResult).toBe(initResult);
+  });
+
+  it("re-arms the parameter-set feed so the new stream's VPS/SPS/PPS reach the decoder", async () => {
+    const t = new SegmentTranscoder();
+    (t as any)._paramSetsFed = true;
+
+    stubDemuxer(1920, 1080);
+    // hvcC box holding a single one-byte NAL: fourcc, 22 bytes of header,
+    // numOfArrays = 1, then the array (kind byte, count, length, payload).
+    const init = new Uint8Array([
+      ...[0x68, 0x76, 0x63, 0x43], // 'hvcC'
+      ...new Array(22).fill(0),
+      1, // numOfArrays
+      0x20, // array_completeness + NAL_unit_type (VPS)
+      0, 1, // numNalus
+      0, 1, // NAL length
+      0x40, // NAL payload
+    ]);
+    await t.processInitSegment(init);
+
+    expect((t as any)._paramSetsFed).toBe(false);
+    expect((t as any)._paramSetsBuffer).not.toBeNull();
   });
   /* eslint-enable @typescript-eslint/no-explicit-any */
 });

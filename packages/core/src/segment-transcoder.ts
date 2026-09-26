@@ -100,6 +100,23 @@ export class SegmentTranscoder {
 
     const track = this._demuxer.videoTrack;
     if (track) {
+      // ABR switch on the MSE-intercept path (dash.js, hls.js): the player
+      // appends a fresh HEVC init segment for the new variant. Drop the
+      // encoder here, before `_width`/`_height` are overwritten — otherwise
+      // `_prepareEncoder` compares the new frames against the *new* dims,
+      // sees no change, and keeps the encoder configured for the previous
+      // resolution. Measured on the ABR demo preset: the player switched to
+      // 1080p at t≈2s and the picture stayed 848x480 for the whole stream.
+      // `prepareInit` (Shaka's path) already did this for itself.
+      if (this._encoder && (track.width !== this._width || track.height !== this._height)) {
+        log.info(
+          `Init segment resolution changed ${this._width}x${this._height} → ` +
+          `${track.width}x${track.height}, recreating encoder`,
+        );
+        this._encoder.close();
+        this._encoder = null;
+        this._initResult = null; // force a new H.264 init segment
+      }
       this._timescale = track.timescale;
       this._width = track.width;
       this._height = track.height;
@@ -133,6 +150,10 @@ export class SegmentTranscoder {
     // These must be fed to the WASM decoder before any media NALs
     const paramSets = extractParameterSetsFromInit(data);
     if (paramSets.length > 0) {
+      // These belong to the stream this init describes, so they have to reach
+      // the decoder before its next media segment. Re-feeding identical sets
+      // (same init re-appended on a seek) is harmless.
+      this._paramSetsFed = false;
       const psSize = paramSets.reduce((s, n) => s + 4 + n.byteLength, 0);
       this._paramSetsBuffer = new Uint8Array(psSize);
       let off = 0;

@@ -9613,7 +9613,11 @@ var HevcDash = (() => {
     /**
      * Drain output-ready frames from the decoder (§C.5.2 bumping process).
      * Returns frames in display order, only when ready per DPB constraints.
-     * Frames are valid until the next feed() or destroy() call.
+     *
+     * Planes are copied out of the WASM heap, so the returned frames stay
+     * valid across later feed() and destroy() calls. Draining after every
+     * feed() is what keeps the DPB at its bound — the decoder cannot reclaim
+     * a picture before it has been bumped out. See docs/memory-envelope.md.
      */
     drain() {
       const m = this._m;
@@ -9836,7 +9840,9 @@ var HevcDash = (() => {
     constructor() {
       this._mp4box = createFile();
       this._videoTrack = null;
+      this._audioTrack = null;
       this._pendingSamples = [];
+      this._pendingAudio = [];
       this._offset = 0;
       this._ready = false;
       this._readyPromise = new Promise((resolve) => {
@@ -9845,7 +9851,19 @@ var HevcDash = (() => {
       this._mp4box.onReady = (info) => {
         this._onReady(info);
       };
-      this._mp4box.onSamples = (_trackId, _user, samples) => {
+      this._mp4box.onSamples = (trackId, _user, samples) => {
+        if (this._audioTrack && trackId === this._audioTrack.trackId) {
+          for (const sample of samples) {
+            const buf = sample.data;
+            this._pendingAudio.push({
+              data: ArrayBuffer.isView(buf) ? new Uint8Array(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)) : new Uint8Array(buf),
+              pts: sample.cts,
+              dts: sample.dts,
+              duration: sample.duration
+            });
+          }
+          return;
+        }
         for (const sample of samples) {
           const nalUnits = extractNalUnitsFromSample(sample.data, this._videoTrack?.nalLengthSize ?? 4);
           this._pendingSamples.push({
@@ -9865,6 +9883,16 @@ var HevcDash = (() => {
     /** Get the video track info (available after parse) */
     get videoTrack() {
       return this._videoTrack;
+    }
+    /** Get the audio track info, if the segment carries a muxed audio track. */
+    get audioTrack() {
+      return this._audioTrack;
+    }
+    /** Drain all pending audio samples extracted so far (raw AAC frames). */
+    drainAudioSamples() {
+      const samples = this._pendingAudio;
+      this._pendingAudio = [];
+      return samples;
     }
     /** Whether the init segment has been parsed */
     get isReady() {
@@ -9932,11 +9960,40 @@ var HevcDash = (() => {
         };
         this._mp4box.setExtractionOptions(videoTrack.id, void 0, { nbSamples: 100 });
       }
+      const audioTrack = info.audioTracks?.[0] ?? info.tracks.find(
+        (t) => t.type === "audio"
+      );
+      if (audioTrack) {
+        const asc = extractAudioSpecificConfig(this._mp4box, audioTrack.id);
+        this._audioTrack = {
+          trackId: audioTrack.id,
+          codec: audioTrack.codec,
+          timescale: audioTrack.timescale,
+          channelCount: audioTrack.audio?.channel_count ?? 2,
+          sampleRate: audioTrack.audio?.sample_rate ?? 48e3,
+          sampleSize: audioTrack.audio?.sample_size ?? 16,
+          asc: asc ?? new Uint8Array(0)
+        };
+        this._mp4box.setExtractionOptions(audioTrack.id, void 0, { nbSamples: 100 });
+      }
       this._ready = true;
       this._readyResolve();
       this._mp4box.start();
     }
   };
+  function extractAudioSpecificConfig(mp4box, trackId) {
+    try {
+      const moov = mp4box.moov;
+      const trak = moov?.traks?.find((t) => t.tkhd?.track_id === trackId);
+      const entry = trak?.mdia?.minf?.stbl?.stsd?.entries?.[0];
+      const descs = entry?.esds?.esd?.descs ?? [];
+      const decoderConfig = descs.find((d) => d.tag === 4);
+      const dsi = decoderConfig?.descs?.find((d) => d.tag === 5);
+      if (dsi?.data) return dsi.data instanceof Uint8Array ? dsi.data.slice() : new Uint8Array(dsi.data);
+    } catch {
+    }
+    return null;
+  }
   function extractNalUnitsFromSample(data, nalLengthSize) {
     const buf = data instanceof ArrayBuffer ? data : data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
     const view = new DataView(buf);
@@ -9983,7 +10040,34 @@ var HevcDash = (() => {
      */
     muxSegment(samples, baseDecodeTime) {
       const mdat = boxMdat(samples);
-      const moof = boxMoof(this._sequenceNumber++, samples, baseDecodeTime, mdat.byteLength);
+      const moof = boxMoof(this._sequenceNumber++, samples, baseDecodeTime);
+      return concat(moof, mdat);
+    }
+    /**
+     * Generate a two-track (video + audio) init segment. Video track_ID=1,
+     * audio track_ID=2. Used for muxed A/V streams: the H.264 video is
+     * transcoded, the AAC audio is passed through, and both are re-muxed into
+     * one `audiovideo` output so a single SourceBuffer plays both.
+     */
+    generateInitAV(video, audio) {
+      return concat(boxFtyp(), boxMoovAV(video, audio));
+    }
+    /**
+     * Generate a two-track media segment: one moof with a video traf and an
+     * audio traf, followed by a single mdat holding the video samples then the
+     * audio samples. Base decode times are per-track (different timescales).
+     */
+    muxSegmentAV(videoSamples, videoBaseTime, audioSamples, audioBaseTime) {
+      const videoBytes = videoSamples.reduce((s, x) => s + x.data.byteLength, 0);
+      const mdat = boxMdatAV(videoSamples, audioSamples);
+      const moof = boxMoofAV(
+        this._sequenceNumber++,
+        videoSamples,
+        videoBaseTime,
+        audioSamples,
+        audioBaseTime,
+        videoBytes
+      );
       return concat(moof, mdat);
     }
   };
@@ -10035,7 +10119,7 @@ var HevcDash = (() => {
     const mvex = box("mvex", boxTrex());
     return box("moov", mvhd, trak, mvex);
   }
-  function boxMvhd(timescale) {
+  function boxMvhd(timescale, nextTrackId = 2) {
     const data = new Uint8Array(96);
     const v = new DataView(data.buffer);
     v.setUint32(8, timescale);
@@ -10043,8 +10127,18 @@ var HevcDash = (() => {
     v.setUint16(20, 256);
     const matrix = [65536, 0, 0, 0, 65536, 0, 0, 0, 1073741824];
     for (let i = 0; i < 9; i++) v.setUint32(32 + i * 4, matrix[i]);
-    v.setUint32(92, 2);
+    v.setUint32(92, nextTrackId);
     return fullBox("mvhd", 0, 0, data);
+  }
+  function boxTfdt(baseDecodeTime) {
+    if (baseDecodeTime <= 4294967295) {
+      return fullBox("tfdt", 0, 0, u32be(baseDecodeTime));
+    }
+    const d = new Uint8Array(8);
+    const dv = new DataView(d.buffer);
+    dv.setUint32(0, Math.floor(baseDecodeTime / 4294967296));
+    dv.setUint32(4, baseDecodeTime & 4294967295);
+    return fullBox("tfdt", 1, 0, d);
   }
   function boxTrak(config) {
     const tkhd = boxTkhd(config.width, config.height);
@@ -10120,52 +10214,15 @@ var HevcDash = (() => {
     v.setUint32(4, 1);
     return fullBox("trex", 0, 0, data);
   }
-  function boxMoof(sequenceNumber, samples, baseDecodeTime, mdatSize) {
+  function boxMoof(sequenceNumber, samples, baseDecodeTime) {
     const mfhd = fullBox("mfhd", 0, 0, u32be(sequenceNumber));
-    const traf = boxTraf(samples, baseDecodeTime, mdatSize);
-    const moof = box("moof", mfhd, traf);
-    const dataOffset = moof.byteLength + 8;
-    patchTrunDataOffset(moof, dataOffset);
+    const moof = box("moof", mfhd, boxTraf(samples, baseDecodeTime));
+    patchTrunDataOffsets(moof, [moof.byteLength + 8]);
     return moof;
   }
-  function patchTrunDataOffset(moof, dataOffset) {
-    const view = new DataView(moof.buffer, moof.byteOffset, moof.byteLength);
-    let offset = 8;
-    while (offset + 8 <= moof.byteLength) {
-      const size = view.getUint32(offset);
-      const type = view.getUint32(offset + 4);
-      if (type === 1953653094) {
-        let inner = offset + 8;
-        while (inner + 8 <= offset + size) {
-          const isize = view.getUint32(inner);
-          const itype = view.getUint32(inner + 4);
-          if (itype === 1953658222) {
-            const dataOffsetPos = inner + 8 + 4 + 4;
-            view.setUint32(dataOffsetPos, dataOffset);
-            return;
-          }
-          inner += isize;
-        }
-      }
-      offset += size;
-    }
-  }
-  function boxTraf(samples, baseDecodeTime, mdatSize) {
-    const tfhdFlags = 131072;
-    const tfhdData = u32be(1);
-    const tfhd = fullBox("tfhd", 0, tfhdFlags, tfhdData);
-    if (baseDecodeTime <= 4294967295) {
-      const tfdt2 = fullBox("tfdt", 0, 0, u32be(baseDecodeTime));
-      const trun2 = boxTrun(samples);
-      return box("traf", tfhd, tfdt2, trun2);
-    }
-    const tfdtData = new Uint8Array(8);
-    const tfdtView = new DataView(tfdtData.buffer);
-    tfdtView.setUint32(0, Math.floor(baseDecodeTime / 4294967296));
-    tfdtView.setUint32(4, baseDecodeTime & 4294967295);
-    const tfdt = fullBox("tfdt", 1, 0, tfdtData);
-    const trun = boxTrun(samples);
-    return box("traf", tfhd, tfdt, trun);
+  function boxTraf(samples, baseDecodeTime) {
+    const tfhd = fullBox("tfhd", 0, 131072, u32be(1));
+    return box("traf", tfhd, boxTfdt(baseDecodeTime), boxTrun(samples));
   }
   function boxTrun(samples) {
     const flags = 1 | 256 | 512 | 1024 | 2048;
@@ -10193,6 +10250,154 @@ var HevcDash = (() => {
     for (const sample of samples) {
       payload.set(sample.data, offset);
       offset += sample.data.byteLength;
+    }
+    return box("mdat", payload);
+  }
+  function boxMoovAV(video, audio) {
+    const mvhd = boxMvhd(video.timescale, 3);
+    const videoTrak = boxTrak(video);
+    const audioTrak = boxTrakAudio(audio);
+    const mvex = box("mvex", boxTrex(), boxTrexAudio());
+    return box("moov", mvhd, videoTrak, audioTrak, mvex);
+  }
+  function boxTrakAudio(audio) {
+    const tkhd = boxTkhdAudio();
+    const mdia = boxMdiaAudio(audio);
+    return box("trak", tkhd, mdia);
+  }
+  function boxTkhdAudio() {
+    const data = new Uint8Array(80);
+    const v = new DataView(data.buffer);
+    v.setUint32(8, 2);
+    v.setUint16(32, 256);
+    const matrix = [65536, 0, 0, 0, 65536, 0, 0, 0, 1073741824];
+    for (let i = 0; i < 9; i++) v.setUint32(36 + i * 4, matrix[i]);
+    return fullBox("tkhd", 0, 3, data);
+  }
+  function boxMdiaAudio(audio) {
+    const mdhd = boxMdhd(audio.timescale);
+    const hdlr = boxHdlrAudio();
+    const minf = boxMinfAudio(audio);
+    return box("mdia", mdhd, hdlr, minf);
+  }
+  function boxHdlrAudio() {
+    const data = new Uint8Array(21);
+    const v = new DataView(data.buffer);
+    v.setUint32(4, 1936684398);
+    return fullBox("hdlr", 0, 0, data);
+  }
+  function boxMinfAudio(audio) {
+    const smhd = fullBox("smhd", 0, 0, new Uint8Array(4));
+    const dinf = box("dinf", fullBox("dref", 0, 0, u32be(1), fullBox("url ", 0, 1)));
+    const stbl = boxStblAudio(audio);
+    return box("minf", smhd, dinf, stbl);
+  }
+  function boxStblAudio(audio) {
+    const stsd = fullBox("stsd", 0, 0, u32be(1), boxMp4a(audio));
+    const stts = fullBox("stts", 0, 0, u32be(0));
+    const stsc = fullBox("stsc", 0, 0, u32be(0));
+    const stsz = fullBox("stsz", 0, 0, u32be(0), u32be(0));
+    const stco = fullBox("stco", 0, 0, u32be(0));
+    return box("stbl", stsd, stts, stsc, stsz, stco);
+  }
+  function boxMp4a(audio) {
+    const header = new Uint8Array(28);
+    const v = new DataView(header.buffer);
+    v.setUint16(6, 1);
+    v.setUint16(16, audio.channelCount);
+    v.setUint16(18, audio.sampleSize);
+    v.setUint32(24, Math.min(audio.sampleRate, 65535) << 16);
+    return box("mp4a", header, boxEsds(audio.asc));
+  }
+  function boxEsds(asc) {
+    const dsi = descriptor(5, asc);
+    const dcdHead = new Uint8Array(13);
+    dcdHead[0] = 64;
+    dcdHead[1] = 5 << 2 | 1;
+    const dcd = descriptor(4, dcdHead, dsi);
+    const sl = descriptor(6, new Uint8Array([2]));
+    const es = descriptor(3, new Uint8Array([0, 0, 0]), dcd, sl);
+    return fullBox("esds", 0, 0, es);
+  }
+  function descriptor(tag, ...payloads) {
+    const payload = concat(...payloads);
+    const sizeBytes = [];
+    let len = payload.byteLength;
+    do {
+      sizeBytes.unshift(len & 127);
+      len >>>= 7;
+    } while (len > 0);
+    for (let i = 0; i < sizeBytes.length - 1; i++) sizeBytes[i] |= 128;
+    return concat(new Uint8Array([tag, ...sizeBytes]), payload);
+  }
+  function boxTrexAudio() {
+    const data = new Uint8Array(20);
+    const v = new DataView(data.buffer);
+    v.setUint32(0, 2);
+    v.setUint32(4, 1);
+    return fullBox("trex", 0, 0, data);
+  }
+  function boxMoofAV(sequenceNumber, videoSamples, videoBaseTime, audioSamples, audioBaseTime, videoBytes) {
+    const mfhd = fullBox("mfhd", 0, 0, u32be(sequenceNumber));
+    const videoTraf = boxTraf(videoSamples, videoBaseTime);
+    const audioTraf = boxTrafAudio(audioSamples, audioBaseTime);
+    const moof = box("moof", mfhd, videoTraf, audioTraf);
+    const mdatPayloadStart = moof.byteLength + 8;
+    patchTrunDataOffsets(moof, [mdatPayloadStart, mdatPayloadStart + videoBytes]);
+    return moof;
+  }
+  function boxTrafAudio(samples, baseDecodeTime) {
+    const tfhd = fullBox("tfhd", 0, 131072, u32be(2));
+    return box("traf", tfhd, boxTfdt(baseDecodeTime), boxTrunAudio(samples));
+  }
+  function boxTrunAudio(samples) {
+    const flags = 1 | 256 | 512;
+    const data = new Uint8Array(8 + samples.length * 8);
+    const v = new DataView(data.buffer);
+    v.setUint32(0, samples.length);
+    v.setUint32(4, 0);
+    let offset = 8;
+    for (const s of samples) {
+      v.setUint32(offset, s.duration);
+      v.setUint32(offset + 4, s.data.byteLength);
+      offset += 8;
+    }
+    return fullBox("trun", 0, flags, data);
+  }
+  function patchTrunDataOffsets(moof, offsets) {
+    const view = new DataView(moof.buffer, moof.byteOffset, moof.byteLength);
+    let offset = 8;
+    let trafIndex = 0;
+    while (offset + 8 <= moof.byteLength) {
+      const size = view.getUint32(offset);
+      const type = view.getUint32(offset + 4);
+      if (type === 1953653094) {
+        let inner = offset + 8;
+        while (inner + 8 <= offset + size) {
+          const isize = view.getUint32(inner);
+          if (view.getUint32(inner + 4) === 1953658222) {
+            view.setUint32(inner + 8 + 4 + 4, offsets[trafIndex]);
+            break;
+          }
+          inner += isize;
+        }
+        trafIndex++;
+      }
+      offset += size;
+    }
+  }
+  function boxMdatAV(videoSamples, audioSamples) {
+    const videoBytes = videoSamples.reduce((s, x) => s + x.data.byteLength, 0);
+    const audioBytes = audioSamples.reduce((s, x) => s + x.data.byteLength, 0);
+    const payload = new Uint8Array(videoBytes + audioBytes);
+    let offset = 0;
+    for (const s of videoSamples) {
+      payload.set(s.data, offset);
+      offset += s.data.byteLength;
+    }
+    for (const s of audioSamples) {
+      payload.set(s.data, offset);
+      offset += s.data.byteLength;
     }
     return box("mdat", payload);
   }
@@ -10236,9 +10441,14 @@ var HevcDash = (() => {
       this._height = 0;
       this._paramSetsFed = false;
       this._paramSetsBuffer = null;
+      this._audioConfig = null;
       this.lastPerfStats = null;
       this._config = config;
       this._fps = config.fps ?? 25;
+    }
+    /** Whether the source carries a muxed audio track we pass through. */
+    get hasMuxedAudio() {
+      return this._audioConfig !== null;
     }
     /** Whether the transcoder is ready to process segments */
     get isInitialized() {
@@ -10271,12 +10481,38 @@ var HevcDash = (() => {
       await this._demuxer.parseInit(data);
       const track = this._demuxer.videoTrack;
       if (track) {
+        if (this._encoder && (track.width !== this._width || track.height !== this._height)) {
+          log.info(
+            `Init segment resolution changed ${this._width}x${this._height} \u2192 ${track.width}x${track.height}, recreating encoder`
+          );
+          this._encoder.close();
+          this._encoder = null;
+          this._initResult = null;
+        }
         this._timescale = track.timescale;
         this._width = track.width;
         this._height = track.height;
       }
+      const audio = this._demuxer.audioTrack;
+      if (audio) {
+        if (audio.asc.byteLength === 0) {
+          log.warn(
+            "Muxed audio track has no AudioSpecificConfig \u2014 the audio track may fail to decode. The video is still transcoded."
+          );
+        }
+        this._audioConfig = {
+          timescale: audio.timescale,
+          channelCount: audio.channelCount,
+          sampleRate: audio.sampleRate,
+          sampleSize: audio.sampleSize,
+          asc: audio.asc
+        };
+      } else {
+        this._audioConfig = null;
+      }
       const paramSets = extractParameterSetsFromInit(data);
       if (paramSets.length > 0) {
+        this._paramSetsFed = false;
         const psSize = paramSets.reduce((s, n) => s + 4 + n.byteLength, 0);
         this._paramSetsBuffer = new Uint8Array(psSize);
         let off = 0;
@@ -10368,65 +10604,60 @@ var HevcDash = (() => {
         this._decoder.feed(this._paramSetsBuffer);
         this._paramSetsFed = true;
       }
-      for (const sample of samples) {
-        const totalSize = sample.nalUnits.reduce((sum, n) => sum + 4 + n.length, 0);
-        const nalBuffer = new Uint8Array(totalSize);
-        let offset = 0;
-        for (const nal of sample.nalUnits) {
-          nalBuffer[offset++] = 0;
-          nalBuffer[offset++] = 0;
-          nalBuffer[offset++] = 0;
-          nalBuffer[offset++] = 1;
-          nalBuffer.set(nal, offset);
-          offset += nal.length;
+      const chunks = [];
+      let frameCount = 0;
+      let frameW = 0;
+      let frameH = 0;
+      let decodeMs = 0;
+      let encodeMs = 0;
+      const encodeDrained = (frames) => {
+        if (frames.length === 0) return;
+        if (frameCount === 0) {
+          frameW = frames[0].width;
+          frameH = frames[0].height;
+          this._prepareEncoder(frameW, frameH);
+          this._encoder.onChunk = (chunk) => chunks.push(chunk);
         }
-        this._decoder.feed(nalBuffer);
+        for (const frame of frames) {
+          const i = frameCount++;
+          const timestampUs = i < sortedPts.length ? Math.round(sortedPts[i] / this._timescale * 1e6) : Math.round(segmentBaseTime / this._timescale * 1e6) + Math.round(i / this._fps * 1e6);
+          this._encoder.encode(frame, timestampUs, i === 0);
+        }
+      };
+      for (const sample of samples) {
+        const tFeed0 = performance.now();
+        this._decoder.feed(toAnnexB(sample.nalUnits));
+        const frames = this._decoder.drain();
+        const tDrainEnd = performance.now();
+        decodeMs += tDrainEnd - tFeed0;
+        encodeDrained(frames);
+        encodeMs += performance.now() - tDrainEnd;
       }
-      const frames = this._decoder.drain();
-      const tDecodeEnd = performance.now();
-      if (frames.length === 0) {
+      const tSegFlush = performance.now();
+      const tail = this._decoder.flush();
+      decodeMs += performance.now() - tSegFlush;
+      const tTailEncode = performance.now();
+      encodeDrained(tail);
+      encodeMs += performance.now() - tTailEncode;
+      if (frameCount === 0) {
         this.lastPerfStats = null;
         return null;
       }
-      const frameW = frames[0].width;
-      const frameH = frames[0].height;
-      if (this._encoder && (frameW !== this._width || frameH !== this._height)) {
-        log.info(`Resolution changed ${this._width}x${this._height} \u2192 ${frameW}x${frameH}, recreating encoder`);
-        this._encoder.close();
-        this._encoder = null;
-        this._initResult = null;
-      }
-      if (!this._encoder) {
-        this._encoder = new H264Encoder({
-          width: frameW,
-          height: frameH,
-          fps: this._fps,
-          bitrate: this._config.bitrate
-        });
-        this._width = frameW;
-        this._height = frameH;
-      }
-      const chunks = [];
-      this._encoder.onChunk = (chunk) => chunks.push(chunk);
-      for (let i = 0; i < frames.length; i++) {
-        const timestampUs = i < sortedPts.length ? Math.round(sortedPts[i] / this._timescale * 1e6) : Math.round(segmentBaseTime / this._timescale * 1e6) + Math.round(i / this._fps * 1e6);
-        this._encoder.encode(frames[i], timestampUs, i === 0);
-      }
+      const tTail0 = performance.now();
       await this._encoder.flush();
       if (chunks.length === 0) return null;
       if (!this._initResult) {
         const avcC = this._encoder.codecDescription;
         if (!avcC) throw new Error("No avcC description from encoder");
-        const initSegment = this._muxer.generateInit({
+        const videoInit = {
           width: this._width,
           height: this._height,
           timescale: this._timescale,
           avcC
-        });
-        this._initResult = {
-          initSegment,
-          codec: this._encoder.codec
         };
+        const initSegment = this._audioConfig ? this._muxer.generateInitAV(videoInit, this._audioConfig) : this._muxer.generateInit(videoInit);
+        const codec = this._audioConfig ? `${this._encoder.codec},mp4a.40.2` : this._encoder.codec;
+        this._initResult = { initSegment, codec };
       }
       const sortedDurations = [];
       for (let i = 0; i < sortedPts.length - 1; i++) {
@@ -10442,11 +10673,20 @@ var HevcDash = (() => {
         compositionTimeOffset: 0
       }));
       const muxBaseTime = sortedPts.length > 0 ? sortedPts[0] : segmentBaseTime;
-      const mediaSegment = this._muxer.muxSegment(muxerSamples, muxBaseTime);
-      const tEncodeEnd = performance.now();
+      let mediaSegment;
+      const audioSamples = this._audioConfig ? this._demuxer.drainAudioSamples() : [];
+      if (this._audioConfig && audioSamples.length > 0) {
+        mediaSegment = this._muxer.muxSegmentAV(
+          muxerSamples,
+          muxBaseTime,
+          audioSamples.map((a) => ({ data: a.data, duration: a.duration })),
+          audioSamples[0].dts
+        );
+      } else {
+        mediaSegment = this._muxer.muxSegment(muxerSamples, muxBaseTime);
+      }
       const demuxMs = tDemuxEnd - tDemux0;
-      const decodeMs = tDecodeEnd - tDemuxEnd;
-      const encodeMs = tEncodeEnd - tDecodeEnd;
+      encodeMs += performance.now() - tTail0;
       const segDurTicks = samples.reduce((sum, s) => sum + s.duration, 0);
       const segDurMs = segDurTicks / this._timescale * 1e3;
       this._baseDecodeTime = segmentBaseTime + segDurTicks;
@@ -10454,7 +10694,7 @@ var HevcDash = (() => {
         demuxMs,
         decodeMs,
         encodeMs,
-        frames: frames.length,
+        frames: frameCount,
         segDurMs,
         width: frameW,
         height: frameH
@@ -10465,7 +10705,7 @@ var HevcDash = (() => {
           totalMs,
           segDurMs,
           speedX: segDurMs / totalMs,
-          frames: frames.length,
+          frames: frameCount,
           width: frameW,
           height: frameH
         });
@@ -10495,52 +10735,17 @@ var HevcDash = (() => {
         this._decoder.feed(this._paramSetsBuffer);
         this._paramSetsFed = true;
       }
-      for (const sample of samples) {
-        const totalSize = sample.nalUnits.reduce((sum, n) => sum + 4 + n.length, 0);
-        const nalBuffer = new Uint8Array(totalSize);
-        let offset = 0;
-        for (const nal of sample.nalUnits) {
-          nalBuffer[offset++] = 0;
-          nalBuffer[offset++] = 0;
-          nalBuffer[offset++] = 0;
-          nalBuffer[offset++] = 1;
-          nalBuffer.set(nal, offset);
-          offset += nal.length;
-        }
-        this._decoder.feed(nalBuffer);
-      }
-      const frames = this._decoder.drain();
-      const tDecodeEnd = performance.now();
-      if (frames.length === 0) return;
-      const frameW = frames[0].width;
-      const frameH = frames[0].height;
-      if (this._encoder && (frameW !== this._width || frameH !== this._height)) {
-        this._encoder.close();
-        this._encoder = null;
-        this._initResult = null;
-      }
-      if (!this._encoder) {
-        this._encoder = new H264Encoder({
-          width: frameW,
-          height: frameH,
-          fps: this._fps,
-          bitrate: this._config.bitrate
-        });
-        this._width = frameW;
-        this._height = frameH;
-      }
       let initEmitted = false;
-      const tEncode0 = performance.now();
-      for (let batchStart = 0; batchStart < frames.length; batchStart += BATCH_SIZE) {
-        const batchEnd = Math.min(batchStart + BATCH_SIZE, frames.length);
+      const emitBatch = async (batch, batchStart) => {
         const batchChunks = [];
         this._encoder.onChunk = (chunk) => batchChunks.push(chunk);
-        for (let i = batchStart; i < batchEnd; i++) {
-          const timestampUs = i < sortedPts.length ? Math.round(sortedPts[i] / this._timescale * 1e6) : Math.round(segmentBaseTime / this._timescale * 1e6) + Math.round(i / this._fps * 1e6);
-          this._encoder.encode(frames[i], timestampUs, i === 0);
+        for (let i = 0; i < batch.length; i++) {
+          const idx = batchStart + i;
+          const timestampUs = idx < sortedPts.length ? Math.round(sortedPts[idx] / this._timescale * 1e6) : Math.round(segmentBaseTime / this._timescale * 1e6) + Math.round(idx / this._fps * 1e6);
+          this._encoder.encode(batch[i], timestampUs, idx === 0);
         }
         await this._encoder.flush();
-        if (batchChunks.length === 0) continue;
+        if (batchChunks.length === 0) return;
         if (!this._initResult) {
           const avcC = this._encoder.codecDescription;
           if (!avcC) throw new Error("No avcC description from encoder");
@@ -10568,11 +10773,49 @@ var HevcDash = (() => {
         const mediaSegment = this._muxer.muxSegment(muxerSamples, batchBaseTime);
         await onChunk(mediaSegment, !initEmitted ? this._initResult : null);
         initEmitted = true;
+      };
+      let decodeMs = 0;
+      let encodeMs = 0;
+      let frameW = 0;
+      let frameH = 0;
+      let frameCount = 0;
+      let encodedCount = 0;
+      let pending = [];
+      const ingest = async (frames) => {
+        if (frames.length === 0) return;
+        if (frameCount === 0) {
+          frameW = frames[0].width;
+          frameH = frames[0].height;
+          this._prepareEncoder(frameW, frameH);
+        }
+        frameCount += frames.length;
+        pending.push(...frames);
+        while (pending.length >= BATCH_SIZE) {
+          await emitBatch(pending.splice(0, BATCH_SIZE), encodedCount);
+          encodedCount += BATCH_SIZE;
+        }
+      };
+      for (const sample of samples) {
+        const tFeed0 = performance.now();
+        this._decoder.feed(toAnnexB(sample.nalUnits));
+        const frames = this._decoder.drain();
+        const tDrainEnd = performance.now();
+        decodeMs += tDrainEnd - tFeed0;
+        await ingest(frames);
+        encodeMs += performance.now() - tDrainEnd;
       }
-      const tEncodeEnd = performance.now();
+      const tSegFlush = performance.now();
+      const tail = this._decoder.flush();
+      decodeMs += performance.now() - tSegFlush;
+      const tTail0 = performance.now();
+      await ingest(tail);
+      if (frameCount === 0) return;
+      if (pending.length > 0) {
+        await emitBatch(pending, encodedCount);
+        pending = [];
+      }
+      encodeMs += performance.now() - tTail0;
       const demuxMs = tDemuxEnd - tDemux0;
-      const decodeMs = tDecodeEnd - tDemuxEnd;
-      const encodeMs = tEncodeEnd - tEncode0;
       const segDurTicks = samples.reduce((sum, s) => sum + s.duration, 0);
       const segDurMs = segDurTicks / this._timescale * 1e3;
       this._baseDecodeTime = segmentBaseTime + segDurTicks;
@@ -10580,7 +10823,7 @@ var HevcDash = (() => {
         demuxMs,
         decodeMs,
         encodeMs,
-        frames: frames.length,
+        frames: frameCount,
         segDurMs,
         width: frameW,
         height: frameH
@@ -10591,7 +10834,7 @@ var HevcDash = (() => {
           totalMs,
           segDurMs,
           speedX: segDurMs / totalMs,
-          frames: frames.length,
+          frames: frameCount,
           width: frameW,
           height: frameH
         });
@@ -10616,6 +10859,25 @@ var HevcDash = (() => {
       this._demuxer = null;
       this._initResult = null;
     }
+    /** Create the H.264 encoder, or recreate it when the resolution changed (ABR). */
+    _prepareEncoder(width, height) {
+      if (this._encoder && (width !== this._width || height !== this._height)) {
+        log.info(`Resolution changed ${this._width}x${this._height} \u2192 ${width}x${height}, recreating encoder`);
+        this._encoder.close();
+        this._encoder = null;
+        this._initResult = null;
+      }
+      if (!this._encoder) {
+        this._encoder = new H264Encoder({
+          width,
+          height,
+          fps: this._fps,
+          bitrate: this._config.bitrate
+        });
+        this._width = width;
+        this._height = height;
+      }
+    }
     async _encodeFrames(frames) {
       if (!this._encoder || frames.length === 0) return null;
       const chunks = [];
@@ -10637,6 +10899,20 @@ var HevcDash = (() => {
       return segment;
     }
   };
+  function toAnnexB(nalUnits) {
+    const totalSize = nalUnits.reduce((sum, n) => sum + 4 + n.length, 0);
+    const buf = new Uint8Array(totalSize);
+    let offset = 0;
+    for (const nal of nalUnits) {
+      buf[offset++] = 0;
+      buf[offset++] = 0;
+      buf[offset++] = 0;
+      buf[offset++] = 1;
+      buf.set(nal, offset);
+      offset += nal.length;
+    }
+    return buf;
+  }
   function extractParameterSetsFromInit(data) {
     const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
     const sets = [];
@@ -11003,10 +11279,6 @@ var HevcDash = (() => {
     };
     MediaSource.isTypeSupported = function(mimeType) {
       if (HEVC_DETECT_RE.test(mimeType)) {
-        if (isMuxedHevcMime(mimeType)) {
-          log.info(`isTypeSupported("${mimeType}") \u2192 false (muxed A/V HEVC is not supported \u2014 audio would be lost)`);
-          return false;
-        }
         const h264Codec = hevcMimeToH264Codec(mimeType);
         const h264Mime = mimeType.replace(HEVC_CODEC_RE, h264Codec);
         const result = originalIsTypeSupported.call(MediaSource, h264Mime);
@@ -11020,10 +11292,6 @@ var HevcDash = (() => {
       interceptState.originalDecodingInfo = originalDecodingInfo;
       navigator.mediaCapabilities.decodingInfo = async function(cfg) {
         if (cfg.video?.contentType && HEVC_DETECT_RE.test(cfg.video.contentType)) {
-          if (isMuxedHevcMime(cfg.video.contentType)) {
-            log.info(`decodingInfo("${cfg.video.contentType}") \u2192 unsupported (muxed A/V HEVC \u2014 audio would be lost)`);
-            return { supported: false, smooth: false, powerEfficient: false };
-          }
           const h264Codec = hevcMimeToH264Codec(cfg.video.contentType);
           const h264Type = cfg.video.contentType.replace(HEVC_CODEC_RE, h264Codec);
           const h264Config = { ...cfg, video: { ...cfg.video, contentType: h264Type } };
@@ -11036,17 +11304,12 @@ var HevcDash = (() => {
       if (!HEVC_DETECT_RE.test(mimeType)) {
         return originalAddSourceBuffer.call(this, mimeType);
       }
-      if (isMuxedHevcMime(mimeType)) {
-        log.error(
-          `addSourceBuffer("${mimeType}") \u2014 muxed audio+video HEVC segments are not supported (the transcode pipeline is video-only and the audio track would be dropped). Repackage the stream with demuxed audio renditions.`
-        );
-        return originalAddSourceBuffer.call(this, mimeType);
-      }
+      const muxed = isMuxedHevcMime(mimeType);
       const h264Codec = hevcMimeToH264Codec(mimeType);
-      log.info(`addSourceBuffer("${mimeType}") \u2192 creating H.264 proxy with ${h264Codec}`);
-      const h264Mime = `video/mp4; codecs="${h264Codec}"`;
+      const h264Mime = muxed ? `video/mp4; codecs="${h264Codec},mp4a.40.2"` : `video/mp4; codecs="${h264Codec}"`;
+      log.info(`addSourceBuffer("${mimeType}") \u2192 creating ${muxed ? "A/V" : "H.264"} proxy with ${h264Mime}`);
       const realSB = originalAddSourceBuffer.call(this, h264Mime);
-      return createTranscodingProxy(realSB, interceptState.config);
+      return createTranscodingProxy(realSB, interceptState.config, muxed);
     };
   }
   function uninstallMSEIntercept() {
@@ -11062,8 +11325,8 @@ var HevcDash = (() => {
   function shouldFlushOnTimestampOffset(delta, hasQueuedSegments, initParsed) {
     return Math.abs(delta) >= TS_OFFSET_FLUSH_THRESHOLD_S && hasQueuedSegments && initParsed;
   }
-  function createTranscodingProxy(realSB, config) {
-    const useWorker = !!config.workerUrl;
+  function createTranscodingProxy(realSB, config, muxed = false) {
+    const useWorker = !!config.workerUrl && !muxed;
     let workerClient = null;
     let transcoder = null;
     let initParsed = false;
@@ -11284,6 +11547,38 @@ var HevcDash = (() => {
               }
               continue;
             }
+          }
+          if (muxed) {
+            log.debug(`Transcoding segment (${segment.byteLength}B) [muxed A/V]...`);
+            config.onTranscodeStart?.();
+            const combined = await transcoder.processMediaSegment(segment);
+            config.onTranscodeEnd?.();
+            if (abortGeneration !== myGeneration) return;
+            if (!initAppended) {
+              const init = transcoder.initResult;
+              if (init) {
+                initAppended = true;
+                lastInitSegment = init.initSegment;
+                if (updatingGetter.call(realSB)) await waitForRealUpdateEnd();
+                if (abortGeneration !== myGeneration) return;
+                realAppend(init.initSegment.buffer);
+                await waitForRealUpdateEnd();
+                if (abortGeneration !== myGeneration) return;
+                log.debug("A/V init segment appended");
+              }
+            }
+            if (combined) {
+              if (updatingGetter.call(realSB)) await waitForRealUpdateEnd();
+              if (abortGeneration !== myGeneration) return;
+              realAppend(combined.buffer);
+              await waitForRealUpdateEnd();
+            }
+            if (fakeUpdating) {
+              fakeUpdating = false;
+              dispatchOnSB("update");
+              dispatchOnSB("updateend");
+            }
+            continue;
           }
           log.debug(`Transcoding segment (${segment.byteLength}B) [streaming]...`);
           config.onTranscodeStart?.();

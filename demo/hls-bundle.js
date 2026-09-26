@@ -9613,7 +9613,11 @@ var HevcHls = (() => {
     /**
      * Drain output-ready frames from the decoder (§C.5.2 bumping process).
      * Returns frames in display order, only when ready per DPB constraints.
-     * Frames are valid until the next feed() or destroy() call.
+     *
+     * Planes are copied out of the WASM heap, so the returned frames stay
+     * valid across later feed() and destroy() calls. Draining after every
+     * feed() is what keeps the DPB at its bound — the decoder cannot reclaim
+     * a picture before it has been bumped out. See docs/memory-envelope.md.
      */
     drain() {
       const m = this._m;
@@ -10477,6 +10481,14 @@ var HevcHls = (() => {
       await this._demuxer.parseInit(data);
       const track = this._demuxer.videoTrack;
       if (track) {
+        if (this._encoder && (track.width !== this._width || track.height !== this._height)) {
+          log.info(
+            `Init segment resolution changed ${this._width}x${this._height} \u2192 ${track.width}x${track.height}, recreating encoder`
+          );
+          this._encoder.close();
+          this._encoder = null;
+          this._initResult = null;
+        }
         this._timescale = track.timescale;
         this._width = track.width;
         this._height = track.height;
@@ -10500,6 +10512,7 @@ var HevcHls = (() => {
       }
       const paramSets = extractParameterSetsFromInit(data);
       if (paramSets.length > 0) {
+        this._paramSetsFed = false;
         const psSize = paramSets.reduce((s, n) => s + 4 + n.byteLength, 0);
         this._paramSetsBuffer = new Uint8Array(psSize);
         let off = 0;
@@ -10591,50 +10604,46 @@ var HevcHls = (() => {
         this._decoder.feed(this._paramSetsBuffer);
         this._paramSetsFed = true;
       }
-      for (const sample of samples) {
-        const totalSize = sample.nalUnits.reduce((sum, n) => sum + 4 + n.length, 0);
-        const nalBuffer = new Uint8Array(totalSize);
-        let offset = 0;
-        for (const nal of sample.nalUnits) {
-          nalBuffer[offset++] = 0;
-          nalBuffer[offset++] = 0;
-          nalBuffer[offset++] = 0;
-          nalBuffer[offset++] = 1;
-          nalBuffer.set(nal, offset);
-          offset += nal.length;
+      const chunks = [];
+      let frameCount = 0;
+      let frameW = 0;
+      let frameH = 0;
+      let decodeMs = 0;
+      let encodeMs = 0;
+      const encodeDrained = (frames) => {
+        if (frames.length === 0) return;
+        if (frameCount === 0) {
+          frameW = frames[0].width;
+          frameH = frames[0].height;
+          this._prepareEncoder(frameW, frameH);
+          this._encoder.onChunk = (chunk) => chunks.push(chunk);
         }
-        this._decoder.feed(nalBuffer);
+        for (const frame of frames) {
+          const i = frameCount++;
+          const timestampUs = i < sortedPts.length ? Math.round(sortedPts[i] / this._timescale * 1e6) : Math.round(segmentBaseTime / this._timescale * 1e6) + Math.round(i / this._fps * 1e6);
+          this._encoder.encode(frame, timestampUs, i === 0);
+        }
+      };
+      for (const sample of samples) {
+        const tFeed0 = performance.now();
+        this._decoder.feed(toAnnexB(sample.nalUnits));
+        const frames = this._decoder.drain();
+        const tDrainEnd = performance.now();
+        decodeMs += tDrainEnd - tFeed0;
+        encodeDrained(frames);
+        encodeMs += performance.now() - tDrainEnd;
       }
-      const frames = this._decoder.drain();
-      const tDecodeEnd = performance.now();
-      if (frames.length === 0) {
+      const tSegFlush = performance.now();
+      const tail = this._decoder.flush();
+      decodeMs += performance.now() - tSegFlush;
+      const tTailEncode = performance.now();
+      encodeDrained(tail);
+      encodeMs += performance.now() - tTailEncode;
+      if (frameCount === 0) {
         this.lastPerfStats = null;
         return null;
       }
-      const frameW = frames[0].width;
-      const frameH = frames[0].height;
-      if (this._encoder && (frameW !== this._width || frameH !== this._height)) {
-        log.info(`Resolution changed ${this._width}x${this._height} \u2192 ${frameW}x${frameH}, recreating encoder`);
-        this._encoder.close();
-        this._encoder = null;
-        this._initResult = null;
-      }
-      if (!this._encoder) {
-        this._encoder = new H264Encoder({
-          width: frameW,
-          height: frameH,
-          fps: this._fps,
-          bitrate: this._config.bitrate
-        });
-        this._width = frameW;
-        this._height = frameH;
-      }
-      const chunks = [];
-      this._encoder.onChunk = (chunk) => chunks.push(chunk);
-      for (let i = 0; i < frames.length; i++) {
-        const timestampUs = i < sortedPts.length ? Math.round(sortedPts[i] / this._timescale * 1e6) : Math.round(segmentBaseTime / this._timescale * 1e6) + Math.round(i / this._fps * 1e6);
-        this._encoder.encode(frames[i], timestampUs, i === 0);
-      }
+      const tTail0 = performance.now();
       await this._encoder.flush();
       if (chunks.length === 0) return null;
       if (!this._initResult) {
@@ -10676,10 +10685,8 @@ var HevcHls = (() => {
       } else {
         mediaSegment = this._muxer.muxSegment(muxerSamples, muxBaseTime);
       }
-      const tEncodeEnd = performance.now();
       const demuxMs = tDemuxEnd - tDemux0;
-      const decodeMs = tDecodeEnd - tDemuxEnd;
-      const encodeMs = tEncodeEnd - tDecodeEnd;
+      encodeMs += performance.now() - tTail0;
       const segDurTicks = samples.reduce((sum, s) => sum + s.duration, 0);
       const segDurMs = segDurTicks / this._timescale * 1e3;
       this._baseDecodeTime = segmentBaseTime + segDurTicks;
@@ -10687,7 +10694,7 @@ var HevcHls = (() => {
         demuxMs,
         decodeMs,
         encodeMs,
-        frames: frames.length,
+        frames: frameCount,
         segDurMs,
         width: frameW,
         height: frameH
@@ -10698,7 +10705,7 @@ var HevcHls = (() => {
           totalMs,
           segDurMs,
           speedX: segDurMs / totalMs,
-          frames: frames.length,
+          frames: frameCount,
           width: frameW,
           height: frameH
         });
@@ -10728,52 +10735,17 @@ var HevcHls = (() => {
         this._decoder.feed(this._paramSetsBuffer);
         this._paramSetsFed = true;
       }
-      for (const sample of samples) {
-        const totalSize = sample.nalUnits.reduce((sum, n) => sum + 4 + n.length, 0);
-        const nalBuffer = new Uint8Array(totalSize);
-        let offset = 0;
-        for (const nal of sample.nalUnits) {
-          nalBuffer[offset++] = 0;
-          nalBuffer[offset++] = 0;
-          nalBuffer[offset++] = 0;
-          nalBuffer[offset++] = 1;
-          nalBuffer.set(nal, offset);
-          offset += nal.length;
-        }
-        this._decoder.feed(nalBuffer);
-      }
-      const frames = this._decoder.drain();
-      const tDecodeEnd = performance.now();
-      if (frames.length === 0) return;
-      const frameW = frames[0].width;
-      const frameH = frames[0].height;
-      if (this._encoder && (frameW !== this._width || frameH !== this._height)) {
-        this._encoder.close();
-        this._encoder = null;
-        this._initResult = null;
-      }
-      if (!this._encoder) {
-        this._encoder = new H264Encoder({
-          width: frameW,
-          height: frameH,
-          fps: this._fps,
-          bitrate: this._config.bitrate
-        });
-        this._width = frameW;
-        this._height = frameH;
-      }
       let initEmitted = false;
-      const tEncode0 = performance.now();
-      for (let batchStart = 0; batchStart < frames.length; batchStart += BATCH_SIZE) {
-        const batchEnd = Math.min(batchStart + BATCH_SIZE, frames.length);
+      const emitBatch = async (batch, batchStart) => {
         const batchChunks = [];
         this._encoder.onChunk = (chunk) => batchChunks.push(chunk);
-        for (let i = batchStart; i < batchEnd; i++) {
-          const timestampUs = i < sortedPts.length ? Math.round(sortedPts[i] / this._timescale * 1e6) : Math.round(segmentBaseTime / this._timescale * 1e6) + Math.round(i / this._fps * 1e6);
-          this._encoder.encode(frames[i], timestampUs, i === 0);
+        for (let i = 0; i < batch.length; i++) {
+          const idx = batchStart + i;
+          const timestampUs = idx < sortedPts.length ? Math.round(sortedPts[idx] / this._timescale * 1e6) : Math.round(segmentBaseTime / this._timescale * 1e6) + Math.round(idx / this._fps * 1e6);
+          this._encoder.encode(batch[i], timestampUs, idx === 0);
         }
         await this._encoder.flush();
-        if (batchChunks.length === 0) continue;
+        if (batchChunks.length === 0) return;
         if (!this._initResult) {
           const avcC = this._encoder.codecDescription;
           if (!avcC) throw new Error("No avcC description from encoder");
@@ -10801,11 +10773,49 @@ var HevcHls = (() => {
         const mediaSegment = this._muxer.muxSegment(muxerSamples, batchBaseTime);
         await onChunk(mediaSegment, !initEmitted ? this._initResult : null);
         initEmitted = true;
+      };
+      let decodeMs = 0;
+      let encodeMs = 0;
+      let frameW = 0;
+      let frameH = 0;
+      let frameCount = 0;
+      let encodedCount = 0;
+      let pending = [];
+      const ingest = async (frames) => {
+        if (frames.length === 0) return;
+        if (frameCount === 0) {
+          frameW = frames[0].width;
+          frameH = frames[0].height;
+          this._prepareEncoder(frameW, frameH);
+        }
+        frameCount += frames.length;
+        pending.push(...frames);
+        while (pending.length >= BATCH_SIZE) {
+          await emitBatch(pending.splice(0, BATCH_SIZE), encodedCount);
+          encodedCount += BATCH_SIZE;
+        }
+      };
+      for (const sample of samples) {
+        const tFeed0 = performance.now();
+        this._decoder.feed(toAnnexB(sample.nalUnits));
+        const frames = this._decoder.drain();
+        const tDrainEnd = performance.now();
+        decodeMs += tDrainEnd - tFeed0;
+        await ingest(frames);
+        encodeMs += performance.now() - tDrainEnd;
       }
-      const tEncodeEnd = performance.now();
+      const tSegFlush = performance.now();
+      const tail = this._decoder.flush();
+      decodeMs += performance.now() - tSegFlush;
+      const tTail0 = performance.now();
+      await ingest(tail);
+      if (frameCount === 0) return;
+      if (pending.length > 0) {
+        await emitBatch(pending, encodedCount);
+        pending = [];
+      }
+      encodeMs += performance.now() - tTail0;
       const demuxMs = tDemuxEnd - tDemux0;
-      const decodeMs = tDecodeEnd - tDemuxEnd;
-      const encodeMs = tEncodeEnd - tEncode0;
       const segDurTicks = samples.reduce((sum, s) => sum + s.duration, 0);
       const segDurMs = segDurTicks / this._timescale * 1e3;
       this._baseDecodeTime = segmentBaseTime + segDurTicks;
@@ -10813,7 +10823,7 @@ var HevcHls = (() => {
         demuxMs,
         decodeMs,
         encodeMs,
-        frames: frames.length,
+        frames: frameCount,
         segDurMs,
         width: frameW,
         height: frameH
@@ -10824,7 +10834,7 @@ var HevcHls = (() => {
           totalMs,
           segDurMs,
           speedX: segDurMs / totalMs,
-          frames: frames.length,
+          frames: frameCount,
           width: frameW,
           height: frameH
         });
@@ -10849,6 +10859,25 @@ var HevcHls = (() => {
       this._demuxer = null;
       this._initResult = null;
     }
+    /** Create the H.264 encoder, or recreate it when the resolution changed (ABR). */
+    _prepareEncoder(width, height) {
+      if (this._encoder && (width !== this._width || height !== this._height)) {
+        log.info(`Resolution changed ${this._width}x${this._height} \u2192 ${width}x${height}, recreating encoder`);
+        this._encoder.close();
+        this._encoder = null;
+        this._initResult = null;
+      }
+      if (!this._encoder) {
+        this._encoder = new H264Encoder({
+          width,
+          height,
+          fps: this._fps,
+          bitrate: this._config.bitrate
+        });
+        this._width = width;
+        this._height = height;
+      }
+    }
     async _encodeFrames(frames) {
       if (!this._encoder || frames.length === 0) return null;
       const chunks = [];
@@ -10870,6 +10899,20 @@ var HevcHls = (() => {
       return segment;
     }
   };
+  function toAnnexB(nalUnits) {
+    const totalSize = nalUnits.reduce((sum, n) => sum + 4 + n.length, 0);
+    const buf = new Uint8Array(totalSize);
+    let offset = 0;
+    for (const nal of nalUnits) {
+      buf[offset++] = 0;
+      buf[offset++] = 0;
+      buf[offset++] = 0;
+      buf[offset++] = 1;
+      buf.set(nal, offset);
+      offset += nal.length;
+    }
+    return buf;
+  }
   function extractParameterSetsFromInit(data) {
     const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
     const sets = [];
@@ -11854,7 +11897,7 @@ var HevcHls = (() => {
     );
     if (typeof globalThis.ManagedMediaSource !== "undefined") {
       console.warn(
-        "[hevc.js/hls] ManagedMediaSource detected: pass `preferManagedMediaSource: false` to the Hls constructor, or hls.js will bypass the transcoding intercept."
+        "[hevc.js/hls] ManagedMediaSource detected \u2014 hls.js prefers it by default and would bypass the transcoding intercept. Pin classic MSE, guarded so iPhone Safari keeps working:\n  new Hls({ ...(typeof MediaSource !== 'undefined' ? { preferManagedMediaSource: false } : {}) })"
       );
     }
     const { forceTranscode: _forceTranscode, adaptiveCompute, ...mseConfig } = config;

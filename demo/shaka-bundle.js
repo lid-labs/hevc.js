@@ -9518,13 +9518,13 @@ var HevcShaka = (() => {
         const ret = this._api.decode(this._dec, ptr, data.length);
         if (ret !== 0) throw new Error(`Decode failed (code ${ret})`);
         const count = this._api.getFrameCount(this._dec);
-        const frames2 = [];
+        const frames = [];
         for (let i = 0; i < count; i++) {
           const frame = this._extractFrame(i);
-          if (frame) frames2.push(frame);
+          if (frame) frames.push(frame);
         }
         const info = this._extractInfo();
-        return { frames: frames2, info };
+        return { frames, info };
       } finally {
         m._free(ptr);
       }
@@ -9628,12 +9628,12 @@ var HevcShaka = (() => {
         const ret = this._api.drain(this._dec, countPtr);
         if (ret !== 0) return [];
         const count = m.getValue(countPtr, "i32");
-        const frames2 = [];
+        const frames = [];
         for (let i = 0; i < count; i++) {
           const frame = this._extractDrainedFrame(i);
-          if (frame) frames2.push(frame);
+          if (frame) frames.push(frame);
         }
-        return frames2;
+        return frames;
       } finally {
         m._free(countPtr);
       }
@@ -9648,18 +9648,18 @@ var HevcShaka = (() => {
       const m = this._m;
       const countPtr = m._malloc(4);
       try {
-        const frames2 = [];
+        const frames = [];
         const framePtr = m._malloc(48);
         try {
           for (let i = 0; ; i++) {
             const r = this._api.getDrainedFrame(this._dec, i, framePtr);
             if (r !== 0) break;
-            frames2.push(this._readFrameFromPtr(framePtr));
+            frames.push(this._readFrameFromPtr(framePtr));
           }
         } finally {
           m._free(framePtr);
         }
-        return frames2;
+        return frames;
       } finally {
         m._free(countPtr);
       }
@@ -10480,6 +10480,14 @@ var HevcShaka = (() => {
       await this._demuxer.parseInit(data);
       const track = this._demuxer.videoTrack;
       if (track) {
+        if (this._encoder && (track.width !== this._width || track.height !== this._height)) {
+          log.info(
+            `Init segment resolution changed ${this._width}x${this._height} \u2192 ${track.width}x${track.height}, recreating encoder`
+          );
+          this._encoder.close();
+          this._encoder = null;
+          this._initResult = null;
+        }
         this._timescale = track.timescale;
         this._width = track.width;
         this._height = track.height;
@@ -10503,6 +10511,7 @@ var HevcShaka = (() => {
       }
       const paramSets = extractParameterSetsFromInit(data);
       if (paramSets.length > 0) {
+        this._paramSetsFed = false;
         const psSize = paramSets.reduce((s, n) => s + 4 + n.byteLength, 0);
         this._paramSetsBuffer = new Uint8Array(psSize);
         let off = 0;
@@ -10600,34 +10609,41 @@ var HevcShaka = (() => {
       let frameH = 0;
       let decodeMs = 0;
       let encodeMs = 0;
+      const encodeDrained = (frames) => {
+        if (frames.length === 0) return;
+        if (frameCount === 0) {
+          frameW = frames[0].width;
+          frameH = frames[0].height;
+          this._prepareEncoder(frameW, frameH);
+          this._encoder.onChunk = (chunk) => chunks.push(chunk);
+        }
+        for (const frame of frames) {
+          const i = frameCount++;
+          const timestampUs = i < sortedPts.length ? Math.round(sortedPts[i] / this._timescale * 1e6) : Math.round(segmentBaseTime / this._timescale * 1e6) + Math.round(i / this._fps * 1e6);
+          this._encoder.encode(frame, timestampUs, i === 0);
+        }
+      };
       for (const sample of samples) {
         const tFeed0 = performance.now();
         this._decoder.feed(toAnnexB(sample.nalUnits));
-        const frames2 = this._decoder.drain();
+        const frames = this._decoder.drain();
         const tDrainEnd = performance.now();
         decodeMs += tDrainEnd - tFeed0;
-        if (frames2.length > 0) {
-          if (frameCount === 0) {
-            frameW = frames2[0].width;
-            frameH = frames2[0].height;
-            this._prepareEncoder(frameW, frameH);
-            this._encoder.onChunk = (chunk) => chunks.push(chunk);
-          }
-          for (const frame of frames2) {
-            const i = frameCount++;
-            const timestampUs = i < sortedPts.length ? Math.round(sortedPts[i] / this._timescale * 1e6) : Math.round(segmentBaseTime / this._timescale * 1e6) + Math.round(i / this._fps * 1e6);
-            this._encoder.encode(frame, timestampUs, i === 0);
-          }
-        }
+        encodeDrained(frames);
         encodeMs += performance.now() - tDrainEnd;
       }
+      const tSegFlush = performance.now();
+      const tail = this._decoder.flush();
+      decodeMs += performance.now() - tSegFlush;
+      const tTailEncode = performance.now();
+      encodeDrained(tail);
+      encodeMs += performance.now() - tTailEncode;
       if (frameCount === 0) {
         this.lastPerfStats = null;
         return null;
       }
-      const tFlush0 = performance.now();
+      const tTail0 = performance.now();
       await this._encoder.flush();
-      encodeMs += performance.now() - tFlush0;
       if (chunks.length === 0) return null;
       if (!this._initResult) {
         const avcC = this._encoder.codecDescription;
@@ -10642,7 +10658,6 @@ var HevcShaka = (() => {
         const codec = this._audioConfig ? `${this._encoder.codec},mp4a.40.2` : this._encoder.codec;
         this._initResult = { initSegment, codec };
       }
-      const tMux0 = performance.now();
       const sortedDurations = [];
       for (let i = 0; i < sortedPts.length - 1; i++) {
         sortedDurations.push(sortedPts[i + 1] - sortedPts[i]);
@@ -10670,7 +10685,7 @@ var HevcShaka = (() => {
         mediaSegment = this._muxer.muxSegment(muxerSamples, muxBaseTime);
       }
       const demuxMs = tDemuxEnd - tDemux0;
-      encodeMs += performance.now() - tMux0;
+      encodeMs += performance.now() - tTail0;
       const segDurTicks = samples.reduce((sum, s) => sum + s.duration, 0);
       const segDurMs = segDurTicks / this._timescale * 1e3;
       this._baseDecodeTime = segmentBaseTime + segDurTicks;
@@ -10689,7 +10704,7 @@ var HevcShaka = (() => {
           totalMs,
           segDurMs,
           speedX: segDurMs / totalMs,
-          frames: frames.length,
+          frames: frameCount,
           width: frameW,
           height: frameH
         });
@@ -10719,52 +10734,17 @@ var HevcShaka = (() => {
         this._decoder.feed(this._paramSetsBuffer);
         this._paramSetsFed = true;
       }
-      for (const sample of samples) {
-        const totalSize = sample.nalUnits.reduce((sum, n) => sum + 4 + n.length, 0);
-        const nalBuffer = new Uint8Array(totalSize);
-        let offset = 0;
-        for (const nal of sample.nalUnits) {
-          nalBuffer[offset++] = 0;
-          nalBuffer[offset++] = 0;
-          nalBuffer[offset++] = 0;
-          nalBuffer[offset++] = 1;
-          nalBuffer.set(nal, offset);
-          offset += nal.length;
-        }
-        this._decoder.feed(nalBuffer);
-      }
-      const frames2 = this._decoder.drain();
-      const tDecodeEnd = performance.now();
-      if (frames2.length === 0) return;
-      const frameW = frames2[0].width;
-      const frameH = frames2[0].height;
-      if (this._encoder && (frameW !== this._width || frameH !== this._height)) {
-        this._encoder.close();
-        this._encoder = null;
-        this._initResult = null;
-      }
-      if (!this._encoder) {
-        this._encoder = new H264Encoder({
-          width: frameW,
-          height: frameH,
-          fps: this._fps,
-          bitrate: this._config.bitrate
-        });
-        this._width = frameW;
-        this._height = frameH;
-      }
       let initEmitted = false;
-      const tEncode0 = performance.now();
-      for (let batchStart = 0; batchStart < frames2.length; batchStart += BATCH_SIZE) {
-        const batchEnd = Math.min(batchStart + BATCH_SIZE, frames2.length);
+      const emitBatch = async (batch, batchStart) => {
         const batchChunks = [];
         this._encoder.onChunk = (chunk) => batchChunks.push(chunk);
-        for (let i = batchStart; i < batchEnd; i++) {
-          const timestampUs = i < sortedPts.length ? Math.round(sortedPts[i] / this._timescale * 1e6) : Math.round(segmentBaseTime / this._timescale * 1e6) + Math.round(i / this._fps * 1e6);
-          this._encoder.encode(frames2[i], timestampUs, i === 0);
+        for (let i = 0; i < batch.length; i++) {
+          const idx = batchStart + i;
+          const timestampUs = idx < sortedPts.length ? Math.round(sortedPts[idx] / this._timescale * 1e6) : Math.round(segmentBaseTime / this._timescale * 1e6) + Math.round(idx / this._fps * 1e6);
+          this._encoder.encode(batch[i], timestampUs, idx === 0);
         }
         await this._encoder.flush();
-        if (batchChunks.length === 0) continue;
+        if (batchChunks.length === 0) return;
         if (!this._initResult) {
           const avcC = this._encoder.codecDescription;
           if (!avcC) throw new Error("No avcC description from encoder");
@@ -10792,11 +10772,49 @@ var HevcShaka = (() => {
         const mediaSegment = this._muxer.muxSegment(muxerSamples, batchBaseTime);
         await onChunk(mediaSegment, !initEmitted ? this._initResult : null);
         initEmitted = true;
+      };
+      let decodeMs = 0;
+      let encodeMs = 0;
+      let frameW = 0;
+      let frameH = 0;
+      let frameCount = 0;
+      let encodedCount = 0;
+      let pending = [];
+      const ingest = async (frames) => {
+        if (frames.length === 0) return;
+        if (frameCount === 0) {
+          frameW = frames[0].width;
+          frameH = frames[0].height;
+          this._prepareEncoder(frameW, frameH);
+        }
+        frameCount += frames.length;
+        pending.push(...frames);
+        while (pending.length >= BATCH_SIZE) {
+          await emitBatch(pending.splice(0, BATCH_SIZE), encodedCount);
+          encodedCount += BATCH_SIZE;
+        }
+      };
+      for (const sample of samples) {
+        const tFeed0 = performance.now();
+        this._decoder.feed(toAnnexB(sample.nalUnits));
+        const frames = this._decoder.drain();
+        const tDrainEnd = performance.now();
+        decodeMs += tDrainEnd - tFeed0;
+        await ingest(frames);
+        encodeMs += performance.now() - tDrainEnd;
       }
-      const tEncodeEnd = performance.now();
+      const tSegFlush = performance.now();
+      const tail = this._decoder.flush();
+      decodeMs += performance.now() - tSegFlush;
+      const tTail0 = performance.now();
+      await ingest(tail);
+      if (frameCount === 0) return;
+      if (pending.length > 0) {
+        await emitBatch(pending, encodedCount);
+        pending = [];
+      }
+      encodeMs += performance.now() - tTail0;
       const demuxMs = tDemuxEnd - tDemux0;
-      const decodeMs = tDecodeEnd - tDemuxEnd;
-      const encodeMs = tEncodeEnd - tEncode0;
       const segDurTicks = samples.reduce((sum, s) => sum + s.duration, 0);
       const segDurMs = segDurTicks / this._timescale * 1e3;
       this._baseDecodeTime = segmentBaseTime + segDurTicks;
@@ -10804,7 +10822,7 @@ var HevcShaka = (() => {
         demuxMs,
         decodeMs,
         encodeMs,
-        frames: frames2.length,
+        frames: frameCount,
         segDurMs,
         width: frameW,
         height: frameH
@@ -10815,7 +10833,7 @@ var HevcShaka = (() => {
           totalMs,
           segDurMs,
           speedX: segDurMs / totalMs,
-          frames: frames2.length,
+          frames: frameCount,
           width: frameW,
           height: frameH
         });
@@ -10859,13 +10877,13 @@ var HevcShaka = (() => {
         this._height = height;
       }
     }
-    async _encodeFrames(frames2) {
-      if (!this._encoder || frames2.length === 0) return null;
+    async _encodeFrames(frames) {
+      if (!this._encoder || frames.length === 0) return null;
       const chunks = [];
       this._encoder.onChunk = (chunk) => chunks.push(chunk);
-      for (let i = 0; i < frames2.length; i++) {
+      for (let i = 0; i < frames.length; i++) {
         const timestampUs = Math.round(this._baseDecodeTime / this._timescale * 1e6) + Math.round(i / this._fps * 1e6);
-        this._encoder.encode(frames2[i], timestampUs, i === 0);
+        this._encoder.encode(frames[i], timestampUs, i === 0);
       }
       await this._encoder.flush();
       if (chunks.length === 0) return null;
