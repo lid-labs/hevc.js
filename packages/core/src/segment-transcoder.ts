@@ -378,13 +378,11 @@ export class SegmentTranscoder {
 
     // 7. Mux H.264 chunks into fMP4 media segment
     // Durations span the assigned timestamps, not the sample list: a frame
-    // that precedes a suppressed picture holds the screen for that slot too.
-    const durations: number[] = [];
-    for (let i = 0; i < assigned.length; i++) {
-      durations.push(i + 1 < assigned.length
-        ? assigned[i + 1]!.pts - assigned[i]!.pts
-        : assigned[i]!.nominalDuration);
-    }
+    // that precedes a suppressed picture holds the screen for that slot too —
+    // including the last frame, when the suppressed picture ended the segment.
+    const segmentEnd = ptsAssigner.segmentEnd();
+    const durations = assigned.map((ts, i) =>
+      closeDuration(ts, i + 1 < assigned.length ? assigned[i + 1]!.pts : segmentEnd));
 
     const muxerSamples = chunks.map((c, i) => ({
       data: c.data,
@@ -519,12 +517,14 @@ export class SegmentTranscoder {
       const muxerSamples = batchChunks.map((c, i) => {
         // The next frame's timestamp closes this one — including across the
         // batch boundary, which is why a full batch is held back until the
-        // frame after it is decoded. Only the segment's very last frame has
-        // no successor, and falls back to its slot's own duration.
+        // frame after it is decoded. The segment's very last frame has no
+        // successor and runs to the end of the segment instead.
         const timed = batch[i];
-        const successor = i + 1 < batch.length ? batch[i + 1]!.pts : nextPts;
+        const successor = i + 1 < batch.length
+          ? batch[i + 1]!.pts
+          : nextPts ?? ptsAssigner.segmentEnd();
         const duration = timed
-          ? (successor !== undefined ? successor - timed.pts : timed.nominalDuration)
+          ? closeDuration(timed, successor)
           : Math.round(c.duration * this._timescale / 1_000_000);
         return {
           data: c.data,
@@ -775,6 +775,17 @@ function extractParameterSetsFromInit(data: Uint8Array): Uint8Array[] {
   return sets;
 }
 
+/**
+ * How long a frame holds the screen: up to the next frame's timestamp, or, for
+ * the last one of a segment, up to the end of the segment. Both are past the
+ * frame's own slot whenever the slots in between went to suppressed pictures.
+ * Falls back to the slot's nominal duration for a frame extrapolated past the
+ * sample list, where no successor is known.
+ */
+function closeDuration(ts: AssignedTimestamp, successor: number | null | undefined): number {
+  return successor != null && successor > ts.pts ? successor - ts.pts : ts.nominalDuration;
+}
+
 /** A decoded frame paired with the sample timestamp it was assigned. */
 interface TimedFrame {
   frame: HEVCFrame;
@@ -830,6 +841,16 @@ export class DisplayPtsAssigner {
   /** POCs the decoder reported as decoded-but-not-output. */
   noteSuppressed(pocs: number[]): void {
     for (const poc of pocs) this._suppressed.push(poc);
+  }
+
+  /**
+   * One slot past the last sample — where the segment's media time ends. The
+   * last frame holds the screen up to here, which is past its own slot as
+   * soon as the slots after it went to suppressed pictures.
+   */
+  segmentEnd(): number | null {
+    if (this._sortedPts.length === 0) return null;
+    return this._sortedPts[this._sortedPts.length - 1]! + this._fallbackDuration;
   }
 
   /**

@@ -438,6 +438,36 @@ describe("SegmentTranscoder.processMediaSegment decode/encode interleaving", () 
     expect(first.slice(0, 29).every((d) => d === 3600)).toBe(true);
   });
 
+  /**
+   * The segment's last picture being the suppressed one is the same hole at
+   * the far edge: the last frame must hold the screen to the end of the
+   * segment, since the next segment's tfdt starts a full segment later.
+   */
+  it("runs the last frame to the end of the segment when the final picture is suppressed", async () => {
+    const { t, muxed } = setup(10, new Set([9]));
+
+    await t.processMediaSegment(new Uint8Array(8));
+
+    const durations = muxed[0]!.samples.map((s) => s.duration);
+    expect(durations).toHaveLength(9);
+    // Slot 9 has no frame, so the frame in slot 8 covers both
+    expect(durations[8]).toBe(7200);
+    expect(durations.slice(0, 8).every((d) => d === 3600)).toBe(true);
+    // The whole segment is still covered: 8 * 3600 + 7200
+    expect(durations.reduce((a, b) => a + b, 0)).toBe(36000);
+  });
+
+  it("does the same on the streaming path", async () => {
+    const { t, muxed } = setup(10, new Set([9]));
+
+    await t.processMediaSegmentStreaming(new Uint8Array(8), () => {});
+
+    const durations = muxed.flatMap((m) => m.samples.map((s) => s.duration));
+    expect(durations).toHaveLength(9);
+    expect(durations[8]).toBe(7200);
+    expect(durations.reduce((a, b) => a + b, 0)).toBe(36000);
+  });
+
   /** A suppressed first picture moves the segment's base decode time. */
   it("bases the muxed segment on the first frame actually output", async () => {
     const { t, muxed } = setup(10, new Set([0]));
@@ -502,6 +532,11 @@ describe("DisplayPtsAssigner", () => {
     // POC 3 still lands on its own slot: the error stops there
     expect(a.next(3)!.pts).toBe(10800);
     expect(a.next(4)!.pts).toBe(14400);
+  });
+
+  it("reports the end of the segment one slot past the last sample", () => {
+    expect(new DisplayPtsAssigner(pts, 3600).segmentEnd()).toBe(18000);
+    expect(new DisplayPtsAssigner([], 3600).segmentEnd()).toBeNull();
   });
 
   it("uses the fallback duration on the last slot and returns null past it", () => {
