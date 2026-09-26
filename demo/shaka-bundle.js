@@ -31,6 +31,7 @@ var HevcShaka = (() => {
   __export(shaka_entry_exports, {
     HevcTransmuxer: () => HevcTransmuxer,
     recommendedBufferConfig: () => recommendedBufferConfig,
+    recommendedPlayerConfig: () => recommendedPlayerConfig,
     registerHevcTransmuxer: () => registerHevcTransmuxer,
     subscribeSegmentStat: () => subscribeSegmentStat
   });
@@ -11610,7 +11611,7 @@ var HevcShaka = (() => {
     const idx = ladder.findIndex((v) => v.bandwidth === bw);
     return idx >= 0 ? idx : ladder.length - 1;
   }
-  var DEFAULT_SWITCH_INTERVAL = 2;
+  var DEFAULT_SWITCH_INTERVAL = null;
   function makeCapReactive(player, seconds) {
     if (typeof player.configure !== "function") return;
     try {
@@ -11639,6 +11640,15 @@ var HevcShaka = (() => {
         // slower-than-real-time transcoding drains the buffer instead of
         // letting the playback head catch up with it. Shaka's default is 10.
         bufferingGoal: 30
+      }
+    };
+  }
+  function recommendedPlayerConfig() {
+    return {
+      ...recommendedBufferConfig(),
+      abr: {
+        // About one segment for this pipeline.
+        switchInterval: 2
       }
     };
   }

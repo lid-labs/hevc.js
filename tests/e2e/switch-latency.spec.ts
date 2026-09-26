@@ -8,9 +8,9 @@
  * transcoding at 0.35x is tens of seconds spent decoding the resolution the
  * cap already rejected. Measured before the fix: 4.3s and 26.0s on two runs.
  *
- * `attachShakaComputeAware` now shortens the interval, so this checks both
- * halves: that the setting reaches the player, and that a cap change actually
- * shows up on screen promptly.
+ * `recommendedPlayerConfig()` carries a shorter interval, and `demo/shaka.html`
+ * applies it, so this checks both halves: that the setting reaches the player,
+ * and that a cap change actually shows up on screen.
  *
  * Set E2E_SWITCH_INTERVAL to re-measure at another value — 8 reproduces
  * Shaka's default, i.e. the behaviour this issue is about.
@@ -42,8 +42,8 @@ const ABR_PRESET = 'ABR 480p/720p/1080p + audio (30s)';
 // Same rate as compute-cap.spec.ts: enough to put this repo's reference Mac
 // below real time on 1080p, so the cap has a reason to fire.
 const THROTTLE = 6;
-/** Interval the plugin applies on attach; the assertions below expect it. */
-const PLUGIN_SWITCH_INTERVAL = 2;
+/** Interval `recommendedPlayerConfig()` carries; the demo page applies it. */
+const RECOMMENDED_SWITCH_INTERVAL = 2;
 /**
  * The latency is reported, not bounded. Measured against one PR preview, six
  * runs each: 9.3-9.9s at Shaka's default of 8s, 3.3-6.9s at the 2s this plugin
@@ -161,12 +161,14 @@ test.describe('Compute-aware cap — time to reach the screen', () => {
       await test.info().attach('switch-latency.txt', { body: report, contentType: 'text/plain' });
 
       if (OVERRIDE == null || OVERRIDE.trim() === '') {
-        // The plugin shortens the interval on attach — the fix itself, and the
-        // part of this test that does not depend on how the run went.
+        // The page applies recommendedPlayerConfig() — the part of this test
+        // that does not depend on how the run went. The plugin deliberately
+        // does not set this itself: abr.switchInterval governs network-driven
+        // ABR too, so it stays the application's call.
         expect(
           interval,
-          'the plugin did not shorten abr.switchInterval on attach',
-        ).toBe(PLUGIN_SWITCH_INTERVAL);
+          'the page did not apply the recommended abr.switchInterval',
+        ).toBe(RECOMMENDED_SWITCH_INTERVAL);
       }
 
       // The cap has to fire before its latency means anything. On a machine
