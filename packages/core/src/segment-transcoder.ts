@@ -17,7 +17,7 @@ import type { EncodedChunk } from "./h264-encoder.js";
 import { FMP4Muxer } from "./fmp4-muxer.js";
 import type { MuxerAudioConfig } from "./fmp4-muxer.js";
 import { publishSegmentStat } from "./perf-bus.js";
-import type { HEVCFrame } from "./types.js";
+import type { HEVCFrame, SuppressedPicture } from "./types.js";
 import type { DecoderOptions } from "./types.js";
 
 export interface SegmentTranscoderConfig {
@@ -200,6 +200,7 @@ export class SegmentTranscoder {
       chromaHeight: ch,
       bitDepth: 8,
       poc: 0,
+      cvsId: 0,
     };
 
     warmup.onChunk = () => { /* warmup discard */ };
@@ -309,7 +310,7 @@ export class SegmentTranscoder {
       }
       for (const frame of frames) {
         const i = frameCount++;
-        const ts = ptsAssigner.next(frame.poc) ?? this._extrapolate(segmentBaseTime, i);
+        const ts = ptsAssigner.next(frame) ?? this._extrapolate(segmentBaseTime, i);
         assigned.push(ts);
         this._encoder!.encode(
           frame, Math.round((ts.pts / this._timescale) * 1_000_000), i === 0);
@@ -322,7 +323,7 @@ export class SegmentTranscoder {
       // A suppressed picture is never bumped, so this poll is the only place
       // its POC surfaces. Read it before the drain: the frames released here
       // may display after it, and would otherwise take its slot.
-      ptsAssigner.noteSuppressed(this._decoder.takeSuppressedPocs());
+      ptsAssigner.noteSuppressed(this._decoder.takeSuppressedPictures());
       const frames = this._decoder.drain();
       const tDrainEnd = performance.now();
       decodeMs += tDrainEnd - tFeed0;
@@ -560,7 +561,7 @@ export class SegmentTranscoder {
         this._prepareEncoder(frameW, frameH);
       }
       for (const frame of frames) {
-        const ts = ptsAssigner.next(frame.poc)
+        const ts = ptsAssigner.next(frame)
           ?? this._extrapolate(segmentBaseTime, frameCount);
         frameCount++;
         pending.push({ frame, pts: ts.pts, nominalDuration: ts.nominalDuration });
@@ -580,7 +581,7 @@ export class SegmentTranscoder {
       const tFeed0 = performance.now();
       this._decoder.feed(toAnnexB(sample.nalUnits));
       // Read before the drain — see the sequential path
-      ptsAssigner.noteSuppressed(this._decoder.takeSuppressedPocs());
+      ptsAssigner.noteSuppressed(this._decoder.takeSuppressedPictures());
       const frames = this._decoder.drain();
       const tDrainEnd = performance.now();
       decodeMs += tDrainEnd - tFeed0;
@@ -779,6 +780,16 @@ function extractParameterSetsFromInit(data: Uint8Array): Uint8Array[] {
 }
 
 /**
+ * Display order across a whole stream: by coded video sequence first, then by
+ * POC — the order DPB::bump uses. POC alone restarts at every IRAP, so it
+ * would place a picture of a new sequence before the pictures of the previous
+ * one still pending output.
+ */
+function displaysBefore(a: SuppressedPicture, b: SuppressedPicture): boolean {
+  return a.cvsId !== b.cvsId ? a.cvsId < b.cvsId : a.poc < b.poc;
+}
+
+/**
  * How long a frame holds the screen: up to the next frame's timestamp, or, for
  * the last one of a segment, up to the end of the segment. Both are past the
  * frame's own slot whenever the slots in between went to suppressed pictures.
@@ -815,10 +826,12 @@ export interface AssignedTimestamp {
  * but never output: its sample's slot must be skipped, or every later frame
  * of the segment lands one slot early and the muxed base time shifts with it.
  *
- * The decoder reports such pictures by POC, and a suppressed picture that
- * displays before the frame being timed has, in practice, been decoded by the
- * time that frame is bumped: §C.5.2.2 releases a picture once the reorder
- * bound says no smaller POC is still to come.
+ * The decoder reports such pictures by (CVS, POC) — POC restarts at every
+ * IRAP (§8.3.1), so it orders pictures only within one coded video sequence,
+ * and the DPB bumps by the pair. A suppressed picture that displays before
+ * the frame being timed has, in practice, been decoded by the time that frame
+ * is bumped: §C.5.2.2 releases a picture once the reorder bound says nothing
+ * earlier is still to come.
  *
  * That bound counts pictures pending output, and a suppressed picture is not
  * one of them — so a bitstream may still decode one whose POC falls inside a
@@ -830,7 +843,7 @@ export interface AssignedTimestamp {
  */
 export class DisplayPtsAssigner {
   private _next = 0;
-  private readonly _suppressed: number[] = [];
+  private readonly _suppressed: SuppressedPicture[] = [];
 
   /**
    * @param sortedPts the segment's sample PTS, ascending
@@ -841,9 +854,9 @@ export class DisplayPtsAssigner {
     private readonly _fallbackDuration: number,
   ) {}
 
-  /** POCs the decoder reported as decoded-but-not-output. */
-  noteSuppressed(pocs: number[]): void {
-    for (const poc of pocs) this._suppressed.push(poc);
+  /** Pictures the decoder reported as decoded-but-not-output. */
+  noteSuppressed(pictures: SuppressedPicture[]): void {
+    for (const picture of pictures) this._suppressed.push(picture);
   }
 
   /**
@@ -857,12 +870,12 @@ export class DisplayPtsAssigner {
   }
 
   /**
-   * The timestamp for the output frame with this POC, or null once the
-   * segment's samples are exhausted (the caller then extrapolates).
+   * The timestamp for this output frame, or null once the segment's samples
+   * are exhausted (the caller then extrapolates).
    */
-  next(poc: number): AssignedTimestamp | null {
+  next(frame: SuppressedPicture): AssignedTimestamp | null {
     for (let i = this._suppressed.length - 1; i >= 0; i--) {
-      if (this._suppressed[i]! < poc) {
+      if (displaysBefore(this._suppressed[i]!, frame)) {
         this._suppressed.splice(i, 1);
         this._next++;
       }

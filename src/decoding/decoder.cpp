@@ -302,7 +302,7 @@ DecodeStatus Decoder::decode_picture(const std::vector<NalUnit>& nals,
     // produced no frame, and would shift every later frame of the segment
     // onto the wrong timestamp.
     if (!first_sh.pic_output_flag) {
-        suppressed_pocs_.push_back(poc);
+        suppressed_.push_back({pic->cvs_id, poc});
     }
 
     return DecodeStatus::OK;
@@ -322,9 +322,9 @@ std::vector<Picture*> Decoder::flush() {
     return dpb_.flush();
 }
 
-std::vector<int32_t> Decoder::take_suppressed_pocs() {
-    std::vector<int32_t> out;
-    out.swap(suppressed_pocs_);
+std::vector<SuppressedPicture> Decoder::take_suppressed_pictures() {
+    std::vector<SuppressedPicture> out;
+    out.swap(suppressed_);
     return out;
 }
 

@@ -11,9 +11,16 @@ struct HEVCDecoder {
     hevc::Decoder decoder;
     std::vector<hevc::Picture*> output;   // batch mode
     std::vector<hevc::Picture*> drained;  // incremental mode
-    std::vector<int32_t> suppressed_pocs;  // pending PicOutputFlag = 0 POCs
+    std::vector<hevc::SuppressedPicture> suppressed;  // pending PicOutputFlag = 0
     const hevc::SPS* last_sps = nullptr;
 };
+
+// The JS wrapper reads HEVCFrame by hardcoded byte offsets and allocates 48
+// bytes for it (decoder.ts, worker.ts). Under wasm32 that is exactly its size,
+// so a field added here without updating those offsets would corrupt the read.
+#ifdef __EMSCRIPTEN__
+static_assert(sizeof(HEVCFrame) == 48, "HEVCFrame layout changed — update decoder.ts and worker.ts");
+#endif
 
 extern "C" {
 
@@ -75,6 +82,7 @@ int hevc_decoder_get_frame(HEVCDecoder* dec, int index, HEVCFrame* frame) {
     frame->chroma_height = crop_h / sub_h;
     frame->bit_depth = pic->bit_depth_luma;
     frame->poc = pic->poc;
+    frame->cvs_id = pic->cvs_id;
 
     return HEVC_OK;
 }
@@ -131,6 +139,7 @@ int hevc_decoder_get_drained_frame(HEVCDecoder* dec, int index, HEVCFrame* frame
     frame->chroma_height = crop_h / sub_h;
     frame->bit_depth = pic->bit_depth_luma;
     frame->poc = pic->poc;
+    frame->cvs_id = pic->cvs_id;
 
     return HEVC_OK;
 }
@@ -146,26 +155,30 @@ int hevc_decoder_flush(HEVCDecoder* dec) {
     }
 }
 
-int hevc_decoder_get_suppressed_poc_count(HEVCDecoder* dec) {
+int hevc_decoder_get_suppressed_picture_count(HEVCDecoder* dec) {
     if (!dec) return 0;
     // Buffer the list here: the count and the copy are two calls, and
-    // Decoder::take_suppressed_pocs() empties its own list.
-    auto fresh = dec->decoder.take_suppressed_pocs();
-    dec->suppressed_pocs.insert(dec->suppressed_pocs.end(), fresh.begin(), fresh.end());
-    return static_cast<int>(dec->suppressed_pocs.size());
+    // Decoder::take_suppressed_pictures() empties its own list.
+    auto fresh = dec->decoder.take_suppressed_pictures();
+    dec->suppressed.insert(dec->suppressed.end(), fresh.begin(), fresh.end());
+    return static_cast<int>(dec->suppressed.size());
 }
 
-int hevc_decoder_take_suppressed_pocs(HEVCDecoder* dec, int32_t* out, int max) {
+int hevc_decoder_take_suppressed_pictures(HEVCDecoder* dec, int32_t* out, int max) {
     if (!dec || !out || max < 0) return HEVC_ERROR;
 
-    auto fresh = dec->decoder.take_suppressed_pocs();
-    dec->suppressed_pocs.insert(dec->suppressed_pocs.end(), fresh.begin(), fresh.end());
+    auto fresh = dec->decoder.take_suppressed_pictures();
+    dec->suppressed.insert(dec->suppressed.end(), fresh.begin(), fresh.end());
 
-    const int count = static_cast<int>(dec->suppressed_pocs.size());
+    const int count = static_cast<int>(dec->suppressed.size());
     if (max < count) return HEVC_ERROR;
 
-    std::memcpy(out, dec->suppressed_pocs.data(), count * sizeof(int32_t));
-    dec->suppressed_pocs.clear();
+    // Two int32_t per picture: cvs_id then poc, in decode order
+    for (int i = 0; i < count; i++) {
+        out[2 * i]     = dec->suppressed[i].cvs_id;
+        out[2 * i + 1] = dec->suppressed[i].poc;
+    }
+    dec->suppressed.clear();
     return count;
 }
 

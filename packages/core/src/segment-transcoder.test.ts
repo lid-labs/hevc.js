@@ -198,7 +198,7 @@ describe("extractTfdt", () => {
  */
 describe("SegmentTranscoder.processMediaSegment decode/encode interleaving", () => {
   /* eslint-disable @typescript-eslint/no-explicit-any */
-  const makeFrame = (poc: number) => ({
+  const makeFrame = (poc: number, cvsId = 0) => ({
     y: new Uint16Array(4),
     cb: new Uint16Array(1),
     cr: new Uint16Array(1),
@@ -208,6 +208,7 @@ describe("SegmentTranscoder.processMediaSegment decode/encode interleaving", () 
     chromaHeight: 32,
     bitDepth: 8,
     poc,
+    cvsId,
   });
 
   /**
@@ -225,7 +226,7 @@ describe("SegmentTranscoder.processMediaSegment decode/encode interleaving", () 
     /** POCs decoded and waiting to be bumped, in display order. */
     private _queue: number[] = [];
     private _nextPoc = 0;
-    private _suppressedReport: number[] = [];
+    private _suppressedReport: { cvsId: number; poc: number }[] = [];
 
     /** @param suppressed POCs the bitstream marks with PicOutputFlag = 0 */
     constructor(private readonly _suppressed: Set<number> = new Set()) {}
@@ -234,11 +235,11 @@ describe("SegmentTranscoder.processMediaSegment decode/encode interleaving", () 
       this.calls.push("feed");
       const poc = this._nextPoc++;
       // A suppressed picture is decoded but never enters the output queue —
-      // the decoder reports its POC instead.
-      if (this._suppressed.has(poc)) this._suppressedReport.push(poc);
+      // the decoder reports it instead.
+      if (this._suppressed.has(poc)) this._suppressedReport.push({ cvsId: 0, poc });
       else this._queue.push(poc);
     }
-    takeSuppressedPocs() {
+    takeSuppressedPictures() {
       const out = this._suppressedReport;
       this._suppressedReport = [];
       return out;
@@ -481,35 +482,37 @@ describe("SegmentTranscoder.processMediaSegment decode/encode interleaving", () 
 
 describe("DisplayPtsAssigner", () => {
   const pts = [0, 3600, 7200, 10800, 14400];
+  /** A display key in the first coded video sequence. */
+  const k = (poc: number, cvsId = 0) => ({ cvsId, poc });
 
   it("hands out the sample timestamps in order when nothing is suppressed", () => {
     const a = new DisplayPtsAssigner(pts, 3600);
-    expect([0, 1, 2, 3, 4].map((poc) => a.next(poc)!.pts)).toEqual(pts);
+    expect([0, 1, 2, 3, 4].map((poc) => a.next(k(poc))!.pts)).toEqual(pts);
   });
 
   it("consumes the slot of a suppressed picture that displays earlier", () => {
     const a = new DisplayPtsAssigner(pts, 3600);
-    expect(a.next(0)!.pts).toBe(0);
-    a.noteSuppressed([1]);
+    expect(a.next(k(0))!.pts).toBe(0);
+    a.noteSuppressed([k(1)]);
     // POC 1 took slot 1; POC 2 must land on slot 2, not on slot 1
-    expect(a.next(2)!.pts).toBe(7200);
-    expect(a.next(3)!.pts).toBe(10800);
+    expect(a.next(k(2))!.pts).toBe(7200);
+    expect(a.next(k(3))!.pts).toBe(10800);
   });
 
   it("leaves the slot alone for a suppressed picture that displays later", () => {
     const a = new DisplayPtsAssigner(pts, 3600);
     // Decode order can put a higher-POC picture first: it must not consume a
     // slot ahead of the frames that display before it.
-    a.noteSuppressed([4]);
-    expect(a.next(0)!.pts).toBe(0);
-    expect(a.next(1)!.pts).toBe(3600);
+    a.noteSuppressed([k(4)]);
+    expect(a.next(k(0))!.pts).toBe(0);
+    expect(a.next(k(1))!.pts).toBe(3600);
   });
 
   it("stretches the slot duration across a suppressed picture", () => {
     const a = new DisplayPtsAssigner(pts, 3600);
-    a.noteSuppressed([1]);
-    const first = a.next(0)!;
-    const second = a.next(2)!;
+    a.noteSuppressed([k(1)]);
+    const first = a.next(k(0))!;
+    const second = a.next(k(2))!;
     // nominalDuration is the slot's own gap; the caller spans the hole by
     // differencing the assigned timestamps, which is what matters here
     expect(second.pts - first.pts).toBe(7200);
@@ -524,14 +527,32 @@ describe("DisplayPtsAssigner", () => {
    */
   it("does not let a late report shift the frames that follow", () => {
     const a = new DisplayPtsAssigner(pts, 3600);
-    expect(a.next(0)!.pts).toBe(0);
+    expect(a.next(k(0))!.pts).toBe(0);
     // POC 2 is timed before the decoder has seen the suppressed POC 1, so it
     // lands on slot 1 instead of slot 2
-    expect(a.next(2)!.pts).toBe(3600);
-    a.noteSuppressed([1]);
+    expect(a.next(k(2))!.pts).toBe(3600);
+    a.noteSuppressed([k(1)]);
     // POC 3 still lands on its own slot: the error stops there
-    expect(a.next(3)!.pts).toBe(10800);
-    expect(a.next(4)!.pts).toBe(14400);
+    expect(a.next(k(3))!.pts).toBe(10800);
+    expect(a.next(k(4))!.pts).toBe(14400);
+  });
+
+  /**
+   * POC restarts at each IRAP, so a segment spanning two coded video
+   * sequences repeats its POCs. Comparing POC alone would treat a suppressed
+   * picture of the new sequence as displaying before the pictures of the old
+   * one still pending output, and consume a slot that is not its own.
+   */
+  it("orders a suppressed picture by its CVS before its POC", () => {
+    const a = new DisplayPtsAssigner(pts, 3600);
+    expect(a.next(k(0))!.pts).toBe(0);
+    // A new CVS opens and its first picture, POC 0 again, is suppressed
+    a.noteSuppressed([k(0, 1)]);
+    // POC 8 of the previous CVS is still pending: it displays first, so the
+    // suppressed picture must not have eaten its slot
+    expect(a.next(k(8, 0))!.pts).toBe(3600);
+    // Now the new sequence: its suppressed POC 0 took slot 2
+    expect(a.next(k(1, 1))!.pts).toBe(10800);
   });
 
   it("reports the end of the segment one slot past the last sample", () => {
@@ -541,8 +562,8 @@ describe("DisplayPtsAssigner", () => {
 
   it("uses the fallback duration on the last slot and returns null past it", () => {
     const a = new DisplayPtsAssigner([0, 3600], 1234);
-    expect(a.next(0)!.nominalDuration).toBe(3600);
-    expect(a.next(1)!.nominalDuration).toBe(1234);
-    expect(a.next(2)).toBeNull();
+    expect(a.next(k(0))!.nominalDuration).toBe(3600);
+    expect(a.next(k(1))!.nominalDuration).toBe(1234);
+    expect(a.next(k(2))).toBeNull();
   });
 });

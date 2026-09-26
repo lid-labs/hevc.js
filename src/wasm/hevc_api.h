@@ -26,7 +26,10 @@ typedef struct {
     int chroma_width;      // Chroma plane width
     int chroma_height;     // Chroma plane height
     int bit_depth;         // Bit depth (8 or 10)
-    int poc;               // Picture Order Count (display order)
+    int poc;               // Picture Order Count (display order within a CVS)
+    int cvs_id;            // Coded video sequence, incremented at each IDR/BLA.
+                           // POC restarts there, so display order is
+                           // (cvs_id, poc), not poc alone.
 } HEVCFrame;
 
 // Stream info — available after first frame is decoded
@@ -85,15 +88,17 @@ int hevc_decoder_get_drained_frame(HEVCDecoder* dec, int index, HEVCFrame* frame
 // After flush, drain to get the remaining frames.
 int hevc_decoder_flush(HEVCDecoder* dec);
 
-// Number of pictures decoded since the last hevc_decoder_take_suppressed_pocs
-// whose PicOutputFlag was 0 (§C.3.1) — decoded, possibly used as a reference,
-// never output.
-int hevc_decoder_get_suppressed_poc_count(HEVCDecoder* dec);
+// Number of pictures decoded since the last
+// hevc_decoder_take_suppressed_pictures whose PicOutputFlag was 0 (§C.3.1) —
+// decoded, possibly used as a reference, never output.
+int hevc_decoder_get_suppressed_picture_count(HEVCDecoder* dec);
 
-// Copy those POCs, in decode order, into out[0..max-1] and clear the list.
-// Returns the number written, or HEVC_ERROR when out is null or max is
-// smaller than the count — nothing is dropped, so read the count first.
-int hevc_decoder_take_suppressed_pocs(HEVCDecoder* dec, int32_t* out, int max);
+// Copy those pictures as (cvs_id, poc) pairs, in decode order, into
+// out[0..2*max-1], and clear the list. `max` counts pictures, so `out` must
+// hold twice as many int32_t. Returns the number of pictures written, or
+// HEVC_ERROR when out is null or max is smaller than the count — nothing is
+// dropped, so read the count first.
+int hevc_decoder_take_suppressed_pictures(HEVCDecoder* dec, int32_t* out, int max);
 
 #ifdef __cplusplus
 }

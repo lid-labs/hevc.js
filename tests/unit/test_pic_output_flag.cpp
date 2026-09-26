@@ -161,8 +161,14 @@ std::vector<uint8_t> patch_pic_output_flag(const std::vector<uint8_t>& data,
 }
 
 struct DecodeOutcome {
-    std::vector<int32_t> output_pocs;      // in output order
-    std::vector<int32_t> suppressed_pocs;  // as the decoder reported them
+    std::vector<int32_t> output_pocs;                  // in output order
+    std::vector<SuppressedPicture> suppressed;         // as the decoder reported them
+
+    std::vector<int32_t> suppressed_pocs() const {
+        std::vector<int32_t> out;
+        for (const auto& p : suppressed) out.push_back(p.poc);
+        return out;
+    }
 };
 
 // Feed/drain per NAL then flush — the transcoder's path.
@@ -180,7 +186,7 @@ DecodeOutcome decode_incremental(const std::vector<uint8_t>& data) {
                      data.begin() + static_cast<long>(nal.offset + nal.size));
         EXPECT_EQ(dec.feed(chunk.data(), chunk.size()), DecodeStatus::OK);
 
-        for (int32_t poc : dec.take_suppressed_pocs()) outcome.suppressed_pocs.push_back(poc);
+        for (const auto& p : dec.take_suppressed_pictures()) outcome.suppressed.push_back(p);
         for (const Picture* pic : dec.drain()) outcome.output_pocs.push_back(pic->poc);
     }
     for (const Picture* pic : dec.flush()) outcome.output_pocs.push_back(pic->poc);
@@ -207,8 +213,8 @@ TEST(PicOutputFlag, PatchIsNeutralWhenEveryPictureIsOutput) {
     const auto after = decode_incremental(patched);
 
     EXPECT_EQ(after.output_pocs, before.output_pocs);
-    EXPECT_TRUE(after.suppressed_pocs.empty());
-    EXPECT_TRUE(before.suppressed_pocs.empty())
+    EXPECT_TRUE(after.suppressed.empty());
+    EXPECT_TRUE(before.suppressed.empty())
         << "the unpatched fixture has no pic_output_flag to read";
 }
 
@@ -224,8 +230,8 @@ TEST(PicOutputFlag, SuppressedPictureIsNeverOutput) {
     // suppressing its output must not stop it being decoded and referenced.
     const auto after = decode_incremental(patch_pic_output_flag(original, {4}));
 
-    ASSERT_EQ(after.suppressed_pocs.size(), 1u);
-    const int32_t dropped = after.suppressed_pocs[0];
+    ASSERT_EQ(after.suppressed.size(), 1u);
+    const int32_t dropped = after.suppressed[0].poc;
 
     std::vector<int32_t> expected;
     for (int32_t poc : before.output_pocs) {
@@ -247,10 +253,11 @@ TEST(PicOutputFlag, EverySuppressedPocIsReportedOnce) {
     const std::set<int> suppressed = {0, 3, 9};
     const auto after = decode_incremental(patch_pic_output_flag(original, suppressed));
 
-    EXPECT_EQ(after.suppressed_pocs.size(), suppressed.size());
+    EXPECT_EQ(after.suppressed.size(), suppressed.size());
     EXPECT_EQ(after.output_pocs.size() + suppressed.size(), before.output_pocs.size());
 
-    std::set<int32_t> dropped(after.suppressed_pocs.begin(), after.suppressed_pocs.end());
+    const auto pocs = after.suppressed_pocs();
+    std::set<int32_t> dropped(pocs.begin(), pocs.end());
     EXPECT_EQ(dropped.size(), suppressed.size()) << "no POC reported twice";
     for (int32_t poc : after.output_pocs) {
         EXPECT_EQ(dropped.count(poc), 0u) << "POC " << poc << " was both output and suppressed";
@@ -267,8 +274,37 @@ TEST(PicOutputFlag, TakeSuppressedPocsEmptiesTheList) {
     Decoder dec;
     ASSERT_EQ(dec.decode(patched.data(), patched.size()), DecodeStatus::OK);
 
-    EXPECT_EQ(dec.take_suppressed_pocs().size(), 1u);
-    EXPECT_TRUE(dec.take_suppressed_pocs().empty());
+    EXPECT_EQ(dec.take_suppressed_pictures().size(), 1u);
+    EXPECT_TRUE(dec.take_suppressed_pictures().empty());
+}
+
+// POC restarts at each IDR, so a POC alone does not say where a picture sits
+// in display order across a CVS boundary. A caller mapping output frames onto
+// timestamps compares them, and would place a suppressed picture of the new
+// CVS before the pictures of the old one still pending output.
+TEST(PicOutputFlag, SuppressedPictureCarriesItsCvs) {
+    auto original = read_file(kFixture);
+    ASSERT_FALSE(original.empty()) << "cannot read " << kFixture;
+
+    // Two coded video sequences: the fixture starts on an IDR, so playing it
+    // twice in a row is a legal two-CVS bitstream with POCs that repeat.
+    std::vector<uint8_t> twice = original;
+    twice.insert(twice.end(), original.begin(), original.end());
+
+    const auto plain = decode_incremental(twice);
+    const size_t per_cvs = plain.output_pocs.size() / 2;
+    ASSERT_GT(per_cvs, 2u);
+
+    // One picture suppressed in each CVS, at the same position — so the two
+    // carry the same POC and only the CVS tells them apart.
+    const auto after = decode_incremental(
+        patch_pic_output_flag(twice, {2, static_cast<int>(per_cvs) + 2}));
+
+    ASSERT_EQ(after.suppressed.size(), 2u);
+    EXPECT_EQ(after.suppressed[0].poc, after.suppressed[1].poc)
+        << "the fixture should repeat its POCs across the two sequences";
+    EXPECT_EQ(after.suppressed[0].cvs_id + 1, after.suppressed[1].cvs_id)
+        << "the second sequence must report a later CVS";
 }
 
 // The batch path must agree with the incremental one on what a bitstream
@@ -289,7 +325,7 @@ TEST(PicOutputFlag, BatchPathSkipsSuppressedPicturesToo) {
     const auto pics = dec.output_pictures();
     EXPECT_EQ(pics.size(), plain_count - 1);
 
-    const int32_t dropped = dec.take_suppressed_pocs().at(0);
+    const int32_t dropped = dec.take_suppressed_pictures().at(0).poc;
     for (const Picture* pic : pics) {
         EXPECT_NE(pic->poc, dropped);
     }

@@ -86,7 +86,7 @@ if(BUILD_WASM)
         "SHELL:-s STACK_SIZE=4194304"
         "SHELL:-s ASSERTIONS=1"
         "SHELL:-s NO_DISABLE_EXCEPTION_CATCHING=1"
-        "SHELL:-s EXPORTED_FUNCTIONS=[_hevc_decoder_create,_hevc_decoder_destroy,_hevc_decoder_decode,_hevc_decoder_get_frame_count,_hevc_decoder_get_frame,_hevc_decoder_get_info,_hevc_decoder_feed,_hevc_decoder_drain,_hevc_decoder_get_drained_frame,_hevc_decoder_flush,_hevc_decoder_get_suppressed_poc_count,_hevc_decoder_take_suppressed_pocs,_malloc,_free]"
+        "SHELL:-s EXPORTED_FUNCTIONS=[_hevc_decoder_create,_hevc_decoder_destroy,_hevc_decoder_decode,_hevc_decoder_get_frame_count,_hevc_decoder_get_frame,_hevc_decoder_get_info,_hevc_decoder_feed,_hevc_decoder_drain,_hevc_decoder_get_drained_frame,_hevc_decoder_flush,_hevc_decoder_get_suppressed_picture_count,_hevc_decoder_take_suppressed_pictures,_malloc,_free]"
         "SHELL:-s EXPORTED_RUNTIME_METHODS=[ccall,cwrap,getValue,HEAPU8,HEAPU16]"
     )
     # Don't build the native CLI in WASM mode
