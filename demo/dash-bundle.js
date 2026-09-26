@@ -10481,14 +10481,7 @@ var HevcDash = (() => {
       await this._demuxer.parseInit(data);
       const track = this._demuxer.videoTrack;
       if (track) {
-        if (this._encoder && (track.width !== this._width || track.height !== this._height)) {
-          log.info(
-            `Init segment resolution changed ${this._width}x${this._height} \u2192 ${track.width}x${track.height}, recreating encoder`
-          );
-          this._encoder.close();
-          this._encoder = null;
-          this._initResult = null;
-        }
+        this._dropEncoderIfResolutionChanged(track.width, track.height);
         this._timescale = track.timescale;
         this._width = track.width;
         this._height = track.height;
@@ -10511,8 +10504,9 @@ var HevcDash = (() => {
         this._audioConfig = null;
       }
       const paramSets = extractParameterSetsFromInit(data);
+      this._paramSetsFed = false;
+      this._paramSetsBuffer = null;
       if (paramSets.length > 0) {
-        this._paramSetsFed = false;
         const psSize = paramSets.reduce((s, n) => s + 4 + n.byteLength, 0);
         this._paramSetsBuffer = new Uint8Array(psSize);
         let off = 0;
@@ -10537,12 +10531,7 @@ var HevcDash = (() => {
      * will skip the lazy init-generation path on its first call.
      */
     async prepareInit(data) {
-      if (this._encoder) {
-        this._encoder.close();
-        this._encoder = null;
-      }
-      this._paramSetsFed = false;
-      this._initResult = null;
+      this._dropEncoder();
       await this.processInitSegment(data);
       if (this._width === 0 || this._height === 0) {
         throw new Error("prepareInit: missing dimensions in HEVC init segment");
@@ -10859,14 +10848,35 @@ var HevcDash = (() => {
       this._demuxer = null;
       this._initResult = null;
     }
+    /**
+     * Close the encoder, if any.
+     *
+     * `_initResult` goes with it: the H.264 init segment describes the encoder
+     * that produced it, so keeping one without the other is what ships frames
+     * under a descriptor that no longer matches them.
+     */
+    _dropEncoder() {
+      this._encoder?.close();
+      this._encoder = null;
+      this._initResult = null;
+    }
+    /**
+     * Drop the encoder when it no longer matches the resolution about to be
+     * encoded — the single place that decides it.
+     *
+     * Both entry points need this, against different sources: the init
+     * segment's track dimensions (`processInitSegment`) and the decoded frames'
+     * own (`_prepareEncoder`). #258 was exactly the two drifting apart, one
+     * enforcing the rule and the other not, so they share the check.
+     */
+    _dropEncoderIfResolutionChanged(width, height) {
+      if (!this._encoder || width === this._width && height === this._height) return;
+      log.info(`Resolution changed ${this._width}x${this._height} \u2192 ${width}x${height}, recreating encoder`);
+      this._dropEncoder();
+    }
     /** Create the H.264 encoder, or recreate it when the resolution changed (ABR). */
     _prepareEncoder(width, height) {
-      if (this._encoder && (width !== this._width || height !== this._height)) {
-        log.info(`Resolution changed ${this._width}x${this._height} \u2192 ${width}x${height}, recreating encoder`);
-        this._encoder.close();
-        this._encoder = null;
-        this._initResult = null;
-      }
+      this._dropEncoderIfResolutionChanged(width, height);
       if (!this._encoder) {
         this._encoder = new H264Encoder({
           width,

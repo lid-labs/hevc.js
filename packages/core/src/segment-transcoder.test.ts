@@ -7,10 +7,11 @@ import { FMP4Demuxer } from "./fmp4-demuxer.js";
  *
  * Regression for the Shaka ABR adaptation bug: Shaka feeds a fresh HEVC
  * init segment when the variant switches resolution. Without the reset,
- * `_encoder` stayed configured at the previous resolution and
- * `_paramSetsFed` stayed true — `processMediaSegment` would then encode
- * new-dimension frames through the previous-dimension encoder and ship
- * broken H.264 to MSE.
+ * `_encoder` stayed configured at the previous resolution —
+ * `processMediaSegment` would then encode new-dimension frames through the
+ * previous-dimension encoder and ship broken H.264 to MSE. The parameter-set
+ * re-arm now belongs to `processInitSegment`, stubbed out here and covered by
+ * its own suite below.
  *
  * We don't drive a real WASM decode here. We simulate the post-first-
  * segment state by poking the private fields, call prepareInit() with
@@ -27,13 +28,12 @@ describe("SegmentTranscoder.prepareInit re-call", () => {
     (t as any)._height = 720;
   };
 
-  it("closes the previous encoder and clears per-stream flags before re-processing the init", async () => {
+  it("closes the previous encoder before re-processing the init", async () => {
     const t = new SegmentTranscoder();
     stubInternals(t);
 
     const close = vi.fn();
     (t as any)._encoder = { close };
-    (t as any)._paramSetsFed = true;
     (t as any)._initResult = { initSegment: new Uint8Array(), codec: "avc1.42" };
 
     // The rest of prepareInit (warmup encoder, mux) still fails because we
@@ -43,8 +43,23 @@ describe("SegmentTranscoder.prepareInit re-call", () => {
 
     expect(close).toHaveBeenCalledTimes(1);
     expect((t as any)._encoder).toBeNull();
-    expect((t as any)._paramSetsFed).toBe(false);
     expect((t as any)._initResult).toBeNull();
+  });
+
+  it("closes an encoder that still matches the new init's dimensions", async () => {
+    // Unlike processInitSegment's dimension-guarded drop: prepareInit rebuilds
+    // the H.264 init segment from a warmup frame, so the encoder that matched
+    // the previous one is stale whatever its dimensions.
+    const t = new SegmentTranscoder();
+    stubInternals(t);
+
+    const close = vi.fn();
+    (t as any)._encoder = { close };
+
+    await expect(t.prepareInit(new Uint8Array(8))).rejects.toBeDefined();
+
+    expect(close).toHaveBeenCalledTimes(1);
+    expect((t as any)._encoder).toBeNull();
   });
 
   it("is a no-op reset on the very first call (clean instance)", async () => {
@@ -52,13 +67,11 @@ describe("SegmentTranscoder.prepareInit re-call", () => {
     stubInternals(t);
 
     expect((t as any)._encoder).toBeNull();
-    expect((t as any)._paramSetsFed).toBe(false);
     expect((t as any)._initResult).toBeNull();
 
     await expect(t.prepareInit(new Uint8Array(8))).rejects.toBeDefined();
 
     expect((t as any)._encoder).toBeNull();
-    expect((t as any)._paramSetsFed).toBe(false);
     expect((t as any)._initResult).toBeNull();
   });
   /* eslint-enable @typescript-eslint/no-explicit-any */
@@ -147,6 +160,21 @@ describe("SegmentTranscoder.processInitSegment re-call", () => {
 
     expect((t as any)._paramSetsFed).toBe(false);
     expect((t as any)._paramSetsBuffer).not.toBeNull();
+  });
+
+  it("drops the previous stream's parameter sets when the new hvcC carries none", async () => {
+    // Parameter sets may be signalled in band instead, which is spec-legal.
+    // Keeping the previous stream's buffer would leave the decoder one
+    // re-feed away from being handed the wrong SPS.
+    const t = new SegmentTranscoder();
+    (t as any)._paramSetsFed = true;
+    (t as any)._paramSetsBuffer = new Uint8Array([0, 0, 0, 1, 0x40]);
+
+    stubDemuxer(1920, 1080);
+    await t.processInitSegment(new Uint8Array(8)); // no hvcC box
+
+    expect((t as any)._paramSetsFed).toBe(false);
+    expect((t as any)._paramSetsBuffer).toBeNull();
   });
   /* eslint-enable @typescript-eslint/no-explicit-any */
 });

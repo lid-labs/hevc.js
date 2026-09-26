@@ -107,16 +107,7 @@ export class SegmentTranscoder {
       // sees no change, and keeps the encoder configured for the previous
       // resolution. Measured on the ABR demo preset: the player switched to
       // 1080p at t≈2s and the picture stayed 848x480 for the whole stream.
-      // `prepareInit` (Shaka's path) already did this for itself.
-      if (this._encoder && (track.width !== this._width || track.height !== this._height)) {
-        log.info(
-          `Init segment resolution changed ${this._width}x${this._height} → ` +
-          `${track.width}x${track.height}, recreating encoder`,
-        );
-        this._encoder.close();
-        this._encoder = null;
-        this._initResult = null; // force a new H.264 init segment
-      }
+      this._dropEncoderIfResolutionChanged(track.width, track.height);
       this._timescale = track.timescale;
       this._width = track.width;
       this._height = track.height;
@@ -149,11 +140,15 @@ export class SegmentTranscoder {
     // Extract VPS/SPS/PPS from hvcC in the init segment
     // These must be fed to the WASM decoder before any media NALs
     const paramSets = extractParameterSetsFromInit(data);
+    // Whatever the decoder was fed belongs to the stream this init replaces.
+    // Re-armed unconditionally: an hvcC may legitimately carry no parameter
+    // sets (they are also signalled in band), and leaving the previous
+    // stream's flag — or its buffer — in place would make that case inherit
+    // stale parameter sets. Re-feeding identical ones (same init re-appended
+    // on a seek) is harmless.
+    this._paramSetsFed = false;
+    this._paramSetsBuffer = null;
     if (paramSets.length > 0) {
-      // These belong to the stream this init describes, so they have to reach
-      // the decoder before its next media segment. Re-feeding identical sets
-      // (same init re-appended on a seek) is harmless.
-      this._paramSetsFed = false;
       const psSize = paramSets.reduce((s, n) => s + 4 + n.byteLength, 0);
       this._paramSetsBuffer = new Uint8Array(psSize);
       let off = 0;
@@ -180,17 +175,13 @@ export class SegmentTranscoder {
    */
   async prepareInit(data: Uint8Array): Promise<TranscodedInit> {
     // Reset live state so a re-call (e.g. Shaka ABR adaptation reaching us
-    // with a new HEVC init segment) starts clean. Without this, the encoder
-    // configured for the previous resolution keeps running while `_width` is
-    // overwritten by the new init — `processMediaSegment`'s dim-change check
-    // then sees `frameW === _width` and never recreates the encoder, so new
-    // frames are encoded at the previous dims and MSE renders garbage.
-    if (this._encoder) {
-      this._encoder.close();
-      this._encoder = null;
-    }
-    this._paramSetsFed = false;
-    this._initResult = null;
+    // with a new HEVC init segment) starts clean. Unconditional here, unlike
+    // `processInitSegment`'s dimension-guarded drop: this call is about to
+    // rebuild the H.264 init segment from a warmup frame, so the encoder that
+    // matched the previous one has nothing left to do even at equal
+    // dimensions. `processInitSegment`, called just below, re-arms the
+    // parameter sets.
+    this._dropEncoder();
 
     await this.processInitSegment(data);
     if (this._width === 0 || this._height === 0) {
@@ -660,14 +651,37 @@ export class SegmentTranscoder {
     this._initResult = null;
   }
 
+  /**
+   * Close the encoder, if any.
+   *
+   * `_initResult` goes with it: the H.264 init segment describes the encoder
+   * that produced it, so keeping one without the other is what ships frames
+   * under a descriptor that no longer matches them.
+   */
+  private _dropEncoder(): void {
+    this._encoder?.close();
+    this._encoder = null;
+    this._initResult = null;
+  }
+
+  /**
+   * Drop the encoder when it no longer matches the resolution about to be
+   * encoded — the single place that decides it.
+   *
+   * Both entry points need this, against different sources: the init
+   * segment's track dimensions (`processInitSegment`) and the decoded frames'
+   * own (`_prepareEncoder`). #258 was exactly the two drifting apart, one
+   * enforcing the rule and the other not, so they share the check.
+   */
+  private _dropEncoderIfResolutionChanged(width: number, height: number): void {
+    if (!this._encoder || (width === this._width && height === this._height)) return;
+    log.info(`Resolution changed ${this._width}x${this._height} → ${width}x${height}, recreating encoder`);
+    this._dropEncoder();
+  }
+
   /** Create the H.264 encoder, or recreate it when the resolution changed (ABR). */
   private _prepareEncoder(width: number, height: number): void {
-    if (this._encoder && (width !== this._width || height !== this._height)) {
-      log.info(`Resolution changed ${this._width}x${this._height} → ${width}x${height}, recreating encoder`);
-      this._encoder.close();
-      this._encoder = null;
-      this._initResult = null; // force new H.264 init segment
-    }
+    this._dropEncoderIfResolutionChanged(width, height);
     if (!this._encoder) {
       this._encoder = new H264Encoder({
         width,
