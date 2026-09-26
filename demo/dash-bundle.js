@@ -10760,7 +10760,7 @@ var HevcDash = (() => {
         this._paramSetsFed = true;
       }
       let initEmitted = false;
-      const emitBatch = async (batch, batchStart) => {
+      const emitBatch = async (batch, batchStart, nextPts) => {
         const batchChunks = [];
         this._encoder.onChunk = (chunk) => batchChunks.push(chunk);
         for (let i = 0; i < batch.length; i++) {
@@ -10789,7 +10789,8 @@ var HevcDash = (() => {
         const batchBaseTime = batch[0].pts;
         const muxerSamples = batchChunks.map((c, i) => {
           const timed = batch[i];
-          const duration = timed ? i + 1 < batch.length ? batch[i + 1].pts - timed.pts : timed.nominalDuration : Math.round(c.duration * this._timescale / 1e6);
+          const successor = i + 1 < batch.length ? batch[i + 1].pts : nextPts;
+          const duration = timed ? successor !== void 0 ? successor - timed.pts : timed.nominalDuration : Math.round(c.duration * this._timescale / 1e6);
           return {
             data: c.data,
             duration,
@@ -10820,8 +10821,9 @@ var HevcDash = (() => {
           frameCount++;
           pending.push({ frame, pts: ts.pts, nominalDuration: ts.nominalDuration });
         }
-        while (pending.length >= BATCH_SIZE) {
-          await emitBatch(pending.splice(0, BATCH_SIZE), encodedCount);
+        while (pending.length > BATCH_SIZE) {
+          const nextPts = pending[BATCH_SIZE].pts;
+          await emitBatch(pending.splice(0, BATCH_SIZE), encodedCount, nextPts);
           encodedCount += BATCH_SIZE;
         }
       };
