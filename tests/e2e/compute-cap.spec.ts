@@ -247,28 +247,53 @@ test.describe('Compute-aware cap — Shaka path', () => {
           `Re-run with a higher E2E_CPU_THROTTLE.\n${series}`,
       );
 
-      // Transcode fell below real time, so the cap must have come down.
-      expect(
-        samples.some((s) => s.reason === 'lower'),
-        `avg speedX dropped below 1.0 but the cap never lowered:\n${series}`,
-      ).toBe(true);
+      // The decider only ever subtracts, starting from the variant the player
+      // is on, so a player already at the bottom rung has nothing to give up
+      // and correctly reports `hold`. Measured on a GitHub runner, where
+      // network ABR had settled on 480p: ten observations under 1.0x with
+      // `cap: none`, and the cap moved only once Shaka climbed back to 720p.
+      // Requiring a `lower` regardless would fail that run for behaving right.
+      const aboveFloor = (s: Sample) =>
+        s.abr?.activeHeight != null &&
+        s.abr.bottomHeight != null &&
+        s.abr.activeHeight > s.abr.bottomHeight;
+      const hadRoomToLower = slow.some(aboveFloor);
 
       expect(last?.abr, 'shaka player state unreadable').toBeTruthy();
-      expect(
-        last!.abr!.maxHeight,
-        `cap lowered but abr.restrictions.maxHeight is still unset:\n${series}`,
-      ).not.toBeNull();
-      expect(top, 'ladder height never became readable').not.toBeNull();
-      expect(
-        last!.abr!.maxHeight!,
-        `cap lowered but maxHeight ${last!.abr!.maxHeight} does not restrict the ${top}p ladder`,
-      ).toBeLessThan(top!);
+
+      if (!hadRoomToLower) {
+        // Nothing the cap could have done. Say so rather than assert on it.
+        console.log(
+          '[#126] every slow observation had the player at the bottom rung — ' +
+            'no lower variant to cap to, so no cap drop is expected here',
+        );
+      } else {
+        // Transcode fell below real time with a rung to spare: the cap must
+        // have come down.
+        expect(
+          samples.some((s) => s.reason === 'lower'),
+          `avg speedX dropped below 1.0 above the bottom rung but the cap never lowered:\n${series}`,
+        ).toBe(true);
+
+        expect(
+          last!.abr!.maxHeight,
+          `cap lowered but abr.restrictions.maxHeight is still unset:\n${series}`,
+        ).not.toBeNull();
+        expect(top, 'ladder height never became readable').not.toBeNull();
+        expect(
+          last!.abr!.maxHeight!,
+          `cap lowered but maxHeight ${last!.abr!.maxHeight} does not restrict the ${top}p ladder`,
+        ).toBeLessThan(top!);
+      }
 
       // Where the cap leaves playback is the other half of the issue's
       // question, and it has two honest outcomes.
+      // Measure recovery from the first cap drop when there was one, and from
+      // the first slow observation otherwise.
       const firstLower = samples.findIndex((s) => s.reason === 'lower');
+      const firstSlow = samples.findIndex((s) => s.avgSpeedX != null && s.avgSpeedX < 1.0);
       const cleared = samples
-        .slice(firstLower)
+        .slice(firstLower >= 0 ? firstLower : firstSlow)
         .some((s) => s.avgSpeedX != null && s.avgSpeedX >= 1.0);
 
       const before = await getPlaybackState(page);
@@ -293,7 +318,7 @@ test.describe('Compute-aware cap — Shaka path', () => {
               `${before.currentTime.toFixed(2)}s:\n${series}`,
           ).toBeGreaterThan(before.currentTime);
         }
-      } else {
+      } else if (hadRoomToLower) {
         // Transcode never cleared real time, even under the cap. Stalling is
         // then the throughput problem (#232), not a cap that failed — the
         // issue's own "too slow or not low enough" row. What the cap still

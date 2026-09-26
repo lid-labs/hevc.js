@@ -215,6 +215,13 @@ export async function readComputeOverlay(page: Page): Promise<ComputeOverlaySamp
 export interface ShakaAbrState {
   /** Tallest variant the manifest offers, in pixels. */
   topHeight: number | null;
+  /**
+   * Shortest variant the manifest offers, in pixels. The compute-aware decider
+   * only ever subtracts from the ladder, so a player already on this rung has
+   * nothing left to give up — telling that apart from a cap that failed to act
+   * needs the floor, not just the top.
+   */
+  bottomHeight: number | null;
   /** Height of the variant Shaka is currently playing. */
   activeHeight: number | null;
   /** `abr.restrictions.maxHeight`, or null while unrestricted (Infinity). */
@@ -237,6 +244,7 @@ const SHAKA_ABR_STATE_EXPR = `(() => {
   var r = cfg && cfg.abr ? cfg.abr.restrictions : null;
   return {
     topHeight: heights.length ? Math.max.apply(null, heights) : null,
+    bottomHeight: heights.length ? Math.min.apply(null, heights) : null,
     activeHeight: active && active.height != null ? active.height : null,
     maxHeight: r && Number.isFinite(r.maxHeight) ? r.maxHeight : null,
     maxBandwidth: r && Number.isFinite(r.maxBandwidth) ? r.maxBandwidth : null,
