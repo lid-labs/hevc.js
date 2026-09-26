@@ -44,6 +44,12 @@ public:
     // Get decoded pictures — batch mode (legacy, returns ALL pictures ever decoded)
     std::vector<Picture*> output_pictures();
 
+    // POCs of the pictures decoded since the last call whose PicOutputFlag
+    // was 0 (§C.3.1) — decoded, possibly used as reference, never output.
+    // Empties the list. A caller that maps output frames onto per-sample
+    // timestamps needs these to know which samples produced no frame.
+    std::vector<int32_t> take_suppressed_pocs();
+
     // Get DPB (for testing)
     const DPB& dpb() const { return dpb_; }
 
@@ -56,6 +62,10 @@ private:
 
     // Output pictures (accumulated across all decoded pictures)
     std::vector<Picture*> output_pics_;
+
+    // POCs of decoded pictures with PicOutputFlag = 0, drained by
+    // take_suppressed_pocs()
+    std::vector<int32_t> suppressed_pocs_;
 
     // CVS counter — incremented at each IRAP with NoRaslOutputFlag
     int32_t cvs_id_ = 0;

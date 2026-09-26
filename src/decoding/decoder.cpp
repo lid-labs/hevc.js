@@ -294,13 +294,15 @@ DecodeStatus Decoder::decode_picture(const std::vector<NalUnit>& nals,
     // §8.1 step 4: mark current picture as short-term reference
     dpb_.mark_current_as_short_term_ref();
 
-    // §C.5.2.3: mark current picture as "needed for output"
-    // NOTE: this overrides the PicOutputFlag read at allocation time
-    // (decoder.cpp above). Honouring the flag needs the transcoder to stop
-    // assuming one output frame per demuxed sample when assigning timestamps
-    // — see issue #243.
-    if (dpb_.current_pic()) {
-        dpb_.current_pic()->needed_for_output = true;
+    // §C.3.1: the picture is marked "needed for output" iff PicOutputFlag is
+    // 1 — set from the slice header at allocation time above. A picture with
+    // PicOutputFlag = 0 is decoded, and may serve as a reference, but is
+    // never bumped out. Report its POC: a caller that assigns timestamps by
+    // output position has no other way to tell that one demuxed sample
+    // produced no frame, and would shift every later frame of the segment
+    // onto the wrong timestamp.
+    if (!first_sh.pic_output_flag) {
+        suppressed_pocs_.push_back(poc);
     }
 
     return DecodeStatus::OK;
@@ -320,10 +322,19 @@ std::vector<Picture*> Decoder::flush() {
     return dpb_.flush();
 }
 
+std::vector<int32_t> Decoder::take_suppressed_pocs() {
+    std::vector<int32_t> out;
+    out.swap(suppressed_pocs_);
+    return out;
+}
+
 std::vector<Picture*> Decoder::output_pictures() {
-    // Collect all pictures from the DPB, sort by CVS then POC
+    // Collect the pictures the DPB still holds for output, sort by CVS then
+    // POC. Pictures with PicOutputFlag = 0 are skipped, as the incremental
+    // path skips them: the two must agree on what a bitstream outputs.
     std::vector<Picture*> out;
     for (auto& pic : dpb_.pictures()) {
+        if (!pic->needed_for_output) continue;
         out.push_back(pic.get());
     }
     std::sort(out.begin(), out.end(),

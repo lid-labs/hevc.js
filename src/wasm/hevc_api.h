@@ -85,6 +85,16 @@ int hevc_decoder_get_drained_frame(HEVCDecoder* dec, int index, HEVCFrame* frame
 // After flush, drain to get the remaining frames.
 int hevc_decoder_flush(HEVCDecoder* dec);
 
+// Number of pictures decoded since the last hevc_decoder_take_suppressed_pocs
+// whose PicOutputFlag was 0 (§C.3.1) — decoded, possibly used as a reference,
+// never output.
+int hevc_decoder_get_suppressed_poc_count(HEVCDecoder* dec);
+
+// Copy those POCs, in decode order, into out[0..max-1] and clear the list.
+// Returns the number written, or HEVC_ERROR when out is null or max is
+// smaller than the count — nothing is dropped, so read the count first.
+int hevc_decoder_take_suppressed_pocs(HEVCDecoder* dec, int32_t* out, int max);
+
 #ifdef __cplusplus
 }
 #endif

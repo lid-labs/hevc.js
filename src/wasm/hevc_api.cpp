@@ -11,6 +11,7 @@ struct HEVCDecoder {
     hevc::Decoder decoder;
     std::vector<hevc::Picture*> output;   // batch mode
     std::vector<hevc::Picture*> drained;  // incremental mode
+    std::vector<int32_t> suppressed_pocs;  // pending PicOutputFlag = 0 POCs
     const hevc::SPS* last_sps = nullptr;
 };
 
@@ -143,6 +144,29 @@ int hevc_decoder_flush(HEVCDecoder* dec) {
     } catch (...) {
         return HEVC_ERROR;
     }
+}
+
+int hevc_decoder_get_suppressed_poc_count(HEVCDecoder* dec) {
+    if (!dec) return 0;
+    // Buffer the list here: the count and the copy are two calls, and
+    // Decoder::take_suppressed_pocs() empties its own list.
+    auto fresh = dec->decoder.take_suppressed_pocs();
+    dec->suppressed_pocs.insert(dec->suppressed_pocs.end(), fresh.begin(), fresh.end());
+    return static_cast<int>(dec->suppressed_pocs.size());
+}
+
+int hevc_decoder_take_suppressed_pocs(HEVCDecoder* dec, int32_t* out, int max) {
+    if (!dec || !out || max < 0) return HEVC_ERROR;
+
+    auto fresh = dec->decoder.take_suppressed_pocs();
+    dec->suppressed_pocs.insert(dec->suppressed_pocs.end(), fresh.begin(), fresh.end());
+
+    const int count = static_cast<int>(dec->suppressed_pocs.size());
+    if (max < count) return HEVC_ERROR;
+
+    std::memcpy(out, dec->suppressed_pocs.data(), count * sizeof(int32_t));
+    dec->suppressed_pocs.clear();
+    return count;
 }
 
 int hevc_decoder_get_info(HEVCDecoder* dec, HEVCStreamInfo* info) {
