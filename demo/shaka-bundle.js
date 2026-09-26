@@ -10897,6 +10897,7 @@ var HevcShaka = (() => {
      */
     _extrapolate(segmentBaseTime, index) {
       const frameTicks = this._timescale / this._fps;
+      log.warn(`Segment produced output frame ${index} past its sample list; extrapolating its timestamp`);
       return {
         pts: segmentBaseTime + Math.round(index * frameTicks),
         nominalDuration: Math.round(frameTicks)
