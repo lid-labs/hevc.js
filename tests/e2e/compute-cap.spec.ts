@@ -34,10 +34,27 @@ import {
 // to have rungs below the top one.
 const ABR_PRESET = 'ABR 480p/720p/1080p + audio (30s)';
 
-// 6x pushes this repo's reference Mac from ~1.7x down to ~0.37x on 1080p,
-// below the 0.55x of the reported hardware. Override to re-measure elsewhere:
-// E2E_CPU_THROTTLE=10 npx playwright test -g "drops the cap".
-const THROTTLE_RATE = Number(process.env.E2E_CPU_THROTTLE ?? 6);
+const DEFAULT_THROTTLE_RATE = 6;
+
+/**
+ * CPU throttle rate for the throttled case. 6x pushes this repo's reference Mac
+ * from ~1.9x down to ~0.4x on 1080p, below the 0.55x of the reported hardware.
+ * Override to re-measure elsewhere:
+ * E2E_CPU_THROTTLE=10 npx playwright test -g "drops the cap".
+ *
+ * A bad override is rejected rather than coerced: `Number('')` is 0 and
+ * `Number('x')` is NaN, and either would reach CDP as a rate and fail there
+ * with nothing pointing back at the variable.
+ */
+function throttleRate(): number {
+  const raw = process.env.E2E_CPU_THROTTLE;
+  if (raw == null || raw.trim() === '') return DEFAULT_THROTTLE_RATE;
+  const rate = Number(raw);
+  if (!Number.isFinite(rate) || rate < 1) {
+    throw new Error(`E2E_CPU_THROTTLE must be a number >= 1, got ${JSON.stringify(raw)}`);
+  }
+  return rate;
+}
 
 /**
  * One reading of the overlay plus the restrictions actually on the player.
@@ -171,7 +188,9 @@ test.describe('Compute-aware cap — Shaka path', () => {
     expect(errors.filter((e) => e.includes('applyCap failed'))).toEqual([]);
   });
 
-  test(`drops the cap when a ${THROTTLE_RATE}x CPU throttle pushes transcode below real time`, async ({
+  // The rate stays out of the title: a title that changes with the environment
+  // is one that -g patterns and reports cannot rely on. It is logged instead.
+  test('drops the cap when a CPU throttle pushes transcode below real time', async ({
     page,
     browserName,
   }) => {
@@ -179,6 +198,8 @@ test.describe('Compute-aware cap — Shaka path', () => {
     // every decode on the page is slowed by the same factor.
     test.skip(browserName !== 'chromium', 'CPU throttling needs CDP (Chromium only)');
     test.setTimeout(300_000);
+
+    const rate = throttleRate();
 
     // `Emulation.setCPUThrottlingRate` throttles the page's renderer, not its
     // dedicated workers: with the demo's default off-main-thread transcode,
@@ -190,7 +211,7 @@ test.describe('Compute-aware cap — Shaka path', () => {
     await assertStatus(page, /Ready/);
     await enableForceTranscode(page);
 
-    const restoreCpu = await throttleCpu(page, THROTTLE_RATE);
+    const restoreCpu = await throttleCpu(page, rate);
     try {
       await loadPreset(page, ABR_PRESET);
 
@@ -209,7 +230,7 @@ test.describe('Compute-aware cap — Shaka path', () => {
       const last = samples[samples.length - 1];
 
       const series = formatSeries(samples);
-      const report = `throttle=${THROTTLE_RATE}x · ladder top ${top ?? '?'}p\n${series}`;
+      const report = `throttle=${rate}x · ladder top ${top ?? '?'}p\n${series}`;
       await test.info().attach('throttled-overlay-series.txt', {
         body: report,
         contentType: 'text/plain',
@@ -221,7 +242,7 @@ test.describe('Compute-aware cap — Shaka path', () => {
       const slow = samples.filter((s) => s.avgSpeedX != null && s.avgSpeedX < 1.0);
       test.skip(
         slow.length === 0,
-        `a ${THROTTLE_RATE}x throttle did not push this machine below real time ` +
+        `a ${rate}x throttle did not push this machine below real time ` +
           `(no avg speedX < 1.0), so there is nothing for the cap to react to. ` +
           `Re-run with a higher E2E_CPU_THROTTLE.\n${series}`,
       );
