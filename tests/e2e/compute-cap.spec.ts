@@ -25,7 +25,7 @@ import {
   throttleCpu,
   readComputeOverlay,
   readShakaAbrState,
-  getCurrentTime,
+  getPlaybackState,
   type ComputeOverlaySample,
   type ShakaAbrState,
 } from './helpers';
@@ -55,25 +55,34 @@ async function readSample(page: Page): Promise<Sample> {
   return { ...overlay, abr: await readShakaAbrState(page) };
 }
 
+/** What a sample displays, for deduplicating consecutive reads. */
+function sampleKey(s: Sample): string {
+  return `${s.raw}|${JSON.stringify(s.abr)}`;
+}
+
 /**
  * Poll until `done` accepts a sample, or the budget runs out. Samples are
  * deduplicated on what they display, so the series holds one entry per
  * visible change rather than one per poll. Two consecutive segments that
  * read identically collapse into one entry — fine for a reading of how the
  * cap moved, which is what this measures.
+ *
+ * `seedKey` carries the last state of a preceding call, so a series built
+ * from two calls does not repeat a row across the seam.
  */
 async function sampleUntil(
   page: Page,
   done: (s: Sample, all: Sample[]) => boolean,
   budgetMs: number,
+  seedKey = '',
 ): Promise<Sample[]> {
   const samples: Sample[] = [];
   const deadline = Date.now() + budgetMs;
-  let lastKey = '';
+  let lastKey = seedKey;
 
   while (Date.now() < deadline) {
     const sample = await readSample(page);
-    const key = `${sample.raw}|${JSON.stringify(sample.abr)}`;
+    const key = sampleKey(sample);
     if (key !== lastKey) {
       lastKey = key;
       samples.push(sample);
@@ -191,8 +200,9 @@ test.describe('Compute-aware cap — Shaka path', () => {
       // Second half: one step down may not be enough at 0.37x. Keep reading a
       // while longer so the series shows where the cap settled, which is the
       // other half of what #126 asks ("fast enough, and far enough").
+      const lastOfFirstHalf = untilLower[untilLower.length - 1];
       const afterLower = untilLower.some((s) => s.reason === 'lower')
-        ? await sampleUntil(page, () => false, 30_000)
+        ? await sampleUntil(page, () => false, 30_000, sampleKey(lastOfFirstHalf!))
         : [];
       const samples = untilLower.concat(afterLower);
       const top = ladderTop(samples);
@@ -233,15 +243,47 @@ test.describe('Compute-aware cap — Shaka path', () => {
         `cap lowered but maxHeight ${last!.abr!.maxHeight} does not restrict the ${top}p ladder`,
       ).toBeLessThan(top!);
 
-      // A cap that fires but leaves playback frozen has not helped. Any
-      // forward progress counts: the throttled page decodes slowly by design,
-      // so a wall-clock ratio would measure the throttle, not the cap.
-      const before = await getCurrentTime(page);
+      // Where the cap leaves playback is the other half of the issue's
+      // question, and it has two honest outcomes.
+      const firstLower = samples.findIndex((s) => s.reason === 'lower');
+      const cleared = samples
+        .slice(firstLower)
+        .some((s) => s.avgSpeedX != null && s.avgSpeedX >= 1.0);
+
+      const before = await getPlaybackState(page);
       await page.waitForTimeout(5_000);
-      const after = await getCurrentTime(page);
-      expect(after, `playback stalled at ${before.toFixed(2)}s after the cap dropped`).toBeGreaterThan(
-        before,
+      const after = await getPlaybackState(page);
+      const nearEnd =
+        after.ended || (after.duration > 0 && after.duration - after.currentTime < 1);
+      console.log(
+        `[#126] after the cap: transcode ${cleared ? 'cleared' : 'stayed under'} real time · ` +
+          `${before.currentTime.toFixed(2)}s -> ${after.currentTime.toFixed(2)}s` +
+          `${nearEnd ? ' (clip ended)' : ''}`,
       );
+
+      if (cleared) {
+        // The cap did its job, so playback must keep moving. Any forward
+        // progress counts: the page decodes slowly by design here, so a
+        // wall-clock ratio would measure the throttle, not the cap.
+        if (!nearEnd) {
+          expect(
+            after.currentTime,
+            `transcode cleared real time under the cap but playback stalled at ` +
+              `${before.currentTime.toFixed(2)}s:\n${series}`,
+          ).toBeGreaterThan(before.currentTime);
+        }
+      } else {
+        // Transcode never cleared real time, even under the cap. Stalling is
+        // then the throughput problem (#232), not a cap that failed — the
+        // issue's own "too slow or not low enough" row. What the cap still
+        // owes in that case is to have gone all the way down: anything above
+        // the bottom rung is headroom it declined to take.
+        expect(
+          last!.capIndex,
+          `transcode stayed under real time but the cap stopped at ` +
+            `idx ${last!.capIndex} instead of the bottom of the ladder:\n${series}`,
+        ).toBe(0);
+      }
     } finally {
       await restoreCpu();
     }

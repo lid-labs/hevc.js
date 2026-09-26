@@ -247,7 +247,23 @@ export async function readShakaAbrState(page: Page): Promise<ShakaAbrState | nul
   return page.evaluate<ShakaAbrState | null>(SHAKA_ABR_STATE_EXPR);
 }
 
-/** Current playback position, for checking that playback keeps advancing. */
-export async function getCurrentTime(page: Page): Promise<number> {
-  return page.evaluate(() => document.querySelector<HTMLVideoElement>('#player')?.currentTime ?? 0);
+/** Playback position and end state, for checking that playback keeps advancing. */
+export interface PlaybackState {
+  currentTime: number;
+  /** NaN before metadata is known. */
+  duration: number;
+  ended: boolean;
+  paused: boolean;
+}
+
+export async function getPlaybackState(page: Page): Promise<PlaybackState> {
+  return page.evaluate(() => {
+    const v = document.querySelector<HTMLVideoElement>('#player');
+    return {
+      currentTime: v?.currentTime ?? 0,
+      duration: v?.duration ?? NaN,
+      ended: v?.ended ?? false,
+      paused: v?.paused ?? true,
+    };
+  });
 }
