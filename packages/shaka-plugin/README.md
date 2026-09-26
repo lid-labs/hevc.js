@@ -81,14 +81,24 @@ This is a mitigation, not a cure: it buys headroom, it does not make transcoding
 
 Compute-aware ABR narrows `abr.restrictions`, which Shaka honours at its next ABR decision — and `SimpleAbrManager` declines to take one while `abr.switchInterval` has not elapsed. At Shaka's default of 8s, a cap that fired on time can sit unapplied for several segments, and every one of them is transcoded at the resolution the cap already rejected. Measured against one deployment on a device transcoding at ~0.4x, six runs per setting: the variant on screen obeyed the cap after 9.3-9.9s at Shaka's default, against 3.3-6.9s at 2s. What is left at 2s is the rate segments arrive at — ~5s for 2s of media at 0.4x — so lowering it further buys nothing.
 
-`attachComputeAware` therefore shortens `abr.switchInterval` to 2s when it attaches, which is about one segment for this pipeline. It only ever lowers the value: a player already configured to be more reactive keeps its own. Opt out with `switchInterval: null`, or set your own:
+`recommendedPlayerConfig()` therefore carries `abr.switchInterval: 2` — about one segment for this pipeline — alongside the buffer depth:
 
 ```js
-handle.attachComputeAware(player, { switchInterval: 4 });   // seconds
-handle.attachComputeAware(player, { switchInterval: null }); // leave Shaka's value alone
+import { registerHevcTransmuxer, recommendedPlayerConfig } from '@hevcjs/shaka-plugin';
+
+const player = new shaka.Player();
+player.configure(recommendedPlayerConfig());   // before load()
 ```
 
-A shorter interval lets network-driven ABR react faster too. The cap has its own hysteresis (`raiseAfter` defaults to 6 windows against `lowerAfter` 1), so it does not oscillate on the back of this.
+The plugin does not set this behind your back, deliberately: `switchInterval` governs network-driven ABR as well as the cap, so it stays yours. If you would rather the adapter set it, pass the value when attaching — it only ever lowers it, so a player already more reactive keeps its own:
+
+```js
+handle.attachComputeAware(player, { switchInterval: 2 });
+```
+
+Going below 2s buys nothing: ABR decisions ride on segment arrivals, and 2s of media at ~0.4x transcode arrives every ~5s. That ~5s is the floor, and it is set by decode throughput rather than by this setting. The cap has its own hysteresis (`raiseAfter` defaults to 6 windows against `lowerAfter` 1), so a shorter interval does not make it oscillate.
+
+`recommendedBufferConfig()` still exists and still returns buffer settings only; it is deprecated in favour of `recommendedPlayerConfig()`.
 
 `subscribeSegmentStat` reports the per-segment `speedX` if you want to see where a given device actually lands.
 
