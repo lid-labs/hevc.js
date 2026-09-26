@@ -48,6 +48,11 @@ pnpm test:e2e:fast
 # Against a deployed target instead: a PR preview, or the published site
 E2E_BASE_URL=https://<preview>.vercel.app/demo pnpm test:e2e:fast
 pnpm test:e2e:prod
+
+# Compute-aware cap: a CPU throttle stands in for hardware that transcodes
+# below real time. Default 6x; the test skips with the series it measured when
+# that is not enough to drop your machine under 1.0x, so raise it and re-run.
+E2E_CPU_THROTTLE=10 npx playwright test --project=local-chromium -g "drops the cap"
 ```
 
 ## Pull request process
