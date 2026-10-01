@@ -1,5 +1,17 @@
 # @hevcjs/core
 
+## 1.4.6
+
+### Patch Changes
+
+- [#261](https://github.com/lid-labs/hevc.js/pull/261) [`f768c61`](https://github.com/lid-labs/hevc.js/commit/f768c6158c0764ab91b313b43594ad5943340872) Thanks [@privaloops](https://github.com/privaloops)! - Honour `pic_output_flag`: a picture the bitstream marks as not for output is decoded, may serve as a reference, and is no longer emitted. The decoder reports each suppressed picture as `(cvs_id, poc)`, and the segment transcoder uses it to skip that sample's timestamp instead of shifting every later frame of the segment onto the wrong one. `HEVCFrame` gains `cvsId`, since POC restarts at every IRAP and alone cannot order pictures across one.
+
+- [#262](https://github.com/lid-labs/hevc.js/pull/262) [`1650d55`](https://github.com/lid-labs/hevc.js/commit/1650d557b9e755e3c2f4195fb2d9438237a331e2) Thanks [@privaloops](https://github.com/privaloops)! - Re-create the H.264 encoder when an ABR switch changes the source resolution on the MSE-intercept path (dash.js, hls.js).
+
+  `processInitSegment` overwrote `_width`/`_height` with the new variant's dimensions while the encoder configured for the previous one kept running. The dimension check in `_prepareEncoder` then compared incoming frames against the freshly written dimensions, found no change, and never rebuilt the encoder — so after an up-switch the picture stayed at the lower rendition for the rest of the stream while the player reported the higher one. Measured on the ABR demo preset: switch to 1080p at t≈2s, `videoHeight` still 480 at t=30s. `prepareInit`, the Shaka path, already reset itself, which is why Shaka was unaffected.
+
+  The parameter sets extracted from a new init segment are also re-armed, so the new stream's VPS/SPS/PPS reach the decoder instead of being dropped as already fed.
+
 ## 1.4.5
 
 ### Patch Changes
