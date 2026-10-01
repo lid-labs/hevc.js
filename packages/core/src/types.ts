@@ -16,7 +16,21 @@ export interface HEVCFrame {
   chromaHeight: number;
   /** Bit depth (8 or 10) */
   bitDepth: number;
-  /** Picture Order Count (display order) */
+  /** Picture Order Count — display order within one coded video sequence */
+  poc: number;
+  /**
+   * Coded video sequence, incremented at each IDR/BLA. POC restarts there, so
+   * display order across a whole stream is (cvsId, poc), not poc alone.
+   */
+  cvsId: number;
+}
+
+/**
+ * A picture decoded with PicOutputFlag = 0 (§C.3.1) — decoded, possibly used
+ * as a reference, never output. Ordered the way output pictures are.
+ */
+export interface SuppressedPicture {
+  cvsId: number;
   poc: number;
 }
 

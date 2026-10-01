@@ -153,3 +153,43 @@ local guard at the point of use in `DPB`.
 not that the stream is bad. One such divergence is known and tracked in #249:
 long-term references declared in the SPS are never copied into the slice header,
 so the DPB counts 0 where the parser counted 1.
+
+
+## AD-009 : PicOutputFlag — the decoder reports the skip, the caller re-maps its timestamps
+
+**Context**: §C.3.1 has a picture with `PicOutputFlag = 0` decoded, possibly
+used as a reference, and never output. `segment-transcoder.ts` assigns
+timestamps by output position: the i-th drained frame takes the i-th smallest
+sample PTS. That mapping is only valid while output frames and demuxed samples
+stand 1:1, so honouring the flag breaks it — which is why the flag was
+overridden rather than honoured (#243, reverted out of #240).
+
+Nothing else tells the caller a sample produced no frame. Frames carry their
+POC, but a POC missing from the output is indistinguishable from one the DPB
+has not bumped yet.
+
+**Decision**: The decoder reports each suppressed picture as `(cvs_id, poc)`
+(`hevc_decoder_take_suppressed_pictures`), and the caller consumes the
+matching timestamp slot itself (`DisplayPtsAssigner`).
+
+**Rationale**:
+- The decoder is the only component that knows a picture was suppressed; the
+  timestamps are the caller's, from the container, and the decoder knows
+  nothing of them
+- Reporting the pictures rather than a count keeps the mapping usable on
+  B-frame streams: a suppressed picture that displays *after* the frame being
+  timed must not consume a slot ahead of it
+- The pair, not the POC alone: POC restarts at every IRAP (§8.3.1), so across
+  a CVS boundary it would place a picture of the new sequence before the
+  pictures of the previous one still pending output. `DPB::bump` orders by the
+  same pair, and `HEVCFrame` now carries `cvs_id` so the caller can too
+- The alternative — having the decoder emit a placeholder frame — would put a
+  picture that must not be displayed back on the encode path
+
+**Consequence**: The report is only correct because bumping releases a picture
+once no smaller POC can still arrive: every suppressed picture that displays
+earlier has been decoded by then, so its slot can be consumed on the spot.
+Callers that assign timestamps positionally must poll
+`takeSuppressedPictures()` after every `feed()`; one that ignores it keeps the
+pre-fix behaviour, off by one slot per suppressed picture — and leaves the
+decoder's list growing, since reading it is what empties it.

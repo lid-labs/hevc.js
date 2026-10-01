@@ -77,6 +77,29 @@ This is a mitigation, not a cure: it buys headroom, it does not make transcoding
 - **Use the Worker** (`workerUrl`), which keeps decoding off the main thread.
 - **Leave compute-aware ABR on** (the default), so the variant ceiling drops when the device cannot keep up.
 
+### How fast the cap reaches the screen
+
+Compute-aware ABR narrows `abr.restrictions`, which Shaka honours at its next ABR decision — and `SimpleAbrManager` declines to take one while `abr.switchInterval` has not elapsed. At Shaka's default of 8s, a cap that fired on time can sit unapplied for several segments, and every one of them is transcoded at the resolution the cap already rejected. Measured against one deployment on a device transcoding at ~0.4x, six runs per setting: the variant on screen obeyed the cap after 9.3-9.9s at Shaka's default, against 3.3-6.9s at 2s. What is left at 2s is the rate segments arrive at — ~5s for 2s of media at 0.4x — so lowering it further buys nothing.
+
+`recommendedPlayerConfig()` therefore carries `abr.switchInterval: 2` — about one segment for this pipeline — alongside the buffer depth:
+
+```js
+import { registerHevcTransmuxer, recommendedPlayerConfig } from '@hevcjs/shaka-plugin';
+
+const player = new shaka.Player();
+player.configure(recommendedPlayerConfig());   // before load()
+```
+
+The plugin does not set this behind your back, deliberately: `switchInterval` governs network-driven ABR as well as the cap, so it stays yours. If you would rather the adapter set it, pass the value when attaching — it only ever lowers it, so a player already more reactive keeps its own:
+
+```js
+handle.attachComputeAware(player, { switchInterval: 2 });
+```
+
+Going below 2s buys nothing: ABR decisions ride on segment arrivals, and 2s of media at ~0.4x transcode arrives every ~5s. That ~5s is the floor, and it is set by decode throughput rather than by this setting. The cap has its own hysteresis (`raiseAfter` defaults to 6 windows against `lowerAfter` 1), so a shorter interval does not make it oscillate.
+
+`recommendedBufferConfig()` still exists and still returns buffer settings only; it is deprecated in favour of `recommendedPlayerConfig()`.
+
 `subscribeSegmentStat` reports the per-segment `speedX` if you want to see where a given device actually lands.
 
 ## How It Works

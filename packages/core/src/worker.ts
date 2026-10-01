@@ -104,6 +104,7 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
         const ch      = m.getValue(framePtr + 32, "i32");
         const bd      = m.getValue(framePtr + 36, "i32");
         const poc     = m.getValue(framePtr + 40, "i32");
+        const cvsId   = m.getValue(framePtr + 44, "i32");
 
         const y  = copyPlane(m, yPtr, width, height, strideY);
         const cb = copyPlane(m, cbPtr, cw, ch, strideC);
@@ -113,7 +114,7 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
           {
             type: "frame",
             index: i,
-            frame: { y, cb, cr, width, height, chromaWidth: cw, chromaHeight: ch, bitDepth: bd, poc },
+            frame: { y, cb, cr, width, height, chromaWidth: cw, chromaHeight: ch, bitDepth: bd, poc, cvsId },
           },
           [y.buffer, cb.buffer, cr.buffer],
         );

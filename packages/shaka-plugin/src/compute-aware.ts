@@ -40,6 +40,36 @@ interface LadderRank {
 
 export interface ShakaComputeAwareOptions extends ComputeAwareConfig {
   /**
+   * Seconds Shaka may wait before acting on a cap we just changed
+   * (`abr.switchInterval`). Defaults to `null`: the player's own value is left
+   * alone, because this setting governs network-driven ABR too and belongs to
+   * the application, not to a transmuxer. `recommendedPlayerConfig()` carries
+   * the value to apply; pass a number here only if you would rather this
+   * adapter set it.
+   *
+   * Shaka's default is 8, and `abr.restrictions` is a soft constraint applied
+   * at the next ABR decision — which `SimpleAbrManager.suggestStreams_()`
+   * declines to make until `switchInterval` has elapsed. A cap is therefore
+   * correct and unapplied for up to that long. Measured against one deployment
+   * on a device transcoding at ~0.4x, six runs each: the played variant obeyed
+   * a cap after 9.3-9.9s at 8, against 3.3-6.9s at 2. Every segment in between
+   * is transcoded at the resolution the cap already rejected, which is the
+   * moment that can least afford it.
+   *
+   * Lowering this does not make the cap instant: what remains is how fast
+   * segments arrive, ~5s for 2s of media at 0.4x, which is also why 2 is low
+   * enough.
+   *
+   * Measure this against a deployed target. Shaka's ABR decisions come from
+   * NetworkingEngine progress events, and a local server hands over a whole
+   * segment at once — so few events, few decisions, and a latency that says
+   * more about the server than about this setting.
+   *
+   * Only lowered, never raised: a player already more reactive than this keeps
+   * its value.
+   */
+  switchInterval?: number | null;
+  /**
    * Optional sink for telemetry — called on every observation, not just
    * cap changes. Useful for plotting speedX over time in a demo.
    *
@@ -62,17 +92,21 @@ export interface ShakaComputeAwareOptions extends ComputeAwareConfig {
  * `player.load()`: variants are looked up lazily as segments arrive.
  *
  * @returns cleanup function — unsubscribes the perf-bus listener.
- *   Does NOT clear any restriction already applied to the player. If you
- *   want to restore an unbounded ABR, call
+ *   Does NOT undo what was applied to the player. If you want to restore an
+ *   unbounded ABR, call
  *   `player.configure({ abr: { restrictions: { maxHeight: Infinity, maxBandwidth: Infinity }}})`
- *   after detaching.
+ *   after detaching. A `switchInterval` passed to this function is likewise
+ *   left in place, so read `player.getConfiguration().abr.switchInterval`
+ *   beforehand if you mean to put it back.
  */
 export function attachShakaComputeAware(
   player: ShakaPlayer,
   options: ShakaComputeAwareOptions = {},
 ): () => void {
-  const { onObservation, ...deciderConfig } = options;
+  const { onObservation, switchInterval = DEFAULT_SWITCH_INTERVAL, ...deciderConfig } = options;
   const decider = new ComputeAwareDecider(deciderConfig);
+
+  if (switchInterval != null) makeCapReactive(player, switchInterval);
 
   const unsubscribe = subscribeSegmentStat((stat: SegmentPerfStat) => {
     const ladder = readLadder(player);
@@ -155,6 +189,35 @@ function findCurrentIndex(player: ShakaPlayer, ladder: LadderRank[]): number {
   const bw = (active.videoBandwidth ?? active.bandwidth ?? 0) as number;
   const idx = ladder.findIndex((v) => v.bandwidth === bw);
   return idx >= 0 ? idx : ladder.length - 1;
+}
+
+/**
+ * Not applied unless the caller asks. See the option's documentation: the
+ * recommended value lives in `recommendedPlayerConfig()`, which the application
+ * applies itself.
+ */
+const DEFAULT_SWITCH_INTERVAL = null;
+
+/**
+ * Shorten `abr.switchInterval` so a cap change reaches the screen promptly.
+ * See the option's documentation for the measurements behind the default.
+ */
+function makeCapReactive(player: ShakaPlayer, seconds: number): void {
+  // Same guard as applyCap: a surface without configure() is not an error to
+  // report, it is simply nothing to configure.
+  if (typeof player.configure !== "function") return;
+  try {
+    const current = player.getConfiguration?.()?.abr?.switchInterval;
+    // Never make the player less reactive than the application asked for.
+    if (typeof current === "number" && current <= seconds) return;
+    player.configure({ abr: { switchInterval: seconds } });
+  } catch (err) {
+    // Same reasoning as applyCap: a player in an unexpected state must not
+    // take the whole feedback loop down with it. The cap still works, it just
+    // reaches the screen later.
+    // eslint-disable-next-line no-console
+    console.warn("[hevc.js/shaka] could not shorten abr.switchInterval:", err);
+  }
 }
 
 function applyCap(player: ShakaPlayer, ladder: LadderRank[], capIndex: number): void {

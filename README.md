@@ -276,6 +276,13 @@ int hevc_decoder_drain(HEVCDecoder* dec);
 // Access decoded frames (display order)
 int hevc_decoder_get_frame_count(HEVCDecoder* dec);
 int hevc_decoder_get_frame(HEVCDecoder* dec, int index, HEVCFrame* frame);
+
+// Pictures decoded with PicOutputFlag = 0 (H.265 §C.3.1): decoded, usable as
+// references, never output. Read the count, then copy them out as (cvs_id,
+// poc) pairs — `out` holds 2*max int32_t. The copy clears the list, and fails
+// rather than truncate if `max` is too small.
+int hevc_decoder_get_suppressed_picture_count(HEVCDecoder* dec);
+int hevc_decoder_take_suppressed_pictures(HEVCDecoder* dec, int32_t* out, int max);
 ```
 
 | HEVCFrame field | Type | Description |
@@ -284,7 +291,8 @@ int hevc_decoder_get_frame(HEVCDecoder* dec, int index, HEVCFrame* frame);
 | `width`, `height` | `int` | Luma dimensions (conformance window applied) |
 | `stride_y`, `stride_c` | `int` | Plane strides in samples |
 | `bit_depth` | `int` | 8 or 10 |
-| `poc` | `int` | Picture Order Count (display order) |
+| `poc` | `int` | Picture Order Count — display order within one CVS |
+| `cvs_id` | `int` | Coded video sequence; POC restarts at each IDR/BLA, so display order is `(cvs_id, poc)` |
 
 ### Build
 
@@ -293,7 +301,7 @@ int hevc_decoder_get_frame(HEVCDecoder* dec, int index, HEVCFrame* frame);
 ```bash
 cmake -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
-cd build && ctest --output-on-failure    # 153 tests
+cd build && ctest --output-on-failure    # 160 tests
 ```
 
 #### WebAssembly
