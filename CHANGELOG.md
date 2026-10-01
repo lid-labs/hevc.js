@@ -7,7 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
-- **The LAN dev server picks a derived port instead of 8443** (`pnpm dev:lan`). `scripts/dev-port.mjs` derives it from the repo, the worktree and the role, in the 20000-29999 range: stable across restarts, distinct per worktree, so two worktrees can serve the demo side by side. The port is printed on startup, and `PORT=9000 pnpm dev:lan` still forces one — now failing if it is taken, rather than silently moving.
+- **The LAN dev server picks a derived port instead of 8443** (`pnpm dev:lan`). `scripts/dev-port.mjs` derives it from the repo, the worktree and the role, in the 20000-29999 range: stable across restarts, distinct per worktree, so two worktrees can serve the demo side by side. The port is printed on startup, and `PORT=9000 pnpm dev:lan` still forces one. An occupied port already failed — `dev-lan-serve.mjs` listens without a fallback — but it now fails *before* the certificate and LAN-address work, with a message naming the port.
   - The script comes from the `/mdma-dev-config` skill and is installed identically in every repo. **Do not edit it here** — a local fix would make it diverge.
   - `pnpm dev` is unaffected: it only runs `tsup --watch` in each package, with no server and no port.
   - The e2e server keeps port 8090 (`tests/e2e/target.ts`): test ports stay fixed so CI is untouched.
