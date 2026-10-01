@@ -108,3 +108,7 @@ manage versioning and publishing.
   release notes) are written in **English** so non-French maintainers
   watching the repo can read them.
 - Inline code comments and commit messages are also in English.
+- Exception: `scripts/dev-port.mjs` is vendored verbatim from the `/mdma-dev-config` skill,
+  which installs the same file in every repo. Its comments are in French and stay that way —
+  translating the copy here would make it diverge from its source, which is the one thing the
+  mechanism exists to prevent. A change belongs upstream, in `lid-labs/mdma`.
