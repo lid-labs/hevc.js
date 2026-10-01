@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- **The LAN dev server picks a derived port instead of 8443** (`pnpm dev:lan`). `scripts/dev-port.mjs` derives it from the repo, the worktree and the role, in the 20000-29999 range: stable across restarts, distinct per worktree, so two worktrees can serve the demo side by side. The port is printed on startup, and `PORT=9000 pnpm dev:lan` still forces one — now failing if it is taken, rather than silently moving.
+  - The script comes from the `/mdma-dev-config` skill and is installed identically in every repo. **Do not edit it here** — a local fix would make it diverge.
+  - `pnpm dev` is unaffected: it only runs `tsup --watch` in each package, with no server and no port.
+  - The e2e server keeps port 8090 (`tests/e2e/target.ts`): test ports stay fixed so CI is untouched.
+  - `.super.engineering/config.json` declares the setup (`pnpm install --frozen-lockfile`) and the `dev` / `dev:lan` entries, so a fresh worktree installs itself.
+
 ### Added
 - **E2E in CI against the PR preview** (`preview.yml`): a job runs the Playwright suite against the deployed preview once it is up, uploading the HTML report. Non-blocking to start with — the suite has never run in CI, so its stability and duration are unmeasured. The preview job now exposes its URL as a job output. Four cases skip on that target: the cross-origin test needs the local server bound to `0.0.0.0`, the three `hls-native` cases need a branded Chrome.
 - **`@hevcjs/shaka-plugin`: `recommendedBufferConfig()`**: buffer settings for HEVC playback through the transmuxer (`bufferingGoal` 30s, against Shaka's default of 10; `rebufferingGoal` is deliberately left alone, since raising it gates playback on buffer depth and turns a stutter into a longer stall). Shaka's `transmux()` hands MSE one segment at a time, so the buffered range grows in jumps; where transcoding runs near real time the playback head rides its edge and stutters. Applied by `demo/shaka.html`, documented under "Performance & tuning" in the plugin README.
