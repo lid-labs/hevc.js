@@ -1,0 +1,21 @@
+{
+  "setup": [
+    "pnpm install --frozen-lockfile"
+  ],
+  "run": [
+    {
+      "name": "dev",
+      "commands": [
+        "pnpm dev"
+      ],
+      "default": true
+    },
+    {
+      "name": "dev:lan",
+      "commands": [
+        "pnpm dev:lan"
+      ],
+      "default": false
+    }
+  ]
+}

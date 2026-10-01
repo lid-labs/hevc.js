@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Serve the hevc.js demo over HTTPS on the local network.
-# Usage: pnpm dev:lan        (default port 8443)
-#        PORT=9000 pnpm dev:lan
+# Usage: pnpm dev:lan        (port derived from the repo and worktree by scripts/dev-port.mjs,
+#                            printed on startup — stable across restarts)
+#        PORT=9000 pnpm dev:lan   (forces a port; fails if it is taken)
 #
 # Browser on the test PC will show a "Not secure" warning since the local
 # CA isn't trusted there — click "Advanced → Continue" once. WebCodecs
@@ -13,6 +14,8 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 CERT_DIR="$SCRIPT_DIR/.certs"
 CERT="$CERT_DIR/lan.pem"
 KEY="$CERT_DIR/lan-key.pem"
+# dev-port.mjs sets PORT. The 8443 fallback only applies when this script is run directly,
+# bypassing `pnpm dev:lan`.
 PORT="${PORT:-8443}"
 
 # --- Preflight -------------------------------------------------------------
