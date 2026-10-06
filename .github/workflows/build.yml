@@ -41,8 +41,14 @@ jobs:
         with:
           version: 6.0.8
 
+      # CMAKE_BUILD_TYPE matters to the comparison below: scripts/build-wasm.sh,
+      # which produces the committed binary, configures Release. CMakeLists.txt
+      # sets no default, and its WASM branch treats an empty type like Release
+      # (only Debug takes -O0), so both happen to yield the same bytes today —
+      # measured, not assumed. Passing it explicitly means the check compares
+      # like with like instead of relying on that coincidence.
       - name: Configure
-        run: emcmake cmake -B build-wasm -DBUILD_WASM=ON -DBUILD_TESTS=OFF
+        run: emcmake cmake -B build-wasm -DBUILD_WASM=ON -DBUILD_TESTS=OFF -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
         run: cmake --build build-wasm --parallel
