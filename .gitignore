@@ -38,9 +38,6 @@ tests/conformance/downloaded/
 demo/worker.js
 demo/*.js.map
 
-# Site (sourcemaps only)
-site/wasm/*.map
-
 # Playwright
 test-results/
 playwright-report/
