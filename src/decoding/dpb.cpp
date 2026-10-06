@@ -26,8 +26,8 @@ int32_t DPB::derive_poc(const SliceHeader& sh, const SPS& sps,
                nal_type == NalUnitType::BLA_N_LP) {
         NoRaslOutputFlag = true;
     } else if (isIRAP && cvs_start_pending_) {
-        // §8.1: the first IRAP to open decoding, or the first after an
-        // end-of-sequence NAL. Nothing before it was decoded either way.
+        // §8.1: the first IRAP to open decoding — nothing before it was decoded,
+        // so its RASL pictures have no references.
         NoRaslOutputFlag = true;
     }
 
@@ -77,8 +77,6 @@ int32_t DPB::derive_poc(const SliceHeader& sh, const SPS& sps,
         prev_poc_lsb_ = 0;
         prev_poc_msb_ = 0;
     }
-
-    first_picture_ = false;
 
     HEVC_LOG(PARSE, "POC derived: %d (lsb=%d, msb=%d)",
              PicOrderCntVal, sh.slice_pic_order_cnt_lsb, PicOrderCntMsb);
