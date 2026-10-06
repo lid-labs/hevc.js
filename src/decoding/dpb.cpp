@@ -94,13 +94,13 @@ void DPB::derive_rps(const SliceHeader& sh, const SPS& sps,
     bool isIRAP = is_irap(nal_type);
     bool isIDR = (nal_type == NalUnitType::IDR_W_RADL || nal_type == NalUnitType::IDR_N_LP);
 
-    // §8.3.2: IRAP with NoRaslOutputFlag → mark all as unused
-    bool NoRaslOutputFlag = (nal_type == NalUnitType::IDR_W_RADL ||
-                              nal_type == NalUnitType::IDR_N_LP ||
-                              nal_type == NalUnitType::BLA_W_LP ||
-                              nal_type == NalUnitType::BLA_W_RADL ||
-                              nal_type == NalUnitType::BLA_N_LP);
-    if (isIRAP && NoRaslOutputFlag) {
+    // §8.3.2: IRAP with NoRaslOutputFlag → mark all as unused. derive_poc ran
+    // first and stored the value for this very picture, so read it rather than
+    // deriving it a second time: this copy used to omit the opening-IRAP case,
+    // which was harmless only while such an IRAP was always the first picture
+    // and the DPB therefore empty. A stream that opens before its IRAP reaches
+    // it with those earlier pictures marked as references.
+    if (isIRAP && no_rasl_output_flag_) {
         for (auto& pic : pictures_) {
             if (pic.get() != current_pic_) {
                 pic->used_for_short_term_ref = false;
