@@ -18,16 +18,22 @@ int32_t DPB::derive_poc(const SliceHeader& sh, const SPS& sps,
 
     // §8.3.1: IRAP with NoRaslOutputFlag = 1 → reset
     bool isIRAP = is_irap(nal_type);
-    // Simplified NoRaslOutputFlag: true for IDR, BLA, first picture
+    // NoRaslOutputFlag: IDR, BLA, or the IRAP that opens decoding (§8.1)
     bool NoRaslOutputFlag = false;
     if (nal_type == NalUnitType::IDR_W_RADL || nal_type == NalUnitType::IDR_N_LP) {
         NoRaslOutputFlag = true;
     } else if (nal_type == NalUnitType::BLA_W_LP || nal_type == NalUnitType::BLA_W_RADL ||
                nal_type == NalUnitType::BLA_N_LP) {
         NoRaslOutputFlag = true;
-    } else if (isIRAP && first_picture_) {
-        NoRaslOutputFlag = true;  // §8.1: first picture in bitstream
+    } else if (isIRAP && cvs_start_pending_) {
+        // §8.1: the first IRAP to open decoding, or the first after an
+        // end-of-sequence NAL. Nothing before it was decoded either way.
+        NoRaslOutputFlag = true;
     }
+
+    // Consumed by the IRAP that opens the sequence, so the IRAPs that follow
+    // inside it are judged on their own type.
+    if (isIRAP) cvs_start_pending_ = false;
 
     // Keep it for the RASL pictures that follow this IRAP: §8.1 clears their
     // PicOutputFlag when it is 1, and they are decoded after this call returns.

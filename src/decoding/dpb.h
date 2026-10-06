@@ -140,6 +140,19 @@ private:
     // the first IRAP.
     bool no_rasl_output_flag_ = true;
 
+    // No IRAP has opened a coded video sequence yet, so the next one does.
+    // §8.1 names three cases where an IRAP takes NoRaslOutputFlag = 1; this
+    // covers the first IRAP to open decoding. The other two are not reachable
+    // yet: an end-of-sequence NAL never arrives here (#277), and
+    // HandleCraAsBlaFlag has no way into the API at all.
+    //
+    // Distinct from first_picture_, which falls on the first picture of any
+    // kind and stays down: a decoder handed a segment that opens before its
+    // IRAP — what a seek to a non-aligned segment produces — would otherwise
+    // reach that IRAP with the flag already spent, and show a RASL set whose
+    // references were never decoded.
+    bool cvs_start_pending_ = true;
+
     // RPS lists (§8.3.2) — pictures from the DPB
     // "StCurrBefore" = short-term, used by current, POC < current
     std::vector<Picture*> ref_pic_set_st_curr_before_;
