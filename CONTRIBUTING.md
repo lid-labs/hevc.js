@@ -56,6 +56,19 @@ Releases do not depend on you getting this right — `release.yml` rebuilds the 
 before publishing, so npm always receives a decoder built from the tagged sources.
 The committed copy is for readers of the repository.
 
+CI also decodes the conformance fixtures and whichever demo streams are present
+with the decoder built at your merge base and at your head, and reports which
+ones moved — the conformance fixtures and the demo streams, 21 in all. A stream
+missing from the checkout is named in the report rather than silently skipped. A stream
+moving never fails the build — changing the output is what a decoding fix does — though it does fail when the
+comparison could not happen at all, such as no stream decoding at both ends. The
+count is worth reading: a fix aimed at one case should move that case and little else.
+The same comparison runs locally:
+
+```bash
+scripts/decoder-output-diff.sh <base-decoder> <head-decoder> [stream...]
+```
+
 ### Running tests
 
 ```bash

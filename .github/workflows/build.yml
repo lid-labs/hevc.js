@@ -86,3 +86,66 @@ jobs:
           echo "hosts and #254 should be settled by gitignoring the binary instead."
           exit 1
 
+  # The oracle suite proves the decoder matches a stored reference; it does not
+  # prove a change leaves the output alone. A PR that changes decoding and updates
+  # the reference data in the same commit keeps the oracle green while the picture
+  # moves, and the demo streams have no oracle reference at all — a regression
+  # visible only at 1080p or 4K passes today (#257).
+  #
+  # It never goes red because the output moved — that is what a decoding fix
+  # *does*, and a job red on every legitimate correction is trained away within a
+  # month. It reports which streams moved, so the diff is read rather than
+  # dismissed. It does go red when the comparison could not happen at all (no
+  # stream decoded at both ends): a report of zero streams otherwise reads like a
+  # pass, which is the one failure mode a check like this must not have.
+  decoder-output-diff:
+    name: Decoder output diff
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    # Two builds and 42 decodes measured 1m12s on this repository, the 4K stream
+    # included; this only bounds a decoder that loops on one, which would
+    # otherwise hold a runner for the six-hour default.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0  # the base commit has to be reachable
+
+      - name: Build the decoder at this head
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF
+          cmake --build build -j --target hevc-decode
+
+      # A worktree rather than a checkout: the streams decoded must be the ones at
+      # this head — a fixture the PR adds has to be fed to both binaries — while
+      # only the decoder comes from the base.
+      - name: Build the decoder at the merge base
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          MERGE_BASE=$(git merge-base HEAD "$BASE_SHA")
+          echo "Merge base: $MERGE_BASE"
+          git worktree add --detach /tmp/base-decoder "$MERGE_BASE"
+          cmake -S /tmp/base-decoder -B /tmp/base-decoder/build \
+            -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF
+          cmake --build /tmp/base-decoder/build -j --target hevc-decode
+
+      - name: Compare the decoded output
+        run: |
+          # Capture the status instead of letting bash -e abort here: the script
+          # exits 2 when it compared nothing, and that is precisely the run whose
+          # report has to be readable. Aborting would leave the summary, the log
+          # and the notice all empty, with only a red step to explain itself.
+          STATUS=0
+          REPORT=$(scripts/decoder-output-diff.sh \
+            /tmp/base-decoder/build/hevc-decode build/hevc-decode) || STATUS=$?
+          echo "$REPORT" >> "$GITHUB_STEP_SUMMARY"
+          # Stream names come from a glob over the repository, so a PR adding a
+          # file whose name contains a newline could start a log line with "::"
+          # and have the runner read it as a workflow command. Dropping those
+          # lines from the log costs nothing — the summary above keeps them.
+          echo "$REPORT" | grep -v '^::' || true
+          # One line in the Checks tab, so the summary gets opened when it matters
+          HEADLINE=$(echo "$REPORT" | head -1 | sed 's/\*\*//g')
+          echo "::notice title=Decoder output::$HEADLINE"
+          exit "$STATUS"
