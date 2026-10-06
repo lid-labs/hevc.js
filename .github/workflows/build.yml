@@ -86,3 +86,49 @@ jobs:
           echo "hosts and #254 should be settled by gitignoring the binary instead."
           exit 1
 
+  # The oracle suite proves the decoder matches a stored reference; it does not
+  # prove a change leaves the output alone. A PR that changes decoding and updates
+  # the reference data in the same commit keeps the oracle green while the picture
+  # moves, and the demo streams have no oracle reference at all — a regression
+  # visible only at 1080p or 4K passes today (#257).
+  #
+  # Never blocking: changing the output is what a decoding fix *does*, and a job
+  # that goes red on every legitimate correction is trained away within a month.
+  # It reports which streams moved, so the diff is read rather than dismissed.
+  decoder-output-diff:
+    name: Decoder output diff
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0  # the base commit has to be reachable
+
+      - name: Build the decoder at this head
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF
+          cmake --build build -j --target hevc-decode
+
+      # A worktree rather than a checkout: the streams decoded must be the ones at
+      # this head — a fixture the PR adds has to be fed to both binaries — while
+      # only the decoder comes from the base.
+      - name: Build the decoder at the merge base
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          MERGE_BASE=$(git merge-base HEAD "$BASE_SHA")
+          echo "Merge base: $MERGE_BASE"
+          git worktree add --detach /tmp/base-decoder "$MERGE_BASE"
+          cmake -S /tmp/base-decoder -B /tmp/base-decoder/build \
+            -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF
+          cmake --build /tmp/base-decoder/build -j --target hevc-decode
+
+      - name: Compare the decoded output
+        run: |
+          REPORT=$(scripts/decoder-output-diff.sh \
+            /tmp/base-decoder/build/hevc-decode build/hevc-decode)
+          echo "$REPORT" >> "$GITHUB_STEP_SUMMARY"
+          echo "$REPORT"
+          # One line in the Checks tab, so the summary gets opened when it matters
+          HEADLINE=$(echo "$REPORT" | head -1 | sed 's/\*\*//g')
+          echo "::notice title=Decoder output::$HEADLINE"
