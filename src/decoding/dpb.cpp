@@ -29,6 +29,10 @@ int32_t DPB::derive_poc(const SliceHeader& sh, const SPS& sps,
         NoRaslOutputFlag = true;  // §8.1: first picture in bitstream
     }
 
+    // Keep it for the RASL pictures that follow this IRAP: §8.1 clears their
+    // PicOutputFlag when it is 1, and they are decoded after this call returns.
+    if (isIRAP) no_rasl_output_flag_ = NoRaslOutputFlag;
+
     if (isIRAP && NoRaslOutputFlag) {
         // §8.3.1: "PicOrderCntMsb is set equal to 0"
         PicOrderCntMsb = 0;

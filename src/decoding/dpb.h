@@ -117,6 +117,11 @@ public:
     // Current picture being decoded
     Picture* current_pic() const { return current_pic_; }
 
+    // NoRaslOutputFlag of the IRAP currently in effect — the last one in decode
+    // order. §8.1 needs it on every RASL picture that follows, long after the
+    // IRAP itself was decoded, and derive_poc is the one place that derives it.
+    bool no_rasl_output_flag() const { return no_rasl_output_flag_; }
+
 private:
     // DPB storage
     std::vector<std::shared_ptr<Picture>> pictures_;
@@ -126,6 +131,9 @@ private:
     int32_t prev_poc_lsb_ = 0;
     int32_t prev_poc_msb_ = 0;
     bool first_picture_ = true;
+
+    // Carried from the last IRAP decoded, for the RASL pictures that follow it
+    bool no_rasl_output_flag_ = false;
 
     // RPS lists (§8.3.2) — pictures from the DPB
     // "StCurrBefore" = short-term, used by current, POC < current

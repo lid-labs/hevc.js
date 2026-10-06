@@ -82,7 +82,19 @@ DecodeStatus Decoder::decode_picture(const std::vector<NalUnit>& nals,
         static_cast<int>(sps->pic_height_in_luma_samples),
         fmt, sps->BitDepthY, sps->BitDepthC);
     pic->poc = poc;
-    pic->needed_for_output = first_sh.pic_output_flag;
+
+    // §8.1 derives PicOutputFlag from the slice header, then overrides it: a RASL
+    // picture of an IRAP with NoRaslOutputFlag = 1 is set to 0. Such a picture
+    // references pictures preceding its IRAP in decode order, which were never
+    // decoded — it cannot be reconstructed, so it is decoded but never shown.
+    // Derived once: the suppression below reads the same value, and a picture
+    // held back without being reported would shift the timestamps of every later
+    // frame of the segment.
+    bool PicOutputFlag = first_sh.pic_output_flag;
+    if (is_rasl(nal.header.nal_unit_type) && dpb_.no_rasl_output_flag()) {
+        PicOutputFlag = false;
+    }
+    pic->needed_for_output = PicOutputFlag;
 
     // §8.1: IRAP with NoRaslOutputFlag starts a new CVS
     if (is_irap(nal.header.nal_unit_type)) {
@@ -298,13 +310,13 @@ DecodeStatus Decoder::decode_picture(const std::vector<NalUnit>& nals,
     dpb_.mark_current_as_short_term_ref();
 
     // §C.3.1: the picture is marked "needed for output" iff PicOutputFlag is
-    // 1 — set from the slice header at allocation time above. A picture with
+    // 1 — derived at allocation time above. A picture with
     // PicOutputFlag = 0 is decoded, and may serve as a reference, but is
     // never bumped out. Report its POC: a caller that assigns timestamps by
     // output position has no other way to tell that one demuxed sample
     // produced no frame, and would shift every later frame of the segment
     // onto the wrong timestamp.
-    if (!first_sh.pic_output_flag) {
+    if (!PicOutputFlag) {
         suppressed_.push_back({pic->cvs_id, poc});
     }
 
