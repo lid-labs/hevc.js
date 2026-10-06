@@ -1,5 +1,29 @@
 # @hevcjs/core
 
+## 1.4.6
+
+### Patch Changes
+
+- [#261](https://github.com/lid-labs/hevc.js/pull/261) [`f768c61`](https://github.com/lid-labs/hevc.js/commit/f768c6158c0764ab91b313b43594ad5943340872) Thanks [@privaloops](https://github.com/privaloops)! - Honour `pic_output_flag`: a picture the bitstream marks as not for output is decoded, may serve as a reference, and is no longer emitted. The decoder reports each suppressed picture as `(cvs_id, poc)`, and the segment transcoder uses it to skip that sample's timestamp instead of shifting every later frame of the segment onto the wrong one. `HEVCFrame` gains `cvsId`, since POC restarts at every IRAP and alone cannot order pictures across one.
+
+- [#271](https://github.com/lid-labs/hevc.js/pull/271) [`b3e5fd7`](https://github.com/lid-labs/hevc.js/commit/b3e5fd73b0bf9d3dff24140a4a6bc21961f57ab5) Thanks [@privaloops](https://github.com/privaloops)! - Build the reference lists on intra slices too (`decoder.cpp`).
+
+  `construct_ref_pic_lists` was called only for P and B slices, although it handles an I slice by clearing the lists and returning. The lists are read unconditionally right after decoding — each picture's reference POCs are stored for TMVP scaling — so on an IRAP they were read as the previous picture had left them, while that IRAP had just unmarked every reference of the sequence ending and `alloc_picture()` had evicted them. AddressSanitizer reports a heap-use-after-free on the first picture of the second sequence.
+
+  Reachable when inter pictures precede the IRAP of a second sequence — a segment spanning a mid-stream IDR.
+
+- [#262](https://github.com/lid-labs/hevc.js/pull/262) [`1650d55`](https://github.com/lid-labs/hevc.js/commit/1650d557b9e755e3c2f4195fb2d9438237a331e2) Thanks [@privaloops](https://github.com/privaloops)! - Re-create the H.264 encoder when an ABR switch changes the source resolution on the MSE-intercept path (dash.js, hls.js).
+
+  `processInitSegment` overwrote `_width`/`_height` with the new variant's dimensions while the encoder configured for the previous one kept running. The dimension check in `_prepareEncoder` then compared incoming frames against the freshly written dimensions, found no change, and never rebuilt the encoder — so after an up-switch the picture stayed at the lower rendition for the rest of the stream while the player reported the higher one. Measured on the ABR demo preset: switch to 1080p at t≈2s, `videoHeight` still 480 at t=30s. `prepareInit`, the Shaka path, already reset itself, which is why Shaka was unaffected.
+
+  The parameter sets extracted from a new init segment are also re-armed, so the new stream's VPS/SPS/PPS reach the decoder instead of being dropped as already fed.
+
+- [#271](https://github.com/lid-labs/hevc.js/pull/271) [`b3e5fd7`](https://github.com/lid-labs/hevc.js/commit/b3e5fd73b0bf9d3dff24140a4a6bc21961f57ab5) Thanks [@privaloops](https://github.com/privaloops)! - Frame durations around a picture suppressed by `pic_output_flag`.
+
+  - When the suppressed picture was a segment's last, the frame before it kept its own slot's duration and the muxed segment came up a frame short, while the next segment's `tfdt` still starts a full segment later — so the timeline gained a hole at that join. Both transcoder paths now close the last frame on the end of the segment, one slot past the last sample. A frame extrapolated past the sample list has no successor and keeps its nominal duration.
+  - On the streaming path, the last frame of a full batch fell back to its slot's nominal duration because the frame after it was not decoded yet, so a picture suppressed exactly on a batch boundary (slot 30, 60, …) left that frame a slot short. A batch is now held back until one frame past it is available, which costs one frame of latency and keeps the memory bound.
+  - `TranscodePipeline` times frames off its own clock rather than off the sample PTS, so a suppressed picture costs it nothing to re-map — but the list the decoder keeps for callers that do is only emptied by reading it, and this one never read it. It now drains it.
+
 ## 1.4.5
 
 ### Patch Changes
