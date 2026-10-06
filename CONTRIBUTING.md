@@ -33,6 +33,29 @@ pnpm build:wasm
 pnpm -r build
 ```
 
+#### Changing the decoder sources
+
+Two copies of the decoder are committed: `packages/core/wasm/hevc-decode.wasm`,
+which is what a reader consults to know what the shipped decoder contains, and
+`demo/hevc-decode.wasm`, which `pnpm dev:lan` serves as is — it skips the WASM
+build on purpose. If you touch anything under `src/`, regenerate both and commit
+them with your change:
+
+```bash
+pnpm build:wasm && pnpm build:demo:wasm
+```
+
+Updating only the package copy leaves every local demo run on the old decoder.
+
+CI rebuilds the decoder on every PR and compares it against both committed
+copies, so a stale binary is reported rather than noticed months later. The check does not
+fail the build for now: whether a container build and the runner's own Emscripten
+produce identical bytes has yet to be confirmed across hosts.
+
+Releases do not depend on you getting this right — `release.yml` rebuilds the WASM
+before publishing, so npm always receives a decoder built from the tagged sources.
+The committed copy is for readers of the repository.
+
 ### Running tests
 
 ```bash

@@ -41,8 +41,48 @@ jobs:
         with:
           version: 6.0.8
 
+      # CMAKE_BUILD_TYPE matters to the comparison below: scripts/build-wasm.sh,
+      # which produces the committed binary, configures Release. CMakeLists.txt
+      # sets no default, and its WASM branch treats an empty type like Release
+      # (only Debug takes -O0), so both happen to yield the same bytes today —
+      # measured, not assumed. Passing it explicitly means the check compares
+      # like with like instead of relying on that coincidence.
       - name: Configure
-        run: emcmake cmake -B build-wasm -DBUILD_WASM=ON -DBUILD_TESTS=OFF
+        run: emcmake cmake -B build-wasm -DBUILD_WASM=ON -DBUILD_TESTS=OFF -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
         run: cmake --build build-wasm --parallel
+
+      # packages/core/wasm/hevc-decode.wasm is committed, and nothing used to keep
+      # it current: release.yml rebuilds before publishing, but never commits the
+      # result back, so the copy in the repo stayed at whatever a contributor last
+      # happened to commit. It is what a reader consults to answer "what does the
+      # shipped decoder contain", and it answered wrong for months (#254).
+      #
+      # This compares the build just produced against the committed bytes, which
+      # only works if the build is reproducible. Two container builds on the same
+      # machine give identical bytes; whether this runner's native emsdk 6.0.8
+      # agrees with a container on another host is what continue-on-error is here
+      # to find out. Once it has been green across a few PRs, drop that line and
+      # make the check required — until then a red run is information, not a block.
+      - name: Committed WASM matches the sources
+        continue-on-error: true
+        run: |
+          stale=""
+          for copy in packages/core/wasm/hevc-decode.wasm demo/hevc-decode.wasm; do
+            cmp -s build-wasm/hevc-decode.wasm "$copy" || stale="$stale $copy"
+          done
+          if [ -z "$stale" ]; then
+            echo "Both committed decoders match a build of these sources."
+            exit 0
+          fi
+          echo "::warning title=Committed WASM is stale::Stale against a build of the current sources:$stale"
+          echo "Rebuilt: $(wc -c < build-wasm/hevc-decode.wasm) bytes, $(sha256sum build-wasm/hevc-decode.wasm | cut -c1-16)"
+          for copy in $stale; do
+            echo "Stale:   $copy — $(wc -c < "$copy") bytes, $(sha256sum "$copy" | cut -c1-16)"
+          done
+          echo "Run 'pnpm build:wasm && pnpm build:demo:wasm' and commit both copies."
+          echo "If the sources did not change, the build is not reproducible across"
+          echo "hosts and #254 should be settled by gitignoring the binary instead."
+          exit 1
+
