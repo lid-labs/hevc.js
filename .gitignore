@@ -28,6 +28,10 @@ build*/*.wasm
 *.hevc
 # Allow committed test fixtures and site samples
 !tests/conformance/fixtures/*.265
+# The demo streams are committed too: CI decodes them with the decoder built
+# at the merge base and at the head to report what a change moves (#257), and
+# a stream absent from the checkout is a stream that comparison skips.
+!demo/*.265
 !site/samples/*.265
 
 # Conformance bitstreams (generated/downloaded, not committed)

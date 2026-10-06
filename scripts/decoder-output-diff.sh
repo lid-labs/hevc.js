@@ -115,9 +115,8 @@ report_gaps() {
   fi
   if [ -n "$missing" ]; then
     echo
-    echo "Not present, so not compared. \`.gitignore\` excludes \`*.265\` bar the"
-    echo "conformance fixtures, so the heavier demo streams exist locally but"
-    echo "not in a CI checkout:"
+    echo "Not present, so not compared — the comparison covers fewer streams"
+    echo "than it should:"
     as_list "$missing"
   fi
 }
