@@ -102,9 +102,9 @@ jobs:
     name: Decoder output diff
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
-    # Two builds and 42 decodes measure around three minutes; this only bounds a
-    # decoder that loops on a stream, which would otherwise hold a runner for the
-    # six-hour default.
+    # Two builds and 42 decodes measured 1m12s on this repository, the 4K stream
+    # included; this only bounds a decoder that loops on one, which would
+    # otherwise hold a runner for the six-hour default.
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

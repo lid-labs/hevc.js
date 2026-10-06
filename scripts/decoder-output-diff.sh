@@ -33,12 +33,9 @@ PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 if [ "$#" -gt 0 ]; then
   STREAMS=("$@")
 else
-  # The conformance fixtures are all tracked, so a glob names them exactly. The
-  # demo streams are not: .gitignore excludes *.265 and only bbb1080 is forced
-  # in, the others being produced locally. Naming them rather than globbing is
-  # what lets the report say which are missing instead of quietly comparing
-  # fewer streams than it claims — the 4K one is precisely what #257 wanted
-  # covered, and a run that skips it must say so.
+  # Named rather than globbed: a glob can only report what it found, and a
+  # stream missing from the checkout would silently shrink the comparison —
+  # which is how this first ran in CI against 18 streams while claiming 21.
   STREAMS=("$PROJECT_DIR"/tests/conformance/fixtures/*.265)
   for demo in bbb4k_singleslice bbb1080_singleslice bbb720_singleslice full_qcif_10f; do
     STREAMS+=("$PROJECT_DIR/demo/$demo.265")
