@@ -132,8 +132,13 @@ jobs:
 
       - name: Compare the decoded output
         run: |
+          # Capture the status instead of letting bash -e abort here: the script
+          # exits 2 when it compared nothing, and that is precisely the run whose
+          # report has to be readable. Aborting would leave the summary, the log
+          # and the notice all empty, with only a red step to explain itself.
+          STATUS=0
           REPORT=$(scripts/decoder-output-diff.sh \
-            /tmp/base-decoder/build/hevc-decode build/hevc-decode)
+            /tmp/base-decoder/build/hevc-decode build/hevc-decode) || STATUS=$?
           echo "$REPORT" >> "$GITHUB_STEP_SUMMARY"
           # Stream names come from a glob over the repository, so a PR adding a
           # file whose name contains a newline could start a log line with "::"
@@ -143,3 +148,4 @@ jobs:
           # One line in the Checks tab, so the summary gets opened when it matters
           HEADLINE=$(echo "$REPORT" | head -1 | sed 's/\*\*//g')
           echo "::notice title=Decoder output::$HEADLINE"
+          exit "$STATUS"

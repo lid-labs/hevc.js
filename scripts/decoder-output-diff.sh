@@ -27,7 +27,16 @@ PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 if [ "$#" -gt 0 ]; then
   STREAMS=("$@")
 else
-  STREAMS=("$PROJECT_DIR"/tests/conformance/fixtures/*.265 "$PROJECT_DIR"/demo/*.265)
+  # The conformance fixtures are all tracked, so a glob names them exactly. The
+  # demo streams are not: .gitignore excludes *.265 and only bbb1080 is forced
+  # in, the others being produced locally. Naming them rather than globbing is
+  # what lets the report say which are missing instead of quietly comparing
+  # fewer streams than it claims — the 4K one is precisely what #257 wanted
+  # covered, and a run that skips it must say so.
+  STREAMS=("$PROJECT_DIR"/tests/conformance/fixtures/*.265)
+  for demo in bbb4k_singleslice bbb1080_singleslice bbb720_singleslice full_qcif_10f; do
+    STREAMS+=("$PROJECT_DIR/demo/$demo.265")
+  done
 fi
 
 for bin in "$BASE" "$HEAD"; do
@@ -61,11 +70,15 @@ hash_of() { # decoder, stream -> hash, or a word saying why there is none
 moved=0
 same=0
 undecodable=""
+missing=""
 rows=""
 
 for stream in "${STREAMS[@]}"; do
-  [ -e "$stream" ] || continue
   name="${stream#"$PROJECT_DIR"/}"
+  if [ ! -e "$stream" ]; then
+    missing="$missing $name"
+    continue
+  fi
 
   base_hash=$(hash_of "$BASE" "$stream")
   head_hash=$(hash_of "$HEAD" "$stream")
@@ -83,34 +96,49 @@ for stream in "${STREAMS[@]}"; do
   fi
 done
 
+as_list() { echo "$1" | tr ' ' '\n' | sed '/^$/d;s/^/- `/;s/$/`/'; }
+
+report_gaps() {
+  if [ -n "$undecodable" ]; then
+    echo
+    echo "Decoded at neither the base nor this head, so compared by neither:"
+    as_list "$undecodable"
+  fi
+  if [ -n "$missing" ]; then
+    echo
+    echo "Not present, so not compared. \`.gitignore\` excludes \`*.265\` bar the"
+    echo "conformance fixtures, so the heavier demo streams exist locally but"
+    echo "not in a CI checkout:"
+    as_list "$missing"
+  fi
+}
+
+plural() { [ "$1" -eq 1 ] && echo "stream" || echo "streams"; }
+verb()   { [ "$1" -eq 1 ] && echo "decodes" || echo "decode"; }
+
 compared=$((moved + same))
 seen=$((compared + $(set -- $undecodable; echo $#)))
 
 # A report of zero streams reads like a pass. It is the opposite: the globs
 # matched nothing, or every stream failed, and nothing was compared at all.
 if [ "$compared" -eq 0 ]; then
-  echo "**Nothing was compared.** $seen streams were looked at, none decoded at"
+  echo "**Nothing was compared.** $seen $(plural "$seen") looked at, none decoded at"
   echo "both the base and this head — so this run says nothing about the change."
-  [ -n "$undecodable" ] && { echo; echo "Undecodable:$undecodable"; }
+  report_gaps
   exit 2
 fi
 
-report_undecodable() {
-  [ -n "$undecodable" ] || return 0
-  echo
-  echo "Decoded at neither the base nor this head, so compared by neither:"
-  echo "$undecodable" | tr ' ' '\n' | sed '/^$/d;s/^/- `/;s/$/`/'
-}
+
 
 if [ "$moved" -eq 0 ]; then
-  echo "**$compared streams decode identically** at the base and at this head."
+  echo "**$compared $(plural "$compared") $(verb "$compared") identically** at the base and at this head."
   echo
   echo "No stream that already decoded moved."
-  report_undecodable
+  report_gaps
   exit 0
 fi
 
-echo "**$moved of $compared streams decode differently** at this head."
+echo "**$moved of $compared $(plural "$compared") $(verb "$compared") differently** at this head."
 echo
 echo "| Stream | Base | Head |"
 echo "|---|---|---|"
@@ -120,4 +148,4 @@ echo "This is expected when the change fixes decoding — that is what a decodin
 echo "fix does. Worth reading rather than dismissing: a fix aimed at one case"
 echo "should move that case and little else. \`decode-failed\` means the decoder"
 echo "returned non-zero, \`no-output\` that it wrote nothing."
-report_undecodable
+report_gaps
