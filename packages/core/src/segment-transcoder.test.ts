@@ -536,6 +536,29 @@ describe("SegmentTranscoder.processMediaSegment decode/encode interleaving", () 
   });
 
   /**
+   * §8.1 creates a shape the other cases do not cover: the RASL pictures of an
+   * opening CRA are suppressed, and they display *before* it, so the holes sit
+   * at the very start of the segment. The first frame actually output must take
+   * its own slot — the fourth here — and the muxed base time must follow it,
+   * not the segment's first sample. Taking slot 0 instead would place the
+   * segment three frames early on the timeline.
+   */
+  it("starts the segment at the first frame output when the leading slots are suppressed", async () => {
+    const { t, muxed, encoded } = setup(10, new Set([0, 1, 2]));
+
+    await t.processMediaSegment(new Uint8Array(8));
+
+    expect(muxed).toHaveLength(1);
+    expect(muxed[0]!.samples).toHaveLength(7);
+    // Slot 3's PTS, in the 90 kHz timescale the fake samples use
+    expect(muxed[0]!.baseTime).toBe(3 * 3600);
+    expect(encoded[0]!.timestampUs).toBe(Math.round((3 * 3600 / 90000) * 1_000_000));
+    // No frame precedes the holes, so nothing has to span them: every frame
+    // keeps one sample duration.
+    expect(muxed[0]!.samples.map((s) => s.duration)).toEqual(Array(7).fill(3600));
+  });
+
+  /**
    * A suppressed picture landing on a batch boundary is the same defect at a
    * smaller scale: the last frame of the batch is closed by the first frame
    * of the next one, so its duration has to span the hole between them.

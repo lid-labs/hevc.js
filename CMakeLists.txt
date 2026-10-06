@@ -114,6 +114,7 @@ if(BUILD_TESTS AND NOT BUILD_WASM)
         tests/unit/test_incremental.cpp
         tests/unit/test_ref_pic_lists.cpp
         tests/unit/test_pic_output_flag.cpp
+        tests/unit/test_rasl_output.cpp
     )
 
     target_link_libraries(hevc_tests PRIVATE
@@ -204,6 +205,23 @@ if(BUILD_TESTS AND NOT BUILD_WASM)
         COMMAND ${ORACLE_SCRIPT} ${FIXTURES_DIR}/full_qcif_10f.265 176 144
             a4984ee61d18ac9619808c5338132eaa $<TARGET_FILE:hevc-decode>)
     set_tests_properties(oracle_full_qcif_10f PROPERTIES LABELS "oracle;phase6;milestone"
+        SKIP_RETURN_CODE 2)
+
+    # Open-GOP streams carrying RASL pictures (§8.1). The MD5 of the cut stream is
+    # the whole point: ffmpeg drops the RASL pictures of its opening CRA, so the
+    # hash only matches a decoder that applies the PicOutputFlag override. The
+    # uncut stream has its CRA mid-stream, where those pictures are decodable and
+    # output — it fails if the override reaches too far.
+    add_test(NAME oracle_opengop_qcif_12f
+        COMMAND ${ORACLE_SCRIPT} ${FIXTURES_DIR}/opengop_qcif_12f.265 176 144
+            06e53846ff51cf35cadc97a080147e82 $<TARGET_FILE:hevc-decode>)
+    set_tests_properties(oracle_opengop_qcif_12f PROPERTIES LABELS "oracle;phase6"
+        SKIP_RETURN_CODE 2)
+
+    add_test(NAME oracle_opengop_qcif_cra_first
+        COMMAND ${ORACLE_SCRIPT} ${FIXTURES_DIR}/opengop_qcif_cra_first.265 176 144
+            9c249fb00174f2f6e6fbb3457c10679b $<TARGET_FILE:hevc-decode>)
+    set_tests_properties(oracle_opengop_qcif_cra_first PROPERTIES LABELS "oracle;phase6"
         SKIP_RETURN_CODE 2)
 
     # Real-world bitstreams — Big Buck Bunny (Main profile, full pipeline)
