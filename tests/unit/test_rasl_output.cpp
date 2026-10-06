@@ -12,6 +12,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <fstream>
 #include <optional>
@@ -181,22 +182,29 @@ TEST(RaslOutput, SuppressedRaslAreReportedWithTheirCvs) {
     }
 }
 
-// The pictures that follow the RASL set are trailing pictures of the same CRA:
-// they reference it, not what preceded it, so suppressing the RASL must leave
-// them alone — which is what makes the stream playable from the CRA at all.
-TEST(RaslOutput, TrailingPicturesSurviveTheSuppression) {
+// Every suppressed picture displays *before* the CRA, since a RASL picture
+// precedes its IRAP in output order. That is the fact the caller's timestamp
+// mapping leans on — the consumed slots are the segment's first — and nothing
+// else here asserts it: the counts hold wherever the holes sit.
+TEST(RaslOutput, SuppressedRaslPrecedeEveryOutputPicture) {
     const auto data = read_file(kCraFirst);
     ASSERT_FALSE(data.empty()) << "cannot read " << kCraFirst;
 
     const auto outcome = decode_incremental(data);
-    ASSERT_GE(outcome.output_pocs.size(), 2u);
+    ASSERT_FALSE(outcome.suppressed.empty()) << "nothing was suppressed";
+    ASSERT_FALSE(outcome.output_pocs.empty());
 
-    // Output order is display order, so the CRA comes first and the trailing
-    // pictures follow it with increasing POC.
-    for (size_t i = 1; i < outcome.output_pocs.size(); i++) {
-        EXPECT_GT(outcome.output_pocs[i], outcome.output_pocs[i - 1])
-            << "output must stay in display order";
+    int32_t latest_suppressed = outcome.suppressed.front().poc;
+    for (const auto& p : outcome.suppressed) {
+        latest_suppressed = std::max(latest_suppressed, p.poc);
     }
+    int32_t first_output = outcome.output_pocs.front();
+    for (int32_t poc : outcome.output_pocs) {
+        first_output = std::min(first_output, poc);
+    }
+
+    EXPECT_LT(latest_suppressed, first_output)
+        << "the CRA must open the output, with its RASL set behind it";
 }
 
 // With no IRAP decoded yet, a RASL picture has no references at all — the
