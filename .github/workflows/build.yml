@@ -46,3 +46,31 @@ jobs:
 
       - name: Build
         run: cmake --build build-wasm --parallel
+
+      # packages/core/wasm/hevc-decode.wasm is committed, and nothing used to keep
+      # it current: release.yml rebuilds before publishing, but never commits the
+      # result back, so the copy in the repo stayed at whatever a contributor last
+      # happened to commit. It is what a reader consults to answer "what does the
+      # shipped decoder contain", and it answered wrong for months (#254).
+      #
+      # This compares the build just produced against the committed bytes, which
+      # only works if the build is reproducible. Two container builds on the same
+      # machine give identical bytes; whether this runner's native emsdk 6.0.8
+      # agrees with a container on another host is what continue-on-error is here
+      # to find out. Once it has been green across a few PRs, drop that line and
+      # make the check required — until then a red run is information, not a block.
+      - name: Committed WASM matches the sources
+        continue-on-error: true
+        run: |
+          if cmp -s build-wasm/hevc-decode.wasm packages/core/wasm/hevc-decode.wasm; then
+            echo "The committed decoder matches a build of these sources."
+            exit 0
+          fi
+          echo "::warning title=Committed WASM is stale::packages/core/wasm/hevc-decode.wasm differs from a build of the current sources."
+          echo "Committed: $(wc -c < packages/core/wasm/hevc-decode.wasm) bytes, $(sha256sum packages/core/wasm/hevc-decode.wasm | cut -c1-16)"
+          echo "Rebuilt:   $(wc -c < build-wasm/hevc-decode.wasm) bytes, $(sha256sum build-wasm/hevc-decode.wasm | cut -c1-16)"
+          echo "Run 'pnpm build:wasm' and commit packages/core/wasm/hevc-decode.wasm."
+          echo "If the sources did not change, the build is not reproducible across"
+          echo "hosts and #254 should be settled by gitignoring the binary instead."
+          exit 1
+
