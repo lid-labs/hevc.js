@@ -68,6 +68,35 @@ size_t count_rasl(const std::vector<uint8_t>& data) {
     return n;
 }
 
+// Cuts a bitstream at its first RASL picture, keeping the parameter sets. The
+// result opens before any IRAP — what a player hands a decoder when a segment
+// is not aligned on one. Done in memory rather than as a third fixture: it is
+// the same bitstream, and the cut is the point being made.
+std::vector<uint8_t> cut_at_first_rasl(const std::vector<uint8_t>& data) {
+    NalParser parser;
+    auto nals = parser.parse(data.data(), data.size());
+
+    size_t params_end = 0;
+    size_t rasl_start = 0;
+    bool found = false;
+    for (const auto& nal : nals) {
+        // nal.offset points past the start code, which the cut has to keep
+        const size_t start = nal.offset >= 4 ? nal.offset - 4 : 0;
+        if (params_end == 0 && static_cast<uint8_t>(nal.header.nal_unit_type) < 32) {
+            params_end = start;
+        }
+        if (!found && is_rasl(nal.header.nal_unit_type)) {
+            rasl_start = start;
+            found = true;
+        }
+    }
+    if (!found) return {};
+
+    std::vector<uint8_t> cut(data.begin(), data.begin() + static_cast<long>(params_end));
+    cut.insert(cut.end(), data.begin() + static_cast<long>(rasl_start), data.end());
+    return cut;
+}
+
 const char* kFull = FIXTURES_DIR "/opengop_qcif_12f.265";
 const char* kCraFirst = FIXTURES_DIR "/opengop_qcif_cra_first.265";
 
@@ -168,4 +197,36 @@ TEST(RaslOutput, TrailingPicturesSurviveTheSuppression) {
         EXPECT_GT(outcome.output_pocs[i], outcome.output_pocs[i - 1])
             << "output must stay in display order";
     }
+}
+
+// With no IRAP decoded yet, a RASL picture has no references at all — the
+// situation §8.1 suppresses, reached here by a segment that is not aligned on
+// an IRAP. The flag therefore starts out set.
+//
+// What this does not fix: the CRA further down the stream is the first IRAP,
+// but it is no longer the first picture, so it takes NoRaslOutputFlag = 0 and
+// its own RASL pictures are still output. ffmpeg outputs 4 frames from this
+// cut where we output 7. Tracked separately — it turns on the meaning of
+// first_picture_, not on this clause.
+TEST(RaslOutput, RaslBeforeAnyIrapIsNotOutput) {
+    const auto full = read_file(kFull);
+    ASSERT_FALSE(full.empty()) << "cannot read " << kFull;
+
+    const auto cut = cut_at_first_rasl(full);
+    ASSERT_FALSE(cut.empty()) << "the fixture should carry a RASL picture";
+
+    NalParser parser;
+    const auto nals = parser.parse(cut.data(), cut.size());
+    size_t leading_rasl = 0;
+    for (const auto& nal : nals) {
+        if (static_cast<uint8_t>(nal.header.nal_unit_type) >= 32) continue;
+        if (!is_rasl(nal.header.nal_unit_type)) break;
+        leading_rasl++;
+    }
+    ASSERT_GT(leading_rasl, 0u) << "the cut must open on a RASL picture";
+
+    const auto outcome = decode_incremental(cut);
+
+    EXPECT_EQ(outcome.suppressed.size(), leading_rasl)
+        << "every RASL picture preceding the first IRAP is suppressed";
 }

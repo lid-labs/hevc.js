@@ -132,8 +132,13 @@ private:
     int32_t prev_poc_msb_ = 0;
     bool first_picture_ = true;
 
-    // Carried from the last IRAP decoded, for the RASL pictures that follow it
-    bool no_rasl_output_flag_ = false;
+    // Carried from the last IRAP decoded, for the RASL pictures that follow it.
+    // True until one is: with no IRAP decoded, a RASL picture has no references
+    // at all, which is the situation §8.1 suppresses. A stream that opens on an
+    // IRAP — every aligned segment — overwrites this before any RASL is reached,
+    // so the initial value only decides what happens to pictures that precede
+    // the first IRAP.
+    bool no_rasl_output_flag_ = true;
 
     // RPS lists (§8.3.2) — pictures from the DPB
     // "StCurrBefore" = short-term, used by current, POC < current
