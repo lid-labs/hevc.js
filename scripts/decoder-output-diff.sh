@@ -60,6 +60,7 @@ hash_of() { # decoder, stream -> hash, or a word saying why there is none
 
 moved=0
 same=0
+undecodable=""
 rows=""
 
 for stream in "${STREAMS[@]}"; do
@@ -70,22 +71,46 @@ for stream in "${STREAMS[@]}"; do
   head_hash=$(hash_of "$HEAD" "$stream")
 
   if [ "$base_hash" = "$head_hash" ]; then
-    same=$((same + 1))
+    # Failing identically is not "unchanged": both builds are broken on it, and
+    # counting it as same would let a stream nothing can decode pass for healthy.
+    case "$base_hash" in
+      decode-failed|no-output) undecodable="$undecodable $name" ;;
+      *) same=$((same + 1)) ;;
+    esac
   else
     moved=$((moved + 1))
     rows="$rows| \`$name\` | $base_hash | $head_hash |"$'\n'
   fi
 done
 
-total=$((moved + same))
+compared=$((moved + same))
+seen=$((compared + $(set -- $undecodable; echo $#)))
+
+# A report of zero streams reads like a pass. It is the opposite: the globs
+# matched nothing, or every stream failed, and nothing was compared at all.
+if [ "$compared" -eq 0 ]; then
+  echo "**Nothing was compared.** $seen streams were looked at, none decoded at"
+  echo "both the base and this head — so this run says nothing about the change."
+  [ -n "$undecodable" ] && { echo; echo "Undecodable:$undecodable"; }
+  exit 2
+fi
+
+report_undecodable() {
+  [ -n "$undecodable" ] || return 0
+  echo
+  echo "Decoded at neither the base nor this head, so compared by neither:"
+  echo "$undecodable" | tr ' ' '\n' | sed '/^$/d;s/^/- `/;s/$/`/'
+}
+
 if [ "$moved" -eq 0 ]; then
-  echo "**$total streams decode identically** at the base and at this head."
+  echo "**$compared streams decode identically** at the base and at this head."
   echo
   echo "No stream that already decoded moved."
+  report_undecodable
   exit 0
 fi
 
-echo "**$moved of $total streams decode differently** at this head."
+echo "**$moved of $compared streams decode differently** at this head."
 echo
 echo "| Stream | Base | Head |"
 echo "|---|---|---|"
@@ -95,3 +120,4 @@ echo "This is expected when the change fixes decoding — that is what a decodin
 echo "fix does. Worth reading rather than dismissing: a fix aimed at one case"
 echo "should move that case and little else. \`decode-failed\` means the decoder"
 echo "returned non-zero, \`no-output\` that it wrote nothing."
+report_undecodable

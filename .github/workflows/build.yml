@@ -92,13 +92,20 @@ jobs:
   # moves, and the demo streams have no oracle reference at all — a regression
   # visible only at 1080p or 4K passes today (#257).
   #
-  # Never blocking: changing the output is what a decoding fix *does*, and a job
-  # that goes red on every legitimate correction is trained away within a month.
-  # It reports which streams moved, so the diff is read rather than dismissed.
+  # It never goes red because the output moved — that is what a decoding fix
+  # *does*, and a job red on every legitimate correction is trained away within a
+  # month. It reports which streams moved, so the diff is read rather than
+  # dismissed. It does go red when the comparison could not happen at all (no
+  # stream decoded at both ends): a report of zero streams otherwise reads like a
+  # pass, which is the one failure mode a check like this must not have.
   decoder-output-diff:
     name: Decoder output diff
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
+    # Two builds and 42 decodes measure around three minutes; this only bounds a
+    # decoder that loops on a stream, which would otherwise hold a runner for the
+    # six-hour default.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -128,7 +135,11 @@ jobs:
           REPORT=$(scripts/decoder-output-diff.sh \
             /tmp/base-decoder/build/hevc-decode build/hevc-decode)
           echo "$REPORT" >> "$GITHUB_STEP_SUMMARY"
-          echo "$REPORT"
+          # Stream names come from a glob over the repository, so a PR adding a
+          # file whose name contains a newline could start a log line with "::"
+          # and have the runner read it as a workflow command. Dropping those
+          # lines from the log costs nothing — the summary above keeps them.
+          echo "$REPORT" | grep -v '^::' || true
           # One line in the Checks tab, so the summary gets opened when it matters
           HEADLINE=$(echo "$REPORT" | head -1 | sed 's/\*\*//g')
           echo "::notice title=Decoder output::$HEADLINE"
