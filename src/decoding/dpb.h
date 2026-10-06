@@ -130,8 +130,6 @@ private:
     // POC state (§8.3.1) — "prevTid0Pic" values
     int32_t prev_poc_lsb_ = 0;
     int32_t prev_poc_msb_ = 0;
-    bool first_picture_ = true;
-
     // Carried from the last IRAP decoded, for the RASL pictures that follow it.
     // True until one is: with no IRAP decoded, a RASL picture has no references
     // at all, which is the situation §8.1 suppresses. A stream that opens on an
@@ -139,6 +137,19 @@ private:
     // so the initial value only decides what happens to pictures that precede
     // the first IRAP.
     bool no_rasl_output_flag_ = true;
+
+    // No IRAP has opened a coded video sequence yet, so the next one does.
+    // §8.1 names three cases where an IRAP takes NoRaslOutputFlag = 1; this
+    // covers the first IRAP to open decoding. The other two are not reachable
+    // yet: an end-of-sequence NAL never arrives here (#277), and
+    // HandleCraAsBlaFlag has no way into the API at all.
+    //
+    // It replaced first_picture_, which fell on the first picture of any kind
+    // and stayed down: a decoder handed a segment that opens before its IRAP —
+    // what a seek to a non-aligned segment produces — reached that IRAP with
+    // the flag already spent, and showed a RASL set whose references were never
+    // decoded. Nothing else read that flag, so it is gone.
+    bool cvs_start_pending_ = true;
 
     // RPS lists (§8.3.2) — pictures from the DPB
     // "StCurrBefore" = short-term, used by current, POC < current

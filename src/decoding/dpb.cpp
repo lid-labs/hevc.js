@@ -18,16 +18,22 @@ int32_t DPB::derive_poc(const SliceHeader& sh, const SPS& sps,
 
     // §8.3.1: IRAP with NoRaslOutputFlag = 1 → reset
     bool isIRAP = is_irap(nal_type);
-    // Simplified NoRaslOutputFlag: true for IDR, BLA, first picture
+    // NoRaslOutputFlag: IDR, BLA, or the IRAP that opens decoding (§8.1)
     bool NoRaslOutputFlag = false;
     if (nal_type == NalUnitType::IDR_W_RADL || nal_type == NalUnitType::IDR_N_LP) {
         NoRaslOutputFlag = true;
     } else if (nal_type == NalUnitType::BLA_W_LP || nal_type == NalUnitType::BLA_W_RADL ||
                nal_type == NalUnitType::BLA_N_LP) {
         NoRaslOutputFlag = true;
-    } else if (isIRAP && first_picture_) {
-        NoRaslOutputFlag = true;  // §8.1: first picture in bitstream
+    } else if (isIRAP && cvs_start_pending_) {
+        // §8.1: the first IRAP to open decoding — nothing before it was decoded,
+        // so its RASL pictures have no references.
+        NoRaslOutputFlag = true;
     }
+
+    // Consumed by the IRAP that opens the sequence, so the IRAPs that follow
+    // inside it are judged on their own type.
+    if (isIRAP) cvs_start_pending_ = false;
 
     // Keep it for the RASL pictures that follow this IRAP: §8.1 clears their
     // PicOutputFlag when it is 1, and they are decoded after this call returns.
@@ -72,8 +78,6 @@ int32_t DPB::derive_poc(const SliceHeader& sh, const SPS& sps,
         prev_poc_msb_ = 0;
     }
 
-    first_picture_ = false;
-
     HEVC_LOG(PARSE, "POC derived: %d (lsb=%d, msb=%d)",
              PicOrderCntVal, sh.slice_pic_order_cnt_lsb, PicOrderCntMsb);
 
@@ -90,13 +94,13 @@ void DPB::derive_rps(const SliceHeader& sh, const SPS& sps,
     bool isIRAP = is_irap(nal_type);
     bool isIDR = (nal_type == NalUnitType::IDR_W_RADL || nal_type == NalUnitType::IDR_N_LP);
 
-    // §8.3.2: IRAP with NoRaslOutputFlag → mark all as unused
-    bool NoRaslOutputFlag = (nal_type == NalUnitType::IDR_W_RADL ||
-                              nal_type == NalUnitType::IDR_N_LP ||
-                              nal_type == NalUnitType::BLA_W_LP ||
-                              nal_type == NalUnitType::BLA_W_RADL ||
-                              nal_type == NalUnitType::BLA_N_LP);
-    if (isIRAP && NoRaslOutputFlag) {
+    // §8.3.2: IRAP with NoRaslOutputFlag → mark all as unused. derive_poc ran
+    // first and stored the value for this very picture, so read it rather than
+    // deriving it a second time: this copy used to omit the opening-IRAP case,
+    // which was harmless only while such an IRAP was always the first picture
+    // and the DPB therefore empty. A stream that opens before its IRAP reaches
+    // it with those earlier pictures marked as references.
+    if (isIRAP && no_rasl_output_flag_) {
         for (auto& pic : pictures_) {
             if (pic.get() != current_pic_) {
                 pic->used_for_short_term_ref = false;

@@ -207,16 +207,14 @@ TEST(RaslOutput, SuppressedRaslPrecedeEveryOutputPicture) {
         << "the CRA must open the output, with its RASL set behind it";
 }
 
-// With no IRAP decoded yet, a RASL picture has no references at all — the
-// situation §8.1 suppresses, reached here by a segment that is not aligned on
-// an IRAP. The flag therefore starts out set.
-//
-// What this does not fix: the CRA further down the stream is the first IRAP,
-// but it is no longer the first picture, so it takes NoRaslOutputFlag = 0 and
-// its own RASL pictures are still output. ffmpeg outputs 4 frames from this
-// cut where we output 7. Tracked separately — it turns on the meaning of
-// first_picture_, not on this clause.
-TEST(RaslOutput, RaslBeforeAnyIrapIsNotOutput) {
+// A segment that is not aligned on an IRAP — what a seek can hand the decoder —
+// opens on RASL pictures with no references at all, and reaches its first IRAP
+// with nothing decoded before it. Both sets are suppressed: the leading ones
+// because no IRAP has been seen, the IRAP's own because that IRAP is the one
+// opening decoding (§8.1). ffmpeg decodes this cut to the same four frames,
+// pixel for pixel, which is what oracle_opengop_qcif_cra_first asserts for the
+// aligned case.
+TEST(RaslOutput, NoRaslSurvivesAStreamStartingBeforeItsIrap) {
     const auto full = read_file(kFull);
     ASSERT_FALSE(full.empty()) << "cannot read " << kFull;
 
@@ -225,16 +223,25 @@ TEST(RaslOutput, RaslBeforeAnyIrapIsNotOutput) {
 
     NalParser parser;
     const auto nals = parser.parse(cut.data(), cut.size());
-    size_t leading_rasl = 0;
+    size_t rasl = 0, coded = 0, leading_rasl = 0;
+    bool still_leading = true;
     for (const auto& nal : nals) {
         if (static_cast<uint8_t>(nal.header.nal_unit_type) >= 32) continue;
-        if (!is_rasl(nal.header.nal_unit_type)) break;
-        leading_rasl++;
+        coded++;
+        if (is_rasl(nal.header.nal_unit_type)) {
+            rasl++;
+            if (still_leading) leading_rasl++;
+        } else {
+            still_leading = false;
+        }
     }
     ASSERT_GT(leading_rasl, 0u) << "the cut must open on a RASL picture";
+    ASSERT_GT(rasl, leading_rasl)
+        << "the cut must also carry the RASL set of the IRAP that follows";
 
     const auto outcome = decode_incremental(cut);
 
-    EXPECT_EQ(outcome.suppressed.size(), leading_rasl)
-        << "every RASL picture preceding the first IRAP is suppressed";
+    EXPECT_EQ(outcome.suppressed.size(), rasl)
+        << "both the leading RASL pictures and those of the opening IRAP";
+    EXPECT_EQ(outcome.output_pocs.size(), coded - rasl);
 }
