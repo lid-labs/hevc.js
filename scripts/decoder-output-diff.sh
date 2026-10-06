@@ -12,10 +12,16 @@
 # Usage: decoder-output-diff.sh <base-decoder> <head-decoder> [stream...]
 #
 # With no streams given, uses every conformance fixture plus the demo streams.
-# Writes a markdown table to stdout. Exit 0 whatever it finds: a decoder PR that
-# changes the output on purpose is the normal case, and a job that goes red on
-# every legitimate fix gets trained away. The interesting output is the list of
-# streams that moved, not a verdict.
+# Writes a markdown table to stdout.
+#
+# Exit status:
+#   0  the comparison happened — whether or not streams moved. A decoder PR that
+#      changes the output on purpose is the normal case, and a check that goes
+#      red on every legitimate fix gets trained away. The interesting output is
+#      the list of streams that moved, not a verdict.
+#   2  the comparison did not happen: a decoder is missing or not executable, or
+#      no stream decoded at both ends. A report of zero streams would otherwise
+#      read like a pass.
 
 set -uo pipefail
 
@@ -48,6 +54,8 @@ done
 
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
+
+is_failure() { case "$1" in decode-failed|no-output) return 0 ;; *) return 1 ;; esac; }
 
 hash_of() { # decoder, stream -> hash, or a word saying why there is none
   local bin="$1" stream="$2" out="$WORK/out.yuv"
@@ -83,13 +91,14 @@ for stream in "${STREAMS[@]}"; do
   base_hash=$(hash_of "$BASE" "$stream")
   head_hash=$(hash_of "$HEAD" "$stream")
 
-  if [ "$base_hash" = "$head_hash" ]; then
-    # Failing identically is not "unchanged": both builds are broken on it, and
-    # counting it as same would let a stream nothing can decode pass for healthy.
-    case "$base_hash" in
-      decode-failed|no-output) undecodable="$undecodable $name" ;;
-      *) same=$((same + 1)) ;;
-    esac
+  # Neither side produced output: undecodable, whether or not they failed the
+  # same way. Testing equality first would call decode-failed vs no-output a
+  # move, and counting an identical failure as "same" would let a stream nothing
+  # can decode pass for healthy.
+  if is_failure "$base_hash" && is_failure "$head_hash"; then
+    undecodable="$undecodable $name"
+  elif [ "$base_hash" = "$head_hash" ]; then
+    same=$((same + 1))
   else
     moved=$((moved + 1))
     rows="$rows| \`$name\` | $base_hash | $head_hash |"$'\n'
