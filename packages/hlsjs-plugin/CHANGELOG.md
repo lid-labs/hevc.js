@@ -1,5 +1,12 @@
 # @hevcjs/hlsjs-plugin
 
+## 0.1.6
+
+### Patch Changes
+
+- Updated dependencies [[`f768c61`](https://github.com/lid-labs/hevc.js/commit/f768c6158c0764ab91b313b43594ad5943340872), [`b3e5fd7`](https://github.com/lid-labs/hevc.js/commit/b3e5fd73b0bf9d3dff24140a4a6bc21961f57ab5), [`1650d55`](https://github.com/lid-labs/hevc.js/commit/1650d557b9e755e3c2f4195fb2d9438237a331e2), [`b3e5fd7`](https://github.com/lid-labs/hevc.js/commit/b3e5fd73b0bf9d3dff24140a4a6bc21961f57ab5)]:
+  - @hevcjs/core@1.4.6
+
 ## 0.1.5
 
 ### Patch Changes
