@@ -68,14 +68,20 @@ jobs:
       - name: Committed WASM matches the sources
         continue-on-error: true
         run: |
-          if cmp -s build-wasm/hevc-decode.wasm packages/core/wasm/hevc-decode.wasm; then
-            echo "The committed decoder matches a build of these sources."
+          stale=""
+          for copy in packages/core/wasm/hevc-decode.wasm demo/hevc-decode.wasm; do
+            cmp -s build-wasm/hevc-decode.wasm "$copy" || stale="$stale $copy"
+          done
+          if [ -z "$stale" ]; then
+            echo "Both committed decoders match a build of these sources."
             exit 0
           fi
-          echo "::warning title=Committed WASM is stale::packages/core/wasm/hevc-decode.wasm differs from a build of the current sources."
-          echo "Committed: $(wc -c < packages/core/wasm/hevc-decode.wasm) bytes, $(sha256sum packages/core/wasm/hevc-decode.wasm | cut -c1-16)"
-          echo "Rebuilt:   $(wc -c < build-wasm/hevc-decode.wasm) bytes, $(sha256sum build-wasm/hevc-decode.wasm | cut -c1-16)"
-          echo "Run 'pnpm build:wasm' and commit packages/core/wasm/hevc-decode.wasm."
+          echo "::warning title=Committed WASM is stale::Stale against a build of the current sources:$stale"
+          echo "Rebuilt: $(wc -c < build-wasm/hevc-decode.wasm) bytes, $(sha256sum build-wasm/hevc-decode.wasm | cut -c1-16)"
+          for copy in $stale; do
+            echo "Stale:   $copy — $(wc -c < "$copy") bytes, $(sha256sum "$copy" | cut -c1-16)"
+          done
+          echo "Run 'pnpm build:wasm && pnpm build:demo:wasm' and commit both copies."
           echo "If the sources did not change, the build is not reproducible across"
           echo "hosts and #254 should be settled by gitignoring the binary instead."
           exit 1
