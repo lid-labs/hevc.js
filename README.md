@@ -349,6 +349,7 @@ Implemented per **ITU-T H.265 (v8, 08/2021)** — 716 pages, transcribed directl
 | Multi-slice (dependent + independent) | Complete |
 | Tiles | Parsed + sequential decode |
 | WPP (Wavefront Parallel Processing) | Complete |
+| Output order — `PicOutputFlag` (§C.3.1), RASL suppression (§8.1) | Complete |
 
 ---
 

@@ -168,6 +168,10 @@ Nothing else tells the caller a sample produced no frame. Frames carry their
 POC, but a POC missing from the output is indistinguishable from one the DPB
 has not bumped yet.
 
+Two clauses suppress a picture, and both feed the mechanism below: §C.3.1 as
+the slice header carries it, and §8.1, which clears `PicOutputFlag` on a RASL
+picture whose associated IRAP has `NoRaslOutputFlag = 1`.
+
 **Decision**: The decoder reports each suppressed picture as `(cvs_id, poc)`
 (`hevc_decoder_take_suppressed_pictures`), and the caller consumes the
 matching timestamp slot itself (`DisplayPtsAssigner`).
