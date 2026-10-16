@@ -53,6 +53,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Transcoded segments land at the wrong position after an out-of-buffer seek** (`segment-transcoder.ts`): mp4box.js continues its pre-seek clock; samples are now rebased onto the segment's tfdt (structurally parsed moof→traf→tfdt, strict on ambiguity). Affects any player that repositions without `abort()` — hls.js ≥1.6.6 in particular.
 - **`timestampOffset` seek heuristic** (`mse-intercept.ts`): flush only on a ≥0.5s jump with queued segments after a first init — no more pipeline resets on hls.js routine alignment writes or on playlists starting at `EXT-X-MEDIA-SEQUENCE > 0`.
 
+### Removed
+- **`tools/bench_wasm.mjs`**: it aborted on any decoder built with emcc 6.x (`Assertion failed: JS engine does not provide full typed array support`): the hand-built `vm.createContext` it ran the Emscripten glue in no longer passes the runtime's typed-array check. `tools/bench_wasm.cjs` does the same job and works: `node tools/bench_wasm.cjs <bitstream.265> [wasm_dir]`, with `wasm_dir` defaulting to `build-wasm`, or `packages/core/wasm` for the committed decoder. #234.
+
 ## [1.1.0] - 2026-05-10
 
 `@hevcjs/core@1.1.0` + `@hevcjs/dashjs-plugin@1.0.4`
