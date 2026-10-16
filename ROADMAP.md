@@ -44,9 +44,6 @@ fixture: they need one written before they can be fixed.
   ships a decoder that drifts from the sources; releases rebuild it, the repo
   does not.
   [#254](https://github.com/lid-labs/hevc.js/issues/254).
-- **`tools/bench_wasm.mjs` is broken under emcc 6.x** — the working `.cjs` does
-  the same job; the two need to stop disagreeing.
-  [#234](https://github.com/lid-labs/hevc.js/issues/234).
 
 ## Performance
 
