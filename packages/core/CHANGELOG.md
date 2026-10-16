@@ -1,5 +1,11 @@
 # @hevcjs/core
 
+## 1.4.9
+
+### Patch Changes
+
+- [#281](https://github.com/lid-labs/hevc.js/pull/281) [`cbe7dd2`](https://github.com/lid-labs/hevc.js/commit/cbe7dd26fe462bdfa17234ef1f0df2a14d23035e) Thanks [@privaloops](https://github.com/privaloops)! - Published through npm trusted publishing (OIDC) instead of a stored token, so each release now carries an npm provenance attestation linking it to the GitHub Actions run that built it. No code change.
+
 ## 1.4.8
 
 ### Patch Changes
