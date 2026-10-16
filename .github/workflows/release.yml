@@ -8,6 +8,9 @@ permissions:
   contents: write
   pull-requests: write
   issues: write
+  # npm trusted publishing: npm exchanges the job's OIDC token for a
+  # short-lived publish token, so no npm secret is stored.
+  id-token: write
 
 concurrency: ${{ github.workflow }}-${{ github.ref }}
 
@@ -50,12 +53,26 @@ jobs:
         with:
           version: 9
 
+      # No dependency cache in the job that publishes: a poisoned cache would
+      # end up in the packages.
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 20
-          cache: pnpm
+          node-version: 24
+          package-manager-cache: false
           registry-url: https://registry.npmjs.org/
+
+      # changeset publish → pnpm publish → npm publish: the OIDC exchange is
+      # done by the npm CLI, which needs 11.5.1+. An older npm would publish
+      # unauthenticated and fail with an error that does not name the cause.
+      - name: Check npm supports trusted publishing
+        run: |
+          v=$(npm --version)
+          if [ "$(printf '%s\n' 11.5.1 "$v" | sort -V | head -n1)" != 11.5.1 ]; then
+            echo "::error::npm $v cannot use trusted publishing (needs >= 11.5.1)"
+            exit 1
+          fi
+          echo "npm $v"
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -76,4 +93,3 @@ jobs:
           commit: "chore(release): version packages"
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
