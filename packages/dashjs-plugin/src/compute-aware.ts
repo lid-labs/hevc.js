@@ -18,6 +18,7 @@ import {
 } from "@hevcjs/core";
 import type {
   ComputeAwareConfig,
+  ComputeAwareDecision,
   SegmentPerfStat,
 } from "@hevcjs/core";
 
@@ -34,13 +35,13 @@ export interface DashComputeAwareOptions extends ComputeAwareConfig {
   /**
    * Per-observation telemetry sink. Called even when no cap change occurs.
    * `reason` is the decider's verdict:
-   * `init` | `hold` | `lower` | `raise`.
+   * `init` | `hold` | `lower` | `raise` | `floor`.
    */
   onObservation?: (
     stat: SegmentPerfStat,
     avgSpeedX: number,
     capIndex: number | null,
-    reason: "init" | "hold" | "lower" | "raise",
+    reason: ComputeAwareDecision["reason"],
   ) => void;
 }
 

@@ -16,7 +16,7 @@ function feedUntil(
   d: ComputeAwareDecider,
   speedX: number,
   currentIdx: number,
-  reason: "lower" | "raise",
+  reason: "lower" | "raise" | "floor",
   maxN = 200,
 ) {
   for (let i = 0; i < maxN; i++) {
@@ -103,8 +103,55 @@ describe("ComputeAwareDecider", () => {
     feedUntil(d, 0.1, 1, "lower");
     expect(d.currentCap).toBe(0);
     const decision = feed(d, 0.1, 50, 0);
-    expect(decision.reason).toBe("hold");
+    expect(decision.reason).toBe("floor");
     expect(d.currentCap).toBe(0);
+  });
+
+  it("reports floor on every slow window once the cap is at 0", () => {
+    const d = new ComputeAwareDecider({ measureWindow: 2, lowerAfter: 1 });
+    d.setLadderSize(2);
+    feedUntil(d, 0.5, 1, "lower");
+    expect(d.currentCap).toBe(0);
+    d.observe(0.5, 0); // refills the window emptied by the lower
+    for (let i = 0; i < 5; i++) {
+      const r = d.observe(0.5, 0);
+      expect(r.reason).toBe("floor");
+      expect(r.capIndex).toBe(0);
+    }
+  });
+
+  it("reports floor without a cap when the player is already on variant 0", () => {
+    const d = new ComputeAwareDecider({ measureWindow: 2, lowerAfter: 1 });
+    d.setLadderSize(4);
+    const decision = feedUntil(d, 0.5, 0, "floor");
+    // Nothing to apply: the host ABR already picked the lowest rung.
+    expect(decision.capIndex).toBeNull();
+    expect(d.currentCap).toBeNull();
+  });
+
+  it("reports floor on a single-variant ladder", () => {
+    const d = new ComputeAwareDecider({ measureWindow: 2, lowerAfter: 1 });
+    d.setLadderSize(1);
+    const decision = feedUntil(d, 0.5, 0, "floor");
+    expect(decision.capIndex).toBeNull();
+  });
+
+  it("holds, not floor, until the slow streak reaches lowerAfter", () => {
+    const d = new ComputeAwareDecider({ measureWindow: 2, lowerAfter: 3 });
+    d.setLadderSize(3);
+    d.observe(0.5, 0); // window not full yet
+    expect(d.observe(0.5, 0).reason).toBe("hold"); // streak 1
+    expect(d.observe(0.5, 0).reason).toBe("hold"); // streak 2
+    expect(d.observe(0.5, 0).reason).toBe("floor"); // streak 3
+  });
+
+  it("can still raise after reporting floor", () => {
+    const d = new ComputeAwareDecider({ measureWindow: 2, lowerAfter: 1, raiseAfter: 2 });
+    d.setLadderSize(2);
+    feedUntil(d, 0.5, 1, "lower");
+    feedUntil(d, 0.5, 0, "floor");
+    const decision = feedUntil(d, 2.0, 0, "raise");
+    expect(decision.capIndex).toBe(1);
   });
 
   it("does NOT raise from null cap (cold start, never lowered)", () => {
