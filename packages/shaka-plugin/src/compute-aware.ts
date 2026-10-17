@@ -19,6 +19,7 @@ import {
 } from "@hevcjs/core";
 import type {
   ComputeAwareConfig,
+  ComputeAwareDecision,
   SegmentPerfStat,
 } from "@hevcjs/core";
 
@@ -75,13 +76,14 @@ export interface ShakaComputeAwareOptions extends ComputeAwareConfig {
    *
    * `reason` is the decider's verdict on this observation:
    * `init` (window not full yet) | `hold` (no change) |
-   * `lower` (cap stepped down) | `raise` (cap stepped up).
+   * `lower` (cap stepped down) | `raise` (cap stepped up) |
+   * `floor` (would step down, already on the lowest variant).
    */
   onObservation?: (
     stat: SegmentPerfStat,
     avgSpeedX: number,
     capIndex: number | null,
-    reason: "init" | "hold" | "lower" | "raise",
+    reason: ComputeAwareDecision["reason"],
   ) => void;
 }
 
