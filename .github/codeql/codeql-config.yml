@@ -10,5 +10,4 @@ paths-ignore:
   - 'demo/worker.js'
   - 'demo/hevc-decode.js'
   - 'tools/bench_wasm.cjs'
-  - 'tools/bench_wasm.mjs'
   - 'site/index.html'

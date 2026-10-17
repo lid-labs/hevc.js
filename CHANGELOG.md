@@ -54,6 +54,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **`timestampOffset` seek heuristic** (`mse-intercept.ts`): flush only on a ≥0.5s jump with queued segments after a first init — no more pipeline resets on hls.js routine alignment writes or on playlists starting at `EXT-X-MEDIA-SEQUENCE > 0`.
 - **The unit-test job failed at random on unrelated PRs** (`tests/unit/test_incremental.cpp`): `IncrementalDecode.InterleavedDrainMatchesBatchedOutputOrder` ran within a second of the 120 s ctest timeout under AddressSanitizer (119.16 s on a green run), so it timed out on some runs and passed on others. It checks output order on B-frame streams, which the QCIF fixtures and `bbb1080_50f.265` already cover; the 4K fixture, which only added picture area, is dropped from this test. The timeout stays shared by all tests. #268.
 
+### Removed
+- **`tools/bench_wasm.mjs`**: it aborted on any decoder built with emcc 6.x (`Assertion failed: JS engine does not provide full typed array support`): the hand-built `vm.createContext` it ran the Emscripten glue in no longer passes the runtime's typed-array check. `tools/bench_wasm.cjs` does the same job and works: `node tools/bench_wasm.cjs <bitstream.265> [wasm_dir]`, with `wasm_dir` defaulting to `build-wasm`, or `packages/core/wasm` for the committed decoder. #234.
+
 ## [1.1.0] - 2026-05-10
 
 `@hevcjs/core@1.1.0` + `@hevcjs/dashjs-plugin@1.0.4`
