@@ -86,7 +86,7 @@ const detach = subscribeSegmentStat(stat => {
 const decider = new ComputeAwareDecider({ measureWindow: 2, lowerAfter: 1 });
 decider.setLadderSize(4);
 const decision = decider.observe(stat.speedX, currentVariantIdx);
-// decision: { capIndex, avgSpeedX, reason: 'init' | 'hold' | 'lower' | 'raise' }
+// decision: { capIndex, avgSpeedX, reason: 'init' | 'hold' | 'lower' | 'raise' | 'floor' }
 ```
 
 ## How it works
