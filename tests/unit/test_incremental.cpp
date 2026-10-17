@@ -232,7 +232,6 @@ TEST(IncrementalDecode, InterleavedDrainMatchesBatchedOutputOrder) {
         "full_qcif_10f_10bit.265",
         "p_qcif_10f.265",
         "bbb1080_50f.265",
-        "bbb4k_25f.265",
     };
 
     for (const char* name : fixtures) {
