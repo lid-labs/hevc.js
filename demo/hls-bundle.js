@@ -11853,6 +11853,7 @@ var HevcHls = (() => {
             return { capIndex: this.capIndex_, avgSpeedX: avgSpeed, reason: "lower" };
           }
           this.consecutiveLow = 0;
+          return { capIndex: this.capIndex_, avgSpeedX: avgSpeed, reason: "floor" };
         }
       } else if (avgSpeed > this.cfg.targetSpeedX) {
         this.consecutiveHigh++;

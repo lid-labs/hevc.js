@@ -173,7 +173,7 @@ test.describe('Compute-aware cap — Shaka path', () => {
     ).toBeGreaterThanOrEqual(2);
 
     for (const s of observed) {
-      expect(['init', 'hold', 'lower', 'raise']).toContain(s.reason);
+      expect(['init', 'hold', 'lower', 'raise', 'floor']).toContain(s.reason);
       expect(s.speedX, `speedX missing in: ${s.raw}`).not.toBeNull();
       expect(s.speedX!).toBeGreaterThan(0);
     }
@@ -249,7 +249,7 @@ test.describe('Compute-aware cap — Shaka path', () => {
 
       // The decider only ever subtracts, starting from the variant the player
       // is on, so a player already at the bottom rung has nothing to give up
-      // and correctly reports `hold`. Measured on a GitHub runner, where
+      // and correctly reports `floor`. Measured on a GitHub runner, where
       // network ABR had settled on 480p: ten observations under 1.0x with
       // `cap: none`, and the cap moved only once Shaka climbed back to 720p.
       // Requiring a `lower` regardless would fail that run for behaving right.

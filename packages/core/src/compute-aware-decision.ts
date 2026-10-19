@@ -40,8 +40,9 @@ export interface ComputeAwareDecision {
    * - `lower` — cap was just lowered
    * - `raise` — cap was just raised
    * - `hold`  — no change this observation
+   * - `floor` — would lower, but the player is already on the lowest variant
    */
-  reason: "init" | "lower" | "raise" | "hold";
+  reason: "init" | "lower" | "raise" | "hold" | "floor";
 }
 
 // Defaults are tuned for compute-aware: the cost of reacting too slowly
@@ -146,8 +147,10 @@ export class ComputeAwareDecider {
           return { capIndex: this.capIndex_, avgSpeedX: avgSpeed, reason: "lower" };
         }
         // Already at the lowest variant — nothing we can do. Reset counter
-        // so we don't keep firing.
+        // so we don't keep firing, but say so: a plain `hold` here reads the
+        // same as a loop that never reacted.
         this.consecutiveLow = 0;
+        return { capIndex: this.capIndex_, avgSpeedX: avgSpeed, reason: "floor" };
       }
     } else if (avgSpeed > this.cfg.targetSpeedX) {
       this.consecutiveHigh++;
