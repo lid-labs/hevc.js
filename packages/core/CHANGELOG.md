@@ -1,5 +1,11 @@
 # @hevcjs/core
 
+## 1.5.0
+
+### Minor Changes
+
+- [#286](https://github.com/lid-labs/hevc.js/pull/286) [`43d1e25`](https://github.com/lid-labs/hevc.js/commit/43d1e25526afea7690020ffe3bf088db597da48b) Thanks [@privaloops](https://github.com/privaloops)! - Compute-aware decider: new `reason: "floor"` when decoding runs below real time but the player is already on the lowest variant, so there is nothing to cap to. It used to report `hold`, which looked the same as a feedback loop that never reacted. No cap is applied on `floor`. Code that switches exhaustively on `reason` needs a case for it; the plugins' `onObservation` now takes the core's `ComputeAwareDecision["reason"]` type.
+
 ## 1.4.9
 
 ### Patch Changes
