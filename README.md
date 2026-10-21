@@ -235,7 +235,7 @@ This implementation targets a different niche on three axes:
 - **Modernity & license** — C++17 throughout (`std::optional`, `std::shared_ptr`, `std::array`, `constexpr`), zero dependencies, **MIT-licensed** (vs LGPL for libde265 — relevant for static linking in commercial products).
 - **Spec traceability** — function names mirror ITU-T H.265 section numbers, and [`docs/cross-reference.md`](docs/cross-reference.md) maps every spec section to its source file and test. Useful if you want to *understand* HEVC, not just decode it (universities, codec research, contributors).
 
-This is **not a libde265 replacement** — libde265 is faster on pure native and battle-tested in production (GStreamer, VLC, libheif, FFmpeg fallback). For embedding in browsers, microVMs, and sandboxed environments where binary size, license, or readability matter more than the last 20% of native throughput, this decoder is a viable alternative.
+This is **not a libde265 replacement** — libde265 is battle-tested in production (GStreamer, VLC, libheif, FFmpeg fallback). For embedding in browsers, microVMs, and sandboxed environments where binary size, license, or readability matter more than raw throughput, this decoder is a viable alternative.
 
 For a side-by-side of the four ways to play HEVC in a browser — hevc.js, libde265.js, ffmpeg.wasm and h265web.js — see [HEVC in the browser: four ways, compared](https://www.hevcjs.dev/docs/comparison.html) (WASM size, license, MSE streaming, COOP/COEP requirements).
 
@@ -328,7 +328,7 @@ Decode speed, measured on 2026-10-21 on an Apple M4 Pro (10 performance + 4 effi
 | **4K**, SAO, WPP — `bbb4k_25f.265` | 22 fps | 46 fps | 21 fps |
 | **4K**, SAO, no WPP — `bbb4k_singleslice.265` | 30 fps | — | 27 fps |
 
-**1080p transcode** (HEVC decode + H.264 encode, in Chromium through Playwright 1.62, Shaka demo, `ABR 480p/720p/1080p` preset on its 1080p variant, which has SAO): 1.8–2.0x real time.
+**1080p transcode** (HEVC decode + H.264 encode, in Chromium through Playwright 1.62, Shaka demo, `ABR 480p/720p/1080p` preset, 1080p variant (SAO) active in every run): 1.8–2.0x real time.
 
 The WASM build has no threads, so the single-threaded native column is the one to compare it with: WASM runs at 87% of native at 1080p and 89–97% at 4K. The native decoder parallelises WPP rows on a pool sized to the core count, which is the third column; a stream without WPP decodes on one thread either way.
 

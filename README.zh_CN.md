@@ -178,7 +178,7 @@ hevc.js 在客户端将 HEVC 转码为 H.264。这需要浏览器提供两样东
 - **现代化与许可证** — 全代码使用 C++17(`std::optional`、`std::shared_ptr`、`std::array`、`constexpr`),零依赖,**MIT 许可证**(libde265 是 LGPL — 这对在商业产品中静态链接很重要)。
 - **规范可追溯性** — 函数命名直接对应 ITU-T H.265 规范的章节号,且 [`docs/cross-reference.md`](docs/cross-reference.md) 把每个规范章节映射到对应的源文件和测试。如果你想 *理解* HEVC 而不只是解码它,这很有用(高校、编解码器研究、贡献者)。
 
-这 **不是 libde265 的替代品** — libde265 在纯原生环境下更快,且在生产环境中久经考验(GStreamer、VLC、libheif、FFmpeg 回退)。但对于在浏览器、microVM 和沙盒环境中嵌入,当二进制大小、许可证或可读性比最后那 20% 的原生吞吐量更重要时,这个解码器是一个可行的替代方案。
+这 **不是 libde265 的替代品** — libde265 在生产环境中久经考验(GStreamer、VLC、libheif、FFmpeg 回退)。但对于在浏览器、microVM 和沙盒环境中嵌入,当二进制大小、许可证或可读性比原始吞吐量更重要时,这个解码器是一个可行的替代方案。
 
 ### C API
 
@@ -259,7 +259,7 @@ pnpm build:wasm
 | **4K**,SAO,WPP — `bbb4k_25f.265` | 22 fps | 46 fps | 21 fps |
 | **4K**,SAO,无 WPP — `bbb4k_singleslice.265` | 30 fps | — | 27 fps |
 
-**1080p 转码**(HEVC 解码 + H.264 编码,通过 Playwright 1.62 在 Chromium 中运行,Shaka 演示页,`ABR 480p/720p/1080p` 预设的 1080p 码流,启用 SAO):1.8–2.0 倍实时。
+**1080p 转码**(HEVC 解码 + H.264 编码,通过 Playwright 1.62 在 Chromium 中运行,Shaka 演示页,`ABR 480p/720p/1080p` 预设,每次运行中均为 1080p 码流(SAO)):1.8–2.0 倍实时。
 
 WASM 构建没有线程,因此应与单线程原生列对比:WASM 在 1080p 下达到原生的 87%,在 4K 下为 89–97%。原生解码器在一个与核心数相同大小的线程池上并行解码 WPP 行,即第三列;没有 WPP 的码流在两种情况下都只用一个线程。
 
