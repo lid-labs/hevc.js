@@ -280,39 +280,39 @@ void decode_residual_coding(DecodingContext& ctx, int x0, int y0,
             inferSbDcSigCoeffFlag = true;
         }
 
-        // sig_coeff_flag array for this sub-block (scan order)
-        int sig_coeff_flag[16] = {};
+        // Significant positions of this sub-block, in decreasing scan order —
+        // the order every later pass reads them in, so they skip the zeros.
+        int sigPos[16];
+        int nSig = 0;
+
+        // For the last sub-block, the last scan position is always significant
+        if (i == lastSubBlock) sigPos[nSig++] = lastScanPos;
 
         int firstN = (i == lastSubBlock) ? lastScanPos - 1 : 15;
 
         const SigCtxSubBlock sigCtxSb = sig_ctx_sub_block(
             cIdx, log2TrafoSize, xS, yS, scanIdx, coded_sub_block_flag, numSbPerSide);
 
-        for (int n = firstN; n >= 0; n--) {
-            if (coded_sub_block_flag[sbIdx] &&
-                (n > 0 || !inferSbDcSigCoeffFlag)) {
-                int sigCtx = sig_ctx(sigCtxSb, coeffScan[n][0], coeffScan[n][1]);
-                sig_coeff_flag[n] = decode_sig_coeff_flag(cabac, sigCtx);
-                if (sig_coeff_flag[n])
-                    inferSbDcSigCoeffFlag = false;
-            } else if (coded_sub_block_flag[sbIdx] && n == 0 && inferSbDcSigCoeffFlag) {
-                // Infer DC coefficient as significant
-                sig_coeff_flag[0] = 1;
+        if (coded_sub_block_flag[sbIdx]) {
+            for (int n = firstN; n >= 0; n--) {
+                if (n > 0 || !inferSbDcSigCoeffFlag) {
+                    int sigCtx = sig_ctx(sigCtxSb, coeffScan[n][0], coeffScan[n][1]);
+                    if (decode_sig_coeff_flag(cabac, sigCtx)) {
+                        sigPos[nSig++] = n;
+                        inferSbDcSigCoeffFlag = false;
+                    }
+                } else {
+                    // Infer DC coefficient as significant
+                    sigPos[nSig++] = 0;
+                }
             }
         }
 
-        // For the last sub-block, the last scan position is always significant
-        if (i == lastSubBlock) {
-            sig_coeff_flag[lastScanPos] = 1;
-        }
-
         // Decode coefficient levels
-        int firstSigScanPos = 16;
-        int lastSigScanPos = -1;
         int numGreater1Flag = 0;
-        int lastGreater1ScanPos = -1;
+        int lastGreater1Idx = -1;  // index into sigPos, not a scan position
 
-        int coeff_abs_greater1[16] = {};
+        int coeff_abs_greater1[16];
 
         // Context set selection (§9.3.4.2.6)
         int ctxSet = (i > 0 && cIdx == 0) ? 2 : 0;
@@ -324,42 +324,36 @@ void decode_residual_coding(DecodingContext& ctx, int x0, int y0,
 
         int greater1Ctx = 1;
 
-        for (int n = 15; n >= 0; n--) {
-            if (sig_coeff_flag[n]) {
-                if (numGreater1Flag < 8) {
-                    coeff_abs_greater1[n] = decode_coeff_abs_level_greater1_flag(
-                        cabac, ctxSet, greater1Ctx, cIdx);
-                    numGreater1Flag++;
+        for (int k = 0; k < nSig; k++) {
+            coeff_abs_greater1[k] = 0;
+            if (numGreater1Flag < 8) {
+                coeff_abs_greater1[k] = decode_coeff_abs_level_greater1_flag(
+                    cabac, ctxSet, greater1Ctx, cIdx);
+                numGreater1Flag++;
 
-                    if (coeff_abs_greater1[n]) {
-                        if (lastGreater1ScanPos == -1)
-                            lastGreater1ScanPos = n;
-                        greater1Ctx = 0;
-                    } else if (greater1Ctx > 0 && greater1Ctx < 3) {
-                        greater1Ctx++;
-                    }
+                if (coeff_abs_greater1[k]) {
+                    if (lastGreater1Idx == -1)
+                        lastGreater1Idx = k;
+                    greater1Ctx = 0;
+                } else if (greater1Ctx > 0 && greater1Ctx < 3) {
+                    greater1Ctx++;
                 }
-
-                if (lastSigScanPos == -1) lastSigScanPos = n;
-                firstSigScanPos = n;
             }
         }
 
-        // Sign hidden condition (§7.3.8.11)
+        // Sign hidden condition (§7.3.8.11): lastSigScanPos - firstSigScanPos > 3
         auto& pps = *ctx.pps;
         auto& cu = ctx.cu_at(x0, y0);
         bool signHidden = false;
-        if (!cu.cu_transquant_bypass) {
+        if (!cu.cu_transquant_bypass && nSig > 0) {
             signHidden = pps.sign_data_hiding_enabled_flag &&
-                         (lastSigScanPos - firstSigScanPos > 3);
+                         (sigPos[0] - sigPos[nSig - 1] > 3);
         }
 
         // coeff_abs_level_greater2_flag
-        int coeff_abs_greater2_flag[16] = {};
-        if (lastGreater1ScanPos != -1) {
-            coeff_abs_greater2_flag[lastGreater1ScanPos] =
-                decode_coeff_abs_level_greater2_flag(cabac, ctxSet, cIdx);
-        }
+        int greater2 = 0;
+        if (lastGreater1Idx != -1)
+            greater2 = decode_coeff_abs_level_greater2_flag(cabac, ctxSet, cIdx);
 
         // §7.3.8.11 + SPS RExt §7.4.3.2.2: alignment only when
         // cabac_bypass_alignment_enabled_flag is 1 (RExt profiles).
@@ -367,67 +361,61 @@ void decode_residual_coding(DecodingContext& ctx, int x0, int y0,
         if (ctx.sps->cabac_bypass_alignment_enabled_flag)
             cabac.align_bypass();
 
-        // Sign flags — read for all sig coeffs (except hidden one)
-        int coeff_sign_flag[16] = {};
-        for (int n = 15; n >= 0; n--) {
-            if (sig_coeff_flag[n]) {
-                if (!signHidden || n != firstSigScanPos) {
-                    coeff_sign_flag[n] = decode_coeff_sign_flag(cabac);
-                }
-            }
-        }
+        // Sign flags — read for all sig coeffs except the hidden one, which is
+        // the first in scan order, so the last in sigPos
+        int coeff_sign_flag[16];
+        const int nSigns = signHidden ? nSig - 1 : nSig;
+        for (int k = 0; k < nSigns; k++)
+            coeff_sign_flag[k] = decode_coeff_sign_flag(cabac);
 
         // coeff_abs_level_remaining + reconstruction (spec §7.3.8.11 final loop)
-        int numSigCoeff = 0;
         int sumAbsLevel = 0;
         int cRiceParam = 0;
 
-        for (int n = 15; n >= 0; n--) {
-            if (sig_coeff_flag[n]) {
-                int xC = (xS << 2) + coeffScan[n][0];
-                int yC = (yS << 2) + coeffScan[n][1];
+        for (int k = 0; k < nSig; k++) {
+            const int n = sigPos[k];
+            int xC = (xS << 2) + coeffScan[n][0];
+            int yC = (yS << 2) + coeffScan[n][1];
 
-                int baseLevel = 1 + coeff_abs_greater1[n] +
-                                coeff_abs_greater2_flag[n];
+            int baseLevel = 1 + coeff_abs_greater1[k] +
+                            (k == lastGreater1Idx ? greater2 : 0);
 
-                // Spec: read remaining when baseLevel equals max possible
-                // max = 3 if numSigCoeff<8 and n==lastGreater1ScanPos
-                // max = 2 if numSigCoeff<8 and n!=lastGreater1ScanPos
-                // max = 1 if numSigCoeff>=8
-                int maxBase;
-                if (numSigCoeff < 8) {
-                    maxBase = (n == lastGreater1ScanPos) ? 3 : 2;
-                } else {
-                    maxBase = 1;
-                }
-
-                int coeff_remaining = 0;
-                if (baseLevel == maxBase) {
-                    coeff_remaining = decode_coeff_abs_level_remaining(
-                        cabac, cRiceParam);
-
-                    // Update cRiceParam (§9.3.3.11)
-                    int absLevel = baseLevel + coeff_remaining;
-                    if (absLevel > 3 * (1 << cRiceParam) && cRiceParam < 4)
-                        cRiceParam++;
-                }
-
-                int absLevel = baseLevel + coeff_remaining;
-
-                // Sign
-                int sign;
-                if (signHidden && n == firstSigScanPos) {
-                    // §7.4.9.11: parity of sum INCLUDING current level
-                    sign = ((sumAbsLevel + absLevel) & 1) ? -1 : 1;
-                } else {
-                    sign = coeff_sign_flag[n] ? -1 : 1;
-                }
-
-                coefficients[yC * trSize + xC] = static_cast<int16_t>(sign * absLevel);
-
-                sumAbsLevel += absLevel;
-                numSigCoeff++;
+            // Spec: read remaining when baseLevel equals max possible
+            // max = 3 if numSigCoeff<8 and n==lastGreater1ScanPos
+            // max = 2 if numSigCoeff<8 and n!=lastGreater1ScanPos
+            // max = 1 if numSigCoeff>=8 (numSigCoeff is k here)
+            int maxBase;
+            if (k < 8) {
+                maxBase = (k == lastGreater1Idx) ? 3 : 2;
+            } else {
+                maxBase = 1;
             }
+
+            int coeff_remaining = 0;
+            if (baseLevel == maxBase) {
+                coeff_remaining = decode_coeff_abs_level_remaining(
+                    cabac, cRiceParam);
+
+                // Update cRiceParam (§9.3.3.11)
+                int absLevel = baseLevel + coeff_remaining;
+                if (absLevel > 3 * (1 << cRiceParam) && cRiceParam < 4)
+                    cRiceParam++;
+            }
+
+            int absLevel = baseLevel + coeff_remaining;
+
+            // Sign
+            int sign;
+            if (k >= nSigns) {
+                // §7.4.9.11: parity of sum INCLUDING current level
+                sign = ((sumAbsLevel + absLevel) & 1) ? -1 : 1;
+            } else {
+                sign = coeff_sign_flag[k] ? -1 : 1;
+            }
+
+            coefficients[yC * trSize + xC] = static_cast<int16_t>(sign * absLevel);
+
+            sumAbsLevel += absLevel;
         }
 
         // Save cross-sub-block state for next iteration (§9.3.4.2.6)
