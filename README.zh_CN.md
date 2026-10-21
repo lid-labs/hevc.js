@@ -14,7 +14,7 @@
 
 一个用 C++17 从零开始编写的 HEVC 解码器,编译为 WebAssembly,并附带开箱即用的 dash.js、Shaka Player 和 hls.js 插件。在 Web Worker 中通过 WebCodecs 实时将 HEVC 转码为 H.264,完全在客户端完成。可在所有支持 WebCodecs H.264 编码的 Chrome、Edge 和 Firefox 上运行。
 
-1080p @ 60fps。WASM 体积 262 KB,gzip 后约 97 KB。零依赖。无需特殊服务器标头。
+1080p @ 60fps。WASM 体积 264 KB,gzip 后约 98 KB。零依赖。无需特殊服务器标头。
 
 由一名开发者在 AI 协助下用 8 天构建完成 — [阅读完整故事](https://www.developpement.ai/blog/hevcjs-decodeur-h265-navigateur-wasm)。
 
@@ -66,7 +66,7 @@ npm install @hevcjs/hlsjs-plugin    # hls.js
 
 - `transcode-worker.js` — Web Worker(IIFE 格式,独立运行)
 - `wasm/hevc-decode.js` — Emscripten 胶水代码
-- `wasm/hevc-decode.wasm` — WASM 二进制文件(262 KB,gzip 后约 97 KB)
+- `wasm/hevc-decode.wasm` — WASM 二进制文件(264 KB,gzip 后约 98 KB)
 
 将它们从 `node_modules/@hevcjs/core/dist/` 复制到你的公共目录:
 
@@ -174,11 +174,11 @@ hevc.js 在客户端将 HEVC 转码为 H.264。这需要浏览器提供两样东
 
 这个实现在三个维度上瞄准了不同的细分市场:
 
-- **体积** — 编译为 WASM 后只有 262 KB(gzip 后约 97 KB),而 libde265 编译到 WASM 大约 2 MB。**小 8 倍** — 这在向浏览器、microVM 或沙盒运行时分发时很关键。
-- **现代化与许可证** — 全代码使用 C++17(`std::optional`、`std::shared_ptr`、`std::array`、`constexpr`),单线程,零依赖,**MIT 许可证**(libde265 是 LGPL — 这对在商业产品中静态链接很重要)。
+- **体积** — 编译为 WASM 后只有 264 KB(gzip 后约 98 KB),而 libde265 编译到 WASM 大约 2 MB。**小 8 倍** — 这在向浏览器、microVM 或沙盒运行时分发时很关键。
+- **现代化与许可证** — 全代码使用 C++17(`std::optional`、`std::shared_ptr`、`std::array`、`constexpr`),零依赖,**MIT 许可证**(libde265 是 LGPL — 这对在商业产品中静态链接很重要)。
 - **规范可追溯性** — 函数命名直接对应 ITU-T H.265 规范的章节号,且 [`docs/cross-reference.md`](docs/cross-reference.md) 把每个规范章节映射到对应的源文件和测试。如果你想 *理解* HEVC 而不只是解码它,这很有用(高校、编解码器研究、贡献者)。
 
-这 **不是 libde265 的替代品** — libde265 在纯原生环境下更快,且在生产环境中久经考验(GStreamer、VLC、libheif、FFmpeg 回退)。但对于在浏览器、microVM 和沙盒环境中嵌入,当二进制大小、许可证或可读性比最后那 20% 的原生吞吐量更重要时,这个解码器是一个可行的替代方案。
+这 **不是 libde265 的替代品** — libde265 在生产环境中久经考验(GStreamer、VLC、libheif)。但对于在浏览器、microVM 和沙盒环境中嵌入,当二进制大小、许可证或可读性比原始吞吐量更重要时,这个解码器是一个可行的替代方案。
 
 ### C API
 
@@ -241,7 +241,7 @@ cd build && ctest --output-on-failure    # 153 个测试
 
 ```bash
 pnpm build:wasm
-# 输出:build-wasm/hevc-decode.js + hevc-decode.wasm(262 KB,gzip 后约 97 KB),
+# 输出:build-wasm/hevc-decode.js + hevc-decode.wasm(264 KB,gzip 后约 98 KB),
 # 并复制到 packages/core/wasm/
 ```
 
@@ -251,15 +251,19 @@ pnpm build:wasm
 
 ### 性能
 
-单线程,Apple Silicon(M 系列):
+解码速度,2026-10-21 在 Apple M4 Pro(10 个性能核 + 4 个能效核)上测得:
 
-| | 原生 C++ | WASM(Chrome) | 对比 libde265(WASM) |
+| 码流 | 原生 C++,单线程 | 原生 C++,WPP 多线程 | WASM(Node 24,V8) |
 |---|---|---|---|
-| **1080p 解码** | 76 fps | 61 fps | libde265 速度的 **83%** |
-| **4K 解码** | 28 fps | 21 fps | — |
-| **1080p 转码** | — | ~2.5 倍实时(6 秒分片用 2.4 秒处理) | — |
+| **1080p**,SAO,WPP — `bbb1080_50f.265` | 94 fps | 251 fps | 82 fps |
+| **4K**,SAO,WPP — `bbb4k_25f.265` | 22 fps | 46 fps | 21 fps |
+| **4K**,SAO,无 WPP — `bbb4k_singleslice.265` | 30 fps | — | 27 fps |
 
-WASM 解码器的性能在原生 C++ 性能的 20% 以内,在两者都编译为 WASM 时,达到了 **libde265 速度的 83%**(libde265 是一个成熟的、经过 10 年优化的 HEVC 解码器)— 而二进制大小只有 **1/8**(262 KB vs ~2 MB; gzip 后约 97 KB)。
+**1080p 转码**(HEVC 解码 + H.264 编码,通过 Playwright 1.62 在 Chromium 中运行,Shaka 演示页,`ABR 480p/720p/1080p` 预设,每次运行中均为 1080p 码流(SAO)):1.8–2.0 倍实时。
+
+WASM 构建没有线程,因此应与单线程原生列对比:WASM 在 1080p 下达到原生的 87%,在 4K 下为 89–97%。原生解码器在一个与核心数相同大小的线程池上并行解码 WPP 行,即第三列;没有 WPP 的码流在两种情况下都只用一个线程。
+
+测量方法(英文 README 中有完整说明):原生为 Release 构建(Apple clang 17.0.0),`hevc-decode <file> -o /dev/null`,取 5 次的中位数;单线程列来自将 `src/decoding/decoder.h` 中改为 `ThreadPool thread_pool_{1};` 的构建。WASM 为发布的 `packages/core/wasm/hevc-decode.wasm`(emsdk 6.0.8),在 Node 24.4.1 上运行 `node tools/bench_wasm.cjs <file> packages/core/wasm`,取 5 次(每次取 3 次中最佳)的中位数;这不是在 Chrome 内的测量。转码数据来自 `tests/e2e/compute-cap.spec.ts` 未限速用例输出的 `speedX`,3 次运行,共 6 个 2 秒分片。
 
 ### 规范一致性
 
