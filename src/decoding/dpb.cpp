@@ -31,9 +31,24 @@ int32_t DPB::derive_poc(const SliceHeader& sh, const SPS& sps,
         NoRaslOutputFlag = true;
     }
 
+    // §C.5.2.2: an IRAP with NoRaslOutputFlag = 1 that is not picture 0 drops
+    // the pictures pending output when NoOutputOfPriorPicsFlag is 1 — always for
+    // a CRA, from the slice header otherwise. The CRA that opens the bitstream
+    // is left alone, as ffmpeg does: it forces the flag on a CRA only after an
+    // EOS (hevcdec.c, hls_slice_header).
+    no_output_of_prior_pics_ = false;
+    if (isIRAP && NoRaslOutputFlag) {
+        no_output_of_prior_pics_ = nal_type == NalUnitType::CRA_NUT
+                                       ? after_eos_
+                                       : sh.no_output_of_prior_pics_flag;
+    }
+
     // Consumed by the IRAP that opens the sequence, so the IRAPs that follow
     // inside it are judged on their own type.
-    if (isIRAP) cvs_start_pending_ = false;
+    if (isIRAP) {
+        cvs_start_pending_ = false;
+        after_eos_ = false;
+    }
 
     // Keep it for the RASL pictures that follow this IRAP: §8.1 clears their
     // PicOutputFlag when it is 1, and they are decoded after this call returns.
@@ -82,6 +97,36 @@ int32_t DPB::derive_poc(const SliceHeader& sh, const SPS& sps,
              PicOrderCntVal, sh.slice_pic_order_cnt_lsb, PicOrderCntMsb);
 
     return PicOrderCntVal;
+}
+
+void DPB::end_of_sequence() {
+    cvs_start_pending_ = true;
+    after_eos_ = true;
+}
+
+std::vector<Picture*> DPB::discard_prior_output(const SPS& sps) {
+    std::vector<Picture*> pending;
+    for (auto& pic : pictures_) {
+        if (pic->needed_for_output) pending.push_back(pic.get());
+    }
+    std::sort(pending.begin(), pending.end(), [](const Picture* a, const Picture* b) {
+        if (a->cvs_id != b->cvs_id) return a->cvs_id < b->cvs_id;
+        return a->poc < b->poc;
+    });
+
+    // What is pending here depends on how often the caller drained: the batch
+    // path never does. §C.5.2.3 bumps after each decoded picture while more than
+    // sps_max_num_reorder_pics wait for output, so the lowest of them have
+    // already left the DPB by the time this IRAP arrives, whichever path ran:
+    // keep them for output and drop only the last max_num_reorder_pics.
+    // The DPB-fullness and latency conditions are not modelled, as in drain().
+    int tid = sps.sps_max_sub_layers_minus1;
+    size_t max_reorder = sps.sub_layer_ordering[tid].max_num_reorder_pics;
+    size_t keep = pending.size() > max_reorder ? pending.size() - max_reorder : 0;
+
+    std::vector<Picture*> dropped(pending.begin() + keep, pending.end());
+    for (auto* pic : dropped) pic->needed_for_output = false;
+    return dropped;
 }
 
 // ============================================================

@@ -34,6 +34,18 @@ public:
     int32_t derive_poc(const SliceHeader& sh, const SPS& sps,
                        NalUnitType nal_type, uint8_t nuh_temporal_id);
 
+    // §8.1: an end-of-sequence (or end-of-bitstream) NAL unit. The next IRAP
+    // opens a new coded video sequence, with NoRaslOutputFlag = 1.
+    void end_of_sequence();
+
+    // §C.5.2.2 NoOutputOfPriorPicsFlag of the picture derive_poc last ran on.
+    bool no_output_of_prior_pics() const { return no_output_of_prior_pics_; }
+
+    // §C.5.2.2 with NoOutputOfPriorPicsFlag = 1: the pictures still pending
+    // output are emptied without output. Called before the current picture is
+    // allocated. Returns the pictures dropped, so the caller can report them.
+    std::vector<Picture*> discard_prior_output(const SPS& sps);
+
     // ============================================================
     // §8.3.2 — RPS derivation + picture marking
     // ============================================================
@@ -140,9 +152,8 @@ private:
 
     // No IRAP has opened a coded video sequence yet, so the next one does.
     // §8.1 names three cases where an IRAP takes NoRaslOutputFlag = 1; this
-    // covers the first IRAP to open decoding. The other two are not reachable
-    // yet: an end-of-sequence NAL never arrives here (#277), and
-    // HandleCraAsBlaFlag has no way into the API at all.
+    // covers the first IRAP to open decoding and the first IRAP after an
+    // end-of-sequence NAL. HandleCraAsBlaFlag has no way into the API at all.
     //
     // It replaced first_picture_, which fell on the first picture of any kind
     // and stayed down: a decoder handed a segment that opens before its IRAP —
@@ -150,6 +161,12 @@ private:
     // the flag already spent, and showed a RASL set whose references were never
     // decoded. Nothing else read that flag, so it is gone.
     bool cvs_start_pending_ = true;
+
+    // An end-of-sequence NAL came since the last IRAP. Kept apart from
+    // cvs_start_pending_: §C.5.2.2 forces NoOutputOfPriorPicsFlag on a CRA
+    // that follows one, not on the CRA that opens the bitstream.
+    bool after_eos_ = false;
+    bool no_output_of_prior_pics_ = false;
 
     // RPS lists (§8.3.2) — pictures from the DPB
     // "StCurrBefore" = short-term, used by current, POC < current

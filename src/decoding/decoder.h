@@ -21,8 +21,9 @@ enum class DecodeStatus {
     ERROR,
 };
 
-// A picture decoded with PicOutputFlag = 0. The pair orders it the way
-// DPB::bump does — by CVS first, then POC.
+// A decoded picture that is never output: PicOutputFlag = 0, or emptied from
+// the DPB without output (§C.5.2.2). The pair orders it the way DPB::bump
+// does — by CVS first, then POC.
 struct SuppressedPicture {
     int32_t cvs_id;
     int32_t poc;

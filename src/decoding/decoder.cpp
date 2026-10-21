@@ -40,6 +40,10 @@ DecodeStatus Decoder::decode(const uint8_t* data, size_t size) {
 
             auto status = decode_picture(nals, first_vcl, vcl_count);
             if (status != DecodeStatus::OK) return status;
+        } else if (type == NalUnitType::EOS_NUT || type == NalUnitType::EOB_NUT) {
+            // §8.1: the first picture after it is an IRAP with NoRaslOutputFlag = 1
+            dpb_.end_of_sequence();
+            i++;
         } else {
             // Non-VCL, non-parameter-set NAL (SEI, AUD, etc.) — skip
             i++;
@@ -75,6 +79,14 @@ DecodeStatus Decoder::decode_picture(const std::vector<NalUnit>& nals,
     int32_t poc = dpb_.derive_poc(first_sh, *sps, nal.header.nal_unit_type,
                                    nal.header.TemporalId());
 
+    // §C.5.2.2: pictures emptied without output are reported like those with
+    // PicOutputFlag = 0 — each one is a demuxed sample that produces no frame.
+    if (dpb_.no_output_of_prior_pics()) {
+        for (Picture* dropped : dpb_.discard_prior_output(*sps)) {
+            suppressed_.push_back({dropped->cvs_id, dropped->poc});
+        }
+    }
+
     // Allocate picture in DPB
     ChromaFormat fmt = static_cast<ChromaFormat>(sps->chroma_format_idc);
     Picture* pic = dpb_.alloc_picture(
@@ -96,15 +108,11 @@ DecodeStatus Decoder::decode_picture(const std::vector<NalUnit>& nals,
     }
     pic->needed_for_output = PicOutputFlag;
 
-    // §8.1: IRAP with NoRaslOutputFlag starts a new CVS
-    if (is_irap(nal.header.nal_unit_type)) {
-        bool isIDR = (nal.header.nal_unit_type == NalUnitType::IDR_W_RADL ||
-                      nal.header.nal_unit_type == NalUnitType::IDR_N_LP);
-        bool isBLA = (nal.header.nal_unit_type == NalUnitType::BLA_W_LP ||
-                      nal.header.nal_unit_type == NalUnitType::BLA_W_RADL ||
-                      nal.header.nal_unit_type == NalUnitType::BLA_N_LP);
-        if (isIDR || isBLA)
-            cvs_id_++;
+    // §8.1: IRAP with NoRaslOutputFlag starts a new CVS — an IDR, a BLA, or a
+    // CRA that opens the bitstream or follows an end-of-sequence NAL. POC
+    // restarts with it, so pictures of two sequences must not share an id.
+    if (is_irap(nal.header.nal_unit_type) && dpb_.no_rasl_output_flag()) {
+        cvs_id_++;
     }
     pic->cvs_id = cvs_id_;
 
