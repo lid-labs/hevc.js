@@ -10,6 +10,11 @@
 #   opengop_qcif_cra_first.265  the same stream cut at its second CRA, so that CRA opens
 #                               the bitstream and takes NoRaslOutputFlag = 1 — its three
 #                               RASL pictures must not be output
+#   opengop_qcif_eos.265        the uncut stream with an end-of-sequence NAL before its
+#                               second CRA, which then opens a new sequence (§8.1): its
+#                               RASL pictures are not output, and neither are the
+#                               pictures still pending output from the first sequence,
+#                               which §C.5.2.2 empties without output on a CRA
 #
 # The cut is what makes the clause reachable: x265 only ever emits a CRA mid-stream, and
 # a CRA that follows a decodable sequence has NoRaslOutputFlag = 0.
@@ -74,9 +79,12 @@ if len(cras) < 2:
     sys.exit(f'expected at least two CRA, found {len(cras)}')
 
 (fixtures / 'opengop_qcif_cra_first.265').write_bytes(data[:first_vcl] + data[cras[1]:])
+
+EOS_NAL = b'\x00\x00\x00\x01\x48\x01'  # nal_unit_type 36, layer 0, TemporalId 0
+(fixtures / 'opengop_qcif_eos.265').write_bytes(data[:cras[1]] + EOS_NAL + data[cras[1]:])
 PY
 
-for name in opengop_qcif_12f opengop_qcif_cra_first; do
+for name in opengop_qcif_12f opengop_qcif_cra_first opengop_qcif_eos; do
     output="$FIXTURES_DIR/$name.265"
     echo "--- $name.265 ---"
 
