@@ -255,13 +255,13 @@ pnpm build:wasm
 
 | 码流 | 原生 C++,单线程 | 原生 C++,WPP 多线程 | WASM(Node 24,V8) |
 |---|---|---|---|
-| **1080p**,SAO,WPP — `bbb1080_50f.265` | 94 fps | 251 fps | 82 fps |
-| **4K**,SAO,WPP — `bbb4k_25f.265` | 22 fps | 46 fps | 21 fps |
-| **4K**,SAO,无 WPP — `bbb4k_singleslice.265` | 30 fps | — | 27 fps |
+| **1080p**,SAO,WPP — `bbb1080_50f.265` | 104 fps | 256 fps | 91 fps |
+| **4K**,SAO,WPP — `bbb4k_25f.265` | 24 fps | 47 fps | 23 fps |
+| **4K**,SAO,无 WPP — `bbb4k_singleslice.265` | 33 fps | — | 30 fps |
 
 **1080p 转码**(HEVC 解码 + H.264 编码,通过 Playwright 1.62 在 Chromium 中运行,Shaka 演示页,`ABR 480p/720p/1080p` 预设,每次运行中均为 1080p 码流(SAO)):1.8–2.0 倍实时。
 
-WASM 构建没有线程,因此应与单线程原生列对比:WASM 在 1080p 下达到原生的 87%,在 4K 下为 89–97%。原生解码器在一个与核心数相同大小的线程池上并行解码 WPP 行,即第三列;没有 WPP 的码流在两种情况下都只用一个线程。
+WASM 构建没有线程,因此应与单线程原生列对比:WASM 在 1080p 下达到原生的 88%,在 4K 下为 92–97%。原生解码器在一个与核心数相同大小的线程池上并行解码 WPP 行,即第三列;没有 WPP 的码流在两种情况下都只用一个线程。
 
 测量方法(英文 README 中有完整说明):原生为 Release 构建(Apple clang 17.0.0),`hevc-decode <file> -o /dev/null`,取 5 次的中位数;单线程列来自将 `src/decoding/decoder.h` 中改为 `ThreadPool thread_pool_{1};` 的构建。WASM 为发布的 `packages/core/wasm/hevc-decode.wasm`(emsdk 6.0.8),在 Node 24.4.1 上运行 `node tools/bench_wasm.cjs <file> packages/core/wasm`,取 5 次(每次取 3 次中最佳)的中位数;这不是在 Chrome 内的测量。转码数据来自 `tests/e2e/compute-cap.spec.ts` 未限速用例输出的 `speedX`,3 次运行,共 6 个 2 秒分片。
 

@@ -324,13 +324,13 @@ Decode speed, measured on 2026-10-21 on an Apple M4 Pro (10 performance + 4 effi
 
 | Stream | Native C++, 1 thread | Native C++, WPP threads | WASM (Node 24, V8) |
 |---|---|---|---|
-| **1080p**, SAO, WPP — `bbb1080_50f.265` | 94 fps | 251 fps | 82 fps |
-| **4K**, SAO, WPP — `bbb4k_25f.265` | 22 fps | 46 fps | 21 fps |
-| **4K**, SAO, no WPP — `bbb4k_singleslice.265` | 30 fps | — | 27 fps |
+| **1080p**, SAO, WPP — `bbb1080_50f.265` | 104 fps | 256 fps | 91 fps |
+| **4K**, SAO, WPP — `bbb4k_25f.265` | 24 fps | 47 fps | 23 fps |
+| **4K**, SAO, no WPP — `bbb4k_singleslice.265` | 33 fps | — | 30 fps |
 
 **1080p transcode** (HEVC decode + H.264 encode, in Chromium through Playwright 1.62, Shaka demo, `ABR 480p/720p/1080p` preset, 1080p variant (SAO) active in every run): 1.8–2.0x real time.
 
-The WASM build has no threads, so the single-threaded native column is the one to compare it with: WASM runs at 87% of native at 1080p and 89–97% at 4K. The native decoder parallelises WPP rows on a pool sized to the core count, which is the third column; a stream without WPP decodes on one thread either way.
+The WASM build has no threads, so the single-threaded native column is the one to compare it with: WASM runs at 88% of native at 1080p and 92–97% at 4K. The native decoder parallelises WPP rows on a pool sized to the core count, which is the third column; a stream without WPP decodes on one thread either way.
 
 How these were measured, to reproduce or re-run:
 
