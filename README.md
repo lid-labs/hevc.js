@@ -235,7 +235,7 @@ This implementation targets a different niche on three axes:
 - **Modernity & license** — C++17 throughout (`std::optional`, `std::shared_ptr`, `std::array`, `constexpr`), zero dependencies, **MIT-licensed** (vs LGPL for libde265 — relevant for static linking in commercial products).
 - **Spec traceability** — function names mirror ITU-T H.265 section numbers, and [`docs/cross-reference.md`](docs/cross-reference.md) maps every spec section to its source file and test. Useful if you want to *understand* HEVC, not just decode it (universities, codec research, contributors).
 
-This is **not a libde265 replacement** — libde265 is battle-tested in production (GStreamer, VLC, libheif, FFmpeg fallback). For embedding in browsers, microVMs, and sandboxed environments where binary size, license, or readability matter more than raw throughput, this decoder is a viable alternative.
+This is **not a libde265 replacement** — libde265 is battle-tested in production (GStreamer, VLC, libheif). For embedding in browsers, microVMs, and sandboxed environments where binary size, license, or readability matter more than raw throughput, this decoder is a viable alternative.
 
 For a side-by-side of the four ways to play HEVC in a browser — hevc.js, libde265.js, ffmpeg.wasm and h265web.js — see [HEVC in the browser: four ways, compared](https://www.hevcjs.dev/docs/comparison.html) (WASM size, license, MSE streaming, COOP/COEP requirements).
 
