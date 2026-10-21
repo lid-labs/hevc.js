@@ -110,6 +110,8 @@ This repo uses [Changesets](https://github.com/changesets/changesets) to manage 
 
 PRs that only touch docs, CI, tests, or build configuration don't need a changeset.
 
+A CI check (`Changeset present`) fails a PR that changes `src/`, `packages/*/src/` (test files excepted) or `packages/core/wasm/` without adding or modifying a changeset. For a change with no observable effect, such as a pure refactor, run `pnpm changeset --empty`: it records that no release note is needed without bumping any version. The check cannot tell whether a changeset still describes the whole diff — revisit it after every later fix in the same PR.
+
 ### Don't
 
 - Don't bump the `version` field in any `package.json` manually — Changesets does that at release time.

@@ -1,0 +1,49 @@
+name: Changeset
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  changeset:
+    name: Changeset present
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      # A PR touching shipped code must add or modify a changeset: the per-package
+      # CHANGELOG npm consumers read is generated from it (#272). It cannot tell
+      # whether that changeset still covers the whole diff — that stays a review job.
+      - name: Require a changeset when shipped code changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          changed=$(git diff --name-only "$BASE_SHA"...HEAD)
+          # src/ is the C++ decoder, compiled into @hevcjs/core's WASM.
+          shipped=$(printf '%s\n' "$changed" \
+            | grep -E '^(src/|packages/[^/]+/src/|packages/core/wasm/)' \
+            | grep -vE '\.test\.ts$' || true)
+          if [ -z "$shipped" ]; then
+            echo "No shipped code changed: no changeset needed."
+            exit 0
+          fi
+          # Added or modified only: the Release PR deletes changesets, which is not one.
+          changesets=$(git diff --name-only --diff-filter=AM "$BASE_SHA"...HEAD -- '.changeset/*.md' \
+            | grep -v '^\.changeset/README\.md$' || true)
+          if [ -n "$changesets" ]; then
+            echo "Changeset(s) in this PR:"
+            printf '  %s\n' $changesets
+            exit 0
+          fi
+          echo "::error::This PR changes shipped code but adds or modifies no changeset."
+          echo "Shipped files changed:"
+          printf '  %s\n' $shipped
+          echo "Run 'pnpm changeset' and commit the file. For a change with no observable"
+          echo "effect (a pure refactor), run 'pnpm changeset --empty' instead: it records"
+          echo "the decision without bumping any version."
+          exit 1
