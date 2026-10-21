@@ -19,15 +19,17 @@ export interface HEVCFrame {
   /** Picture Order Count — display order within one coded video sequence */
   poc: number;
   /**
-   * Coded video sequence, incremented at each IDR/BLA. POC restarts there, so
-   * display order across a whole stream is (cvsId, poc), not poc alone.
+   * Coded video sequence, incremented at each IRAP that opens one — IDR, BLA,
+   * or a CRA first in the stream or after an end-of-sequence NAL. POC restarts
+   * there, so display order across a whole stream is (cvsId, poc), not poc alone.
    */
   cvsId: number;
 }
 
 /**
- * A picture decoded with PicOutputFlag = 0 (§C.3.1) — decoded, possibly used
- * as a reference, never output. Ordered the way output pictures are.
+ * A decoded picture that is never output: PicOutputFlag = 0 (§C.3.1, §8.1),
+ * or emptied from the DPB without output by a new sequence (§C.5.2.2).
+ * Ordered the way output pictures are.
  */
 export interface SuppressedPicture {
   cvsId: number;

@@ -115,6 +115,7 @@ if(BUILD_TESTS AND NOT BUILD_WASM)
         tests/unit/test_ref_pic_lists.cpp
         tests/unit/test_pic_output_flag.cpp
         tests/unit/test_rasl_output.cpp
+        tests/unit/test_end_of_sequence.cpp
     )
 
     target_link_libraries(hevc_tests PRIVATE
@@ -222,6 +223,15 @@ if(BUILD_TESTS AND NOT BUILD_WASM)
         COMMAND ${ORACLE_SCRIPT} ${FIXTURES_DIR}/opengop_qcif_cra_first.265 176 144
             9c249fb00174f2f6e6fbb3457c10679b $<TARGET_FILE:hevc-decode>)
     set_tests_properties(oracle_opengop_qcif_cra_first PROPERTIES LABELS "oracle;phase6"
+        SKIP_RETURN_CODE 2)
+
+    # The uncut stream with an end-of-sequence NAL before its second CRA: 12 coded,
+    # 7 out. ffmpeg drops that CRA's RASL set and the two pictures of the first
+    # sequence still pending output (§C.5.2.2), so the hash needs both rules.
+    add_test(NAME oracle_opengop_qcif_eos
+        COMMAND ${ORACLE_SCRIPT} ${FIXTURES_DIR}/opengop_qcif_eos.265 176 144
+            47416569a3f352b681855d50a3895490 $<TARGET_FILE:hevc-decode>)
+    set_tests_properties(oracle_opengop_qcif_eos PROPERTIES LABELS "oracle;phase6"
         SKIP_RETURN_CODE 2)
 
     # Real-world bitstreams — Big Buck Bunny (Main profile, full pipeline)

@@ -212,9 +212,9 @@
       }
     }
     /**
-     * The pictures decoded since the last call whose PicOutputFlag was 0
-     * (§C.3.1) — decoded, possibly used as a reference, never output. Empties
-     * the list.
+     * The pictures decoded since the last call that will never be output:
+     * PicOutputFlag was 0 (§C.3.1, §8.1), or a new sequence emptied them from
+     * the DPB without output (§C.5.2.2). Empties the list.
      *
      * A caller that maps output frames onto per-sample timestamps needs these:
      * the sample that carried such a picture produces no frame, and without
