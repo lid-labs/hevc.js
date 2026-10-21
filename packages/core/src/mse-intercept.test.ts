@@ -7,6 +7,15 @@ import {
   uninstallMSEIntercept,
 } from "./mse-intercept.js";
 import { setLogLevel } from "./log.js";
+import { SegmentTranscoder } from "./segment-transcoder.js";
+
+// The proxy starts the main-thread transcoder's init() without awaiting it, and
+// in Node its WASM import rejects. Left unstubbed, that rejection can land after
+// the test file ends and log while Vitest closes its worker, which fails the run
+// (#291). A never-settling init keeps the transcoder uninitialized, as before.
+function stubTranscoderInit(): void {
+  vi.spyOn(SegmentTranscoder.prototype, "init").mockReturnValue(new Promise(() => {}));
+}
 
 // Node has no MediaSource/ManagedMediaSource — each test stubs what it needs.
 afterEach(() => {
@@ -88,8 +97,7 @@ describe("transcoding proxy", () => {
   function setup(config = {}): { ms: FakeMediaSource; sb: FakeSourceBuffer } {
     vi.stubGlobal("MediaSource", FakeMediaSource);
     vi.stubGlobal("SourceBuffer", FakeSourceBuffer);
-    // Silence the (expected) main-thread transcoder init failure in Node.
-    vi.spyOn(console, "error").mockImplementation(() => {});
+    stubTranscoderInit();
     installMSEIntercept({ logLevel: "debug", ...config });
     const ms = new FakeMediaSource();
     // hls.js-style mime: no space, no quotes around the codec.
@@ -274,7 +282,7 @@ describe("muxed A/V HEVC refusal", () => {
   function install(logLevel: "silent" | "error" = "silent"): FakeMS {
     vi.stubGlobal("MediaSource", FakeMS);
     vi.stubGlobal("SourceBuffer", FakeSB);
-    vi.spyOn(console, "error").mockImplementation(() => {});
+    stubTranscoderInit();
     installMSEIntercept({ logLevel });
     return new FakeMS();
   }
