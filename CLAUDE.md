@@ -40,6 +40,9 @@ manage versioning and publishing.
    per-package CHANGELOG.md.
 3. Commit the generated `.changeset/<random-name>.md` with the PR.
 4. PRs touching only docs / CI / tests / build config don't need a changeset.
+5. The `Changeset present` CI check fails a PR that changes `src/`,
+   `packages/*/src/` or `packages/core/wasm/` without a changeset. A
+   change with no observable effect takes `pnpm changeset --empty`.
 
 ### Never
 
