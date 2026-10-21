@@ -1,37 +1,40 @@
 # Architecture Decisions
 
-## AD-001 : Bit depth — Runtime, pas templates
+New decisions are appended here. `docs/adr/001-initial-arch.md` is the initial
+architecture document, dated 2026-03-19, and is not updated.
 
-**Contexte** : Le plan mentionne "templates pour le bit depth (8/10/16)". Deux approches possibles :
-- Template `<int BitDepth>` : specialisation compile-time, performance max, code duplique
-- Runtime `int bit_depth` : un seul chemin de code, plus simple, branchement runtime
+## AD-001 : Bit depth — Runtime, not templates
 
-**Decision** : Runtime avec `uint16_t` comme type de sample universel.
+**Context**: The plan mentions "templates for the bit depth (8/10/16)". Two possible approaches:
+- Template `<int BitDepth>`: compile-time specialisation, maximum performance, duplicated code
+- Runtime `int bit_depth`: a single code path, simpler, runtime branching
 
-**Justification** :
-- Le Main profile (Phase 4-6) est 8-bit only. Pas besoin de templates avant Phase 7
-- `uint16_t` contient 8-bit et 10-bit sans surcharge
-- La performance viendra du SIMD (Phase 9), pas des templates
-- Moins de code = moins de bugs de conformite
+**Decision**: Runtime, with `uint16_t` as the universal sample type.
 
-**Consequence** : `Pixel = uint16_t` partout. Les shifts/clips utilisent `BitDepth` en runtime.
+**Rationale**:
+- The Main profile (Phases 4-6) is 8-bit only. No need for templates before Phase 7
+- `uint16_t` holds 8-bit and 10-bit with no overhead
+- Performance will come from SIMD (Phase 9), not from templates
+- Less code = fewer conformance bugs
+
+**Consequence**: `Pixel = uint16_t` everywhere. Shifts/clips use `BitDepth` at runtime.
 
 ## AD-002 : Picture layout — Planar (separate planes)
 
-**Decision** : 3 buffers separes Y, Cb, Cr avec stride independant.
+**Decision**: 3 separate Y, Cb, Cr buffers with independent strides.
 
-**Justification** :
-- La spec traite chaque composante independamment
-- Le deblocking et SAO operent plan par plan
-- L'interpolation chroma a des dimensions differentes
-- Les filtres SIMD preferent les donnees contiguees par plan
+**Rationale**:
+- The spec treats each component independently
+- Deblocking and SAO operate plane by plane
+- Chroma interpolation has different dimensions
+- SIMD filters prefer data contiguous per plane
 
-**Structure** :
+**Structure**:
 ```cpp
 struct Picture {
     std::vector<uint16_t> planes[3];  // Y=0, Cb=1, Cr=2
-    int width[3], height[3];           // dimensions par plan
-    int stride[3];                     // stride par plan (en samples)
+    int width[3], height[3];           // per-plane dimensions
+    int stride[3];                     // per-plane stride (in samples)
     int bit_depth;
     int chroma_format_idc;             // 1=420, 2=422, 3=444
     int poc;
@@ -40,24 +43,24 @@ struct Picture {
 
 ## AD-003 : Parameter set ownership — Stored by value, indexed by ID
 
-**Decision** : `std::array<std::optional<VPS>, 16>` pour les VPS, idem SPS (16 max), PPS (64 max).
+**Decision**: `std::array<std::optional<VPS>, 16>` for VPSs, the same for SPSs (16 max) and PPSs (64 max).
 
-**Justification** :
-- Les IDs sont bornes par la spec (VPS: 0-15, SPS: 0-15, PPS: 0-63)
-- Pas besoin de map dynamique
-- Copie complete a chaque mise a jour (les PS sont petits)
-- Le slice header reference le PPS actif par ID
+**Rationale**:
+- The IDs are bounded by the spec (VPS: 0-15, SPS: 0-15, PPS: 0-63)
+- No need for a dynamic map
+- Full copy on every update (parameter sets are small)
+- The slice header references the active PPS by ID
 
-## AD-004 : Error handling — Assertions en debug, codes d'erreur en release
+## AD-004 : Error handling — Assertions in debug, error codes in release
 
-**Decision** :
-- Debug : `assert()` + `HEVC_DEBUG` logging pour tracer les valeurs intermediaires
-- Release : fonctions retournent `bool` ou `enum HEVCError`
-- Pas d'exceptions C++ (requis pour l'API C WASM)
+**Decision**:
+- Debug: `assert()` + `HEVC_DEBUG` logging to trace intermediate values
+- Release: functions return `bool` or `enum HEVCError`
+- No C++ exceptions (required for the WASM C API)
 
-## AD-005 : CABAC — Struct of arrays pour les contextes
+## AD-005 : CABAC — Struct of arrays for the contexts
 
-**Decision** : Tous les contextes dans un seul tableau flat, indexes par ctxIdx global.
+**Decision**: All contexts in a single flat array, indexed by global ctxIdx.
 
 ```cpp
 struct CabacContext {
@@ -66,38 +69,35 @@ struct CabacContext {
 };
 
 struct CabacEngine {
-    CabacContext contexts[256];  // tous les contextes
+    CabacContext contexts[256];  // all contexts
     uint16_t ivlCurrRange;
     uint16_t ivlOffset;
     BitstreamReader* bs;
 };
 ```
 
-**Justification** :
-- Acces O(1) par ctxIdx
-- Init simple (boucle sur le tableau)
-- Save/restore pour WPP en un memcpy
+**Rationale**:
+- O(1) access by ctxIdx
+- Simple init (a loop over the array)
+- Save/restore for WPP in one memcpy
 
-## AD-006 : Intermediate buffers — Stack-allocated, taille max CTU
+## AD-006 : Intermediate buffers — Stack-allocated, max CTU size
 
-**Decision** : Les buffers temporaires (prediction, residual, transform) sont alloues sur la stack avec la taille max du CTU (64x64).
+**Decision**: Temporary buffers (prediction, residual, transform) are allocated on the stack at the maximum CTU size (64x64).
 
 ```cpp
-// Dans la fonction de decodage d'un CU :
+// In the CU decoding function:
 int16_t pred_samples[64 * 64];
 int16_t residual[64 * 64];
-int32_t transform_buf[64 * 64];  // precision etendue pour transform
+int32_t transform_buf[64 * 64];  // extended precision for the transform
 ```
 
-**Justification** :
-- Pas d'allocation dynamique dans le hot path
-- 64*64*4 = 16KB par buffer, ~48KB total — acceptable sur la stack
-- WASM : la stack par defaut Emscripten est ~64KB (le heap est extensible, pas la stack). Prevoir `-sSTACK_SIZE=1048576` en Phase 8, ou restructurer pour allouer les buffers au niveau CTU
+**Rationale**:
+- No dynamic allocation in the hot path
+- 64*64*4 = 16KB per buffer, ~48KB total — acceptable on the stack
+- WASM: the default Emscripten stack is ~64KB (the heap can grow, the stack cannot). Plan for `-sSTACK_SIZE=1048576` in Phase 8, or restructure to allocate the buffers at CTU level
 
 ## AD-007 : DPB — the caller sets the memory envelope; the decoder only frees on a bump
-
-*Written in English per the repo's documentation convention (CLAUDE.md). AD-001
-to AD-006 predate it and are still in French — see the follow-up issue.*
 
 **Context**: A picture's storage buffer is reclaimed only once it is neither a
 reference nor pending output. `drain()` does not evict: it returns raw
