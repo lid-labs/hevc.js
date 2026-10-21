@@ -222,24 +222,21 @@ void decode_residual_coding(DecodingContext& ctx, int x0, int y0,
     const uint8_t (*sbScan)[2] = get_sub_block_scan(log2TrafoSize, scanIdx);
     const uint8_t (*coeffScan)[2] = get_coeff_scan(scanIdx);
 
-    // Find last sub-block and last scan position
+    // Find last sub-block and last scan position: the sub-block holding the
+    // last coefficient, then the position inside it — two short searches
+    // instead of walking every position of the TU from its end. The prefix and
+    // suffix bound LastSignificantCoeffX/Y below trSize, so both are found; the
+    // > 0 bounds only keep a lookup that missed inside the tables.
+    const int xSLast = LastSignificantCoeffX >> 2, ySLast = LastSignificantCoeffY >> 2;
+    const int xPLast = LastSignificantCoeffX & 3, yPLast = LastSignificantCoeffY & 3;
     int lastSubBlock = numSubBlocks - 1;
-    int lastScanPos = 16;
-
-    // Search for last position
-    while (true) {
-        if (lastScanPos == 0) {
-            lastScanPos = 16;
-            lastSubBlock--;
-        }
+    while (lastSubBlock > 0 &&
+           (sbScan[lastSubBlock][0] != xSLast || sbScan[lastSubBlock][1] != ySLast))
+        lastSubBlock--;
+    int lastScanPos = 15;
+    while (lastScanPos > 0 &&
+           (coeffScan[lastScanPos][0] != xPLast || coeffScan[lastScanPos][1] != yPLast))
         lastScanPos--;
-        int xS = sbScan[lastSubBlock][0];
-        int yS = sbScan[lastSubBlock][1];
-        int xC = (xS << 2) + coeffScan[lastScanPos][0];
-        int yC = (yS << 2) + coeffScan[lastScanPos][1];
-        if (xC == LastSignificantCoeffX && yC == LastSignificantCoeffY)
-            break;
-    }
 
     // coded_sub_block_flag array
     int coded_sub_block_flag[64] = {};
