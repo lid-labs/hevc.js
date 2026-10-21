@@ -27,7 +27,9 @@ typedef struct {
     int chroma_height;     // Chroma plane height
     int bit_depth;         // Bit depth (8 or 10)
     int poc;               // Picture Order Count (display order within a CVS)
-    int cvs_id;            // Coded video sequence, incremented at each IDR/BLA.
+    int cvs_id;            // Coded video sequence, incremented at each IRAP that
+                           // opens one: IDR, BLA, or a CRA first in the stream
+                           // or after an end-of-sequence NAL.
                            // POC restarts there, so display order is
                            // (cvs_id, poc), not poc alone.
 } HEVCFrame;
@@ -89,8 +91,9 @@ int hevc_decoder_get_drained_frame(HEVCDecoder* dec, int index, HEVCFrame* frame
 int hevc_decoder_flush(HEVCDecoder* dec);
 
 // Number of pictures decoded since the last
-// hevc_decoder_take_suppressed_pictures whose PicOutputFlag was 0 (§C.3.1) —
-// decoded, possibly used as a reference, never output.
+// hevc_decoder_take_suppressed_pictures that will never be output: their
+// PicOutputFlag was 0 (§C.3.1, §8.1), or a new sequence emptied them from the
+// DPB without output (NoOutputOfPriorPicsFlag, §C.5.2.2).
 int hevc_decoder_get_suppressed_picture_count(HEVCDecoder* dec);
 
 // Copy those pictures as (cvs_id, poc) pairs, in decode order, into
