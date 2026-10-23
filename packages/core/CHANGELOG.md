@@ -1,5 +1,15 @@
 # @hevcjs/core
 
+## 1.5.1
+
+### Patch Changes
+
+- [#297](https://github.com/lid-labs/hevc.js/pull/297) [`c847fed`](https://github.com/lid-labs/hevc.js/commit/c847fed4b36f4828f48b19c8b3b6151fb5858fcd) Thanks [@privaloops](https://github.com/privaloops)! - The deblocking filter reads the POCs of the reference picture lists once per picture instead of querying the DPB for every edge segment. Decoded output is unchanged, bit for bit. Measured with the WASM build under Node 24: under 1% less decode time at 1080p and 4K.
+
+- [#290](https://github.com/lid-labs/hevc.js/pull/290) [`05fdae1`](https://github.com/lid-labs/hevc.js/commit/05fdae1a88ae37cdc0c1a212a9ccec96daef6e2e) Thanks [@privaloops](https://github.com/privaloops)! - Decoder: an end-of-sequence NAL now opens a new coded video sequence at the next IRAP, as §8.1 requires. That IRAP's RASL pictures are no longer output, and the pictures of the previous sequence still pending output are dropped when `NoOutputOfPriorPicsFlag` is 1 — always after an EOS on a CRA, and on an IDR or BLA that sets `no_output_of_prior_pics_flag` — matching ffmpeg frame for frame. Dropped pictures are reported by `takeSuppressedPictures()`, so timestamps stay aligned. `cvsId` now also increments on a CRA that opens a sequence, so a stream starting on a CRA numbers its sequences from 1 instead of 0; ordering is unchanged.
+
+- [#296](https://github.com/lid-labs/hevc.js/pull/296) [`aa242a8`](https://github.com/lid-labs/hevc.js/commit/aa242a814001274559e6bbab0256ff3695d97b40) Thanks [@privaloops](https://github.com/privaloops)! - Faster coefficient parsing in the WASM decoder: `residual_coding` now derives the `sig_coeff_flag` context once per sub-block, reads coefficient levels over the significant positions only, and locates the last significant coefficient directly. Decoded output is unchanged, bit for bit. Measured with the WASM build under Node 24: about 6% less decode time at 1080p and 8–9% at 4K.
+
 ## 1.5.0
 
 ### Minor Changes
