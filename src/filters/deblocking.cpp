@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <algorithm>
 #include <cstring>
+#include <vector>
 
 namespace hevc {
 
@@ -123,7 +124,15 @@ static bool is_boundary_excluded(const DecodingContext& ctx,
 // ============================================================
 // Boundary Strength derivation — §8.7.2.4
 // ============================================================
-static int derive_bs(const DecodingContext& ctx, int xP, int yP, int xQ, int yQ) {
+// POC of each entry of the reference picture lists, read once per picture
+// instead of through the DPB for every edge segment. -999999 marks an entry
+// with no picture, as the DPB lookup did.
+struct RefPocs {
+    std::vector<int32_t> list[2];
+};
+
+static int derive_bs(const DecodingContext& ctx, const RefPocs& refPocs,
+                     int xP, int yP, int xQ, int yQ) {
     auto& sps = *ctx.sps;
     int picW = sps.pic_width_in_luma_samples;
     int picH = sps.pic_height_in_luma_samples;
@@ -183,15 +192,8 @@ static int derive_bs(const DecodingContext& ctx, int xP, int yP, int xQ, int yQ)
     // Get reference picture POCs for comparison (not index-based, picture-based)
     auto get_ref_poc = [&](const PUMotionInfo& mi, int list) -> int32_t {
         if (!mi.pred_flag[list] || mi.ref_idx[list] < 0) return -999999;
-        if (list == 0 && mi.ref_idx[0] < ctx.dpb->num_ref_list0()) {
-            auto* rp = ctx.dpb->ref_pic_list0(mi.ref_idx[0]);
-            return rp ? rp->poc : -999999;
-        }
-        if (list == 1 && mi.ref_idx[1] < ctx.dpb->num_ref_list1()) {
-            auto* rp = ctx.dpb->ref_pic_list1(mi.ref_idx[1]);
-            return rp ? rp->poc : -999999;
-        }
-        return -999999;
+        const auto& pocs = refPocs.list[list];
+        return mi.ref_idx[list] < static_cast<int>(pocs.size()) ? pocs[mi.ref_idx[list]] : -999999;
     };
 
     if (nRefP == 1) {
@@ -376,6 +378,16 @@ void apply_deblocking(DecodingContext& ctx) {
                                   pic->planes[2].data() };
     int chromaStride[3] = { 0, pic->stride[1], pic->stride[2] };
 
+    RefPocs refPocs;
+    for (int list = 0; list < 2; list++) {
+        const int n = list == 0 ? ctx.dpb->num_ref_list0() : ctx.dpb->num_ref_list1();
+        refPocs.list[list].resize(n);
+        for (int i = 0; i < n; i++) {
+            const Picture* rp = list == 0 ? ctx.dpb->ref_pic_list0(i) : ctx.dpb->ref_pic_list1(i);
+            refPocs.list[list][i] = rp ? rp->poc : -999999;
+        }
+    }
+
     // §8.7.2.1: Process vertical edges first, then horizontal
     for (int pass = 0; pass < 2; pass++) {
         EdgeType edgeType = (pass == 0) ? EDGE_VER : EDGE_HOR;
@@ -413,7 +425,7 @@ void apply_deblocking(DecodingContext& ctx) {
                     } else {
                         xP = x; yP = y - 1; xQ = x; yQ = y;
                     }
-                    int bS = derive_bs(ctx, xP, yP, xQ, yQ);
+                    int bS = derive_bs(ctx, refPocs, xP, yP, xQ, yQ);
                     if (bS == 0) continue;
 
                     // Get QP for both sides
