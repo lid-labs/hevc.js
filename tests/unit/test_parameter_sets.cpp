@@ -327,6 +327,9 @@ public:
         put_bits(0, len);
         for (int i = len; i >= 0; i--) put_bit(static_cast<int>((vp1 >> i) & 1));
     }
+    void put_se(int32_t v) {
+        put_ue(v > 0 ? 2 * static_cast<uint32_t>(v) - 1 : 2 * static_cast<uint32_t>(-v));
+    }
     std::vector<uint8_t> finish() {
         put_bit(1);                       // rbsp_stop_one_bit
         while (nbits_ != 0) put_bit(0);   // byte alignment
@@ -665,4 +668,59 @@ TEST(SPSValidation, AcceptsMonochromeAnd420) {
         EXPECT_TRUE(parse_sps_bytes(build_sps_rbsp(f), sps))
             << "chroma_format_idc=" << idc;
     }
+}
+
+// ---- Scaling list validation (§7.4.5 ranges) ----
+
+static bool parse_scaling_list_bytes(const std::vector<uint8_t>& bytes) {
+    BitstreamReader bs(bytes.data(), bytes.size());
+    ScalingListData sld;
+    return sld.parse(bs);
+}
+
+// Every matrix copied from the one before it: the largest valid delta at each matrixId
+TEST(ScalingListValidation, AcceptsCopyFromEarlierMatrices) {
+    BitWriter w;
+    for (int sizeId = 0; sizeId < 4; sizeId++) {
+        int step = (sizeId == 3) ? 3 : 1;
+        for (int matrixId = 0; matrixId < 6; matrixId += step) {
+            w.put_bit(0);                                     // scaling_list_pred_mode_flag
+            w.put_ue(static_cast<uint32_t>(matrixId / step)); // scaling_list_pred_matrix_id_delta
+        }
+    }
+    EXPECT_TRUE(parse_scaling_list_bytes(w.finish()));
+}
+
+TEST(ScalingListValidation, RejectsPredMatrixIdDeltaBeyondMatrixId) {
+    BitWriter w;
+    w.put_bit(0);    // scaling_list_pred_mode_flag, sizeId 0, matrixId 0
+    w.put_ue(1);     // scaling_list_pred_matrix_id_delta — must be 0 here
+    EXPECT_FALSE(parse_scaling_list_bytes(w.finish()));
+}
+
+// A delta that wraps negative once cast to int would point past the last matrix
+TEST(ScalingListValidation, RejectsHugePredMatrixIdDelta) {
+    BitWriter w;
+    w.put_bit(0);
+    w.put_ue(0xFFFFFFFEu);
+    EXPECT_FALSE(parse_scaling_list_bytes(w.finish()));
+}
+
+TEST(ScalingListValidation, RejectsOutOfRangeDeltaCoef) {
+    BitWriter w;
+    w.put_bit(1);    // scaling_list_pred_mode_flag, sizeId 0, matrixId 0
+    w.put_se(128);   // scaling_list_delta_coef — must be in -128..127
+    EXPECT_FALSE(parse_scaling_list_bytes(w.finish()));
+}
+
+TEST(ScalingListValidation, RejectsOutOfRangeDcCoef) {
+    BitWriter w;
+    // sizeId 0 and 1: copy defaults
+    for (int k = 0; k < 12; k++) {
+        w.put_bit(0);
+        w.put_ue(0);
+    }
+    w.put_bit(1);    // scaling_list_pred_mode_flag, sizeId 2, matrixId 0
+    w.put_se(-8);    // scaling_list_dc_coef_minus8 — must be in -7..247
+    EXPECT_FALSE(parse_scaling_list_bytes(w.finish()));
 }
