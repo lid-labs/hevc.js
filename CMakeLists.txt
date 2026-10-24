@@ -249,6 +249,12 @@ if(BUILD_TESTS AND NOT BUILD_WASM)
     set_tests_properties(oracle_scaling_list_qcif_6f PROPERTIES LABELS "oracle;phase6"
         SKIP_RETURN_CODE 2)
 
+    add_test(NAME oracle_merge_8x4_480p_16f
+        COMMAND ${ORACLE_SCRIPT} ${FIXTURES_DIR}/merge_8x4_480p_16f.265 832 480
+            6485fca72247e3bb0c2e2fca487e9690 $<TARGET_FILE:hevc-decode>)
+    set_tests_properties(oracle_merge_8x4_480p_16f PROPERTIES LABELS "oracle;phase5"
+        SKIP_RETURN_CODE 2)
+
     # Real-world bitstreams — Big Buck Bunny (Main profile, full pipeline)
     add_test(NAME oracle_bbb1080_50f
         COMMAND ${ORACLE_SCRIPT} ${FIXTURES_DIR}/bbb1080_50f.265 1920 1080
