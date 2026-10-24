@@ -78,7 +78,7 @@ bool PPS::parse(BitstreamReader& bs, const SPS& sps) {
 
     pps_scaling_list_data_present_flag = bs.read_flag();
     if (pps_scaling_list_data_present_flag) {
-        scaling_list_data.parse(bs);
+        if (!scaling_list_data.parse(bs)) return false;
     }
 
     lists_modification_present_flag = bs.read_flag();
