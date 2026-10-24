@@ -1,12 +1,12 @@
-# Strategie de Validation Oracle
+# Oracle Validation Strategy
 
 ## Principe
 
-libde265 sert d'oracle de reference : on decode le meme bitstream avec les deux decodeurs et on compare les frames pixel par pixel.
+libde265 serves as the reference oracle: the same bitstream is decoded with both decoders and the frames are compared pixel by pixel.
 
-**Important** : On utilise libde265 uniquement pour ses sorties (frames YUV, dumps headers), JAMAIS pour son code source.
+**Important**: libde265 is used only for its outputs (YUV frames, header dumps), NEVER for its source code.
 
-## Architecture de test
+## Test architecture
 
 ```
                     ┌──────────────┐
@@ -28,8 +28,8 @@ libde265 sert d'oracle de reference : on decode le meme bitstream avec les deux 
                     └──────┬───────┘
                            │
                     ┌──────▼───────┐
-                    │  Comparateur │
-                    │  pixel-exact │
+                    │  Pixel-exact │
+                    │  comparator  │
                     └──────┬───────┘
                            │
                     ┌──────▼───────┐
@@ -38,37 +38,37 @@ libde265 sert d'oracle de reference : on decode le meme bitstream avec les deux 
                     └──────────────┘
 ```
 
-## Outils necessaires
+## Required tools
 
 ### 1. libde265 CLI
 
 ```bash
 # Installation
 brew install libde265
-# ou build from source pour controler la version
+# or build from source to control the version
 
-# Decodage en YUV
+# Decode to YUV
 dec265 input.265 -o output_ref.yuv
 
-# Dump headers (pour validation phase 2-3)
+# Dump headers (for phase 2-3 validation)
 dec265 input.265 --dump-headers > headers_ref.txt
 ```
 
-### 2. Script de comparaison (Python)
+### 2. Comparison script (Python)
 
 ```python
 #!/usr/bin/env python3
-"""oracle_compare.py — Compare YUV output pixel par pixel."""
+"""oracle_compare.py — Compare YUV output pixel by pixel."""
 
 import sys
 import numpy as np
 
 def compare_yuv(ref_path, test_path, width, height, bit_depth=8, chroma='420'):
-    """Compare deux fichiers YUV frame par frame."""
+    """Compare two YUV files frame by frame."""
     bytes_per_sample = 2 if bit_depth > 8 else 1
     dtype = np.uint16 if bit_depth > 8 else np.uint8
 
-    # Taille d'une frame
+    # Size of one frame
     if chroma == '420':
         frame_size = width * height * 3 // 2
     elif chroma == '422':
@@ -117,11 +117,11 @@ if __name__ == '__main__':
         sys.exit(1)
 ```
 
-### 3. Script de test integre (CTest)
+### 3. Integrated test script (CTest)
 
 ```bash
 #!/bin/bash
-# test_oracle.sh — Execute par CTest
+# test_oracle.sh — Run by CTest
 
 BITSTREAM=$1
 WIDTH=$2
@@ -129,98 +129,98 @@ HEIGHT=$3
 BIT_DEPTH=${4:-8}
 CHROMA=${5:-420}
 
-# Decoder avec libde265
+# Decode with libde265
 dec265 "$BITSTREAM" -o /tmp/ref.yuv 2>/dev/null
 
-# Decoder avec hevc-torture
+# Decode with hevc-torture
 ./hevc-torture "$BITSTREAM" -o /tmp/test.yuv
 
-# Comparer
+# Compare
 python3 tools/oracle_compare.py /tmp/ref.yuv /tmp/test.yuv "$WIDTH" "$HEIGHT" "$BIT_DEPTH" "$CHROMA"
 ```
 
-## Bitstreams de test
+## Test bitstreams
 
 ### Sources
 
-1. **Bitstreams de conformite HEVC** (ITU-T) — la reference officielle
-   - Disponibles via le HEVC test model (HM) reference software
-   - Couvrent tous les outils et profils
+1. **HEVC conformance bitstreams** (ITU-T) — the official reference
+   - Available through the HEVC test model (HM) reference software
+   - Cover all tools and profiles
 
-2. **Bitstreams synthetiques** — crees avec x265/kvazaar pour cibler des cas specifiques
+2. **Synthetic bitstreams** — created with x265/kvazaar to target specific cases
    - I-only, P-only, B-only
-   - Tailles de bloc specifiques
-   - Modes intra specifiques
-   - QP varies
+   - Specific block sizes
+   - Specific intra modes
+   - Varied QPs
 
-3. **Bitstreams reels** — encodes depuis des sequences de test standard
+3. **Real-world bitstreams** — encoded from standard test sequences
    - BasketballDrill, BQTerrace, etc.
 
-### Script de telechargement
+### Download script
 
 ```bash
 #!/bin/bash
-# fetch_conformance.sh — Telecharge les bitstreams de conformite
+# fetch_conformance.sh — Downloads the conformance bitstreams
 
 DEST=tests/conformance
 mkdir -p "$DEST"
 
-# Les bitstreams de conformite sont organises par profil/outil
+# The conformance bitstreams are organised by profile/tool
 # Structure : tests/conformance/{profile}/{tool}/{bitstream}.265
 ```
 
-## Strategie par phase
+## Strategy per phase
 
 ### Phase 2 — Bitstream
-- Comparer le listing NAL (type, taille) avec `dec265 --dump-headers`
-- Pas de comparaison pixel (pas encore de decodage)
+- Compare the NAL listing (type, size) with `dec265 --dump-headers`
+- No pixel comparison (no decoding yet)
 
 ### Phase 3 — Parameter Sets
-- Comparer chaque champ parse (VPS, SPS, PPS, slice header) avec `dec265 --dump-headers`
-- Ecrire un mode verbose qui dump les memes infos dans le meme format
+- Compare each parsed field (VPS, SPS, PPS, slice header) with `dec265 --dump-headers`
+- Write a verbose mode that dumps the same information in the same format
 
 ### Phase 4 — Intra
-- Premiere comparaison pixel-perfect sur des I-frames
-- Commencer par : 1 frame, QP fixe, pas de SAO, pas de deblocking
-- Puis : multi-frames I-only, QP variable, deblocking active
-- Puis : toutes les tailles de bloc, tous les modes intra
+- First pixel-perfect comparison on I-frames
+- Start with: 1 frame, fixed QP, no SAO, no deblocking
+- Then: multi-frame I-only, variable QP, deblocking enabled
+- Then: all block sizes, all intra modes
 
 ### Phase 5 — Inter
-- P-frames d'abord (uni-prediction)
-- Puis B-frames (bi-prediction)
-- Puis weighted prediction
-- Tester avec differentes structures de GOP
+- P-frames first (uni-prediction)
+- Then B-frames (bi-prediction)
+- Then weighted prediction
+- Test with different GOP structures
 
-### Phase 6 — Filtres
-- Deblocking seul (SAO off)
-- SAO seul (deblocking off si possible, sinon les deux)
-- Les deux ensemble
-- C'est souvent ici que les derniers mismatches sont resolus
+### Phase 6 — Filters
+- Deblocking alone (SAO off)
+- SAO alone (deblocking off if possible, otherwise both)
+- Both together
+- This is often where the last mismatches get resolved
 
-### Phase 7 — Profils
-- Meme strategie que Phase 4-6 mais avec 10-bit, 4:2:2, 4:4:4
-- Bitstreams de conformite specifiques a chaque profil
+### Phase 7 — Profiles
+- Same strategy as Phase 4-6 but with 10-bit, 4:2:2, 4:4:4
+- Conformance bitstreams specific to each profile
 
-## Debugging des mismatches
+## Debugging mismatches
 
-Quand un mismatch est detecte :
+When a mismatch is detected:
 
-1. **Identifier la premiere frame en erreur**
-2. **Identifier le premier pixel en erreur** (composante Y, Cb, ou Cr)
-3. **Localiser le CTU/CU** contenant ce pixel
-4. **Ajouter du logging** dans hevc-torture pour ce CU specifique
-5. **Comparer les valeurs intermediaires** :
-   - Prediction samples (avant residu)
-   - Residual samples (apres transform inverse)
-   - Reconstruction (avant filtres)
-   - Apres deblocking
-   - Apres SAO
-6. **Identifier l'etape** ou la divergence commence
+1. **Identify the first wrong frame**
+2. **Identify the first wrong pixel** (Y, Cb or Cr component)
+3. **Locate the CTU/CU** containing that pixel
+4. **Add logging** in hevc-torture for that specific CU
+5. **Compare the intermediate values**:
+   - Prediction samples (before residual)
+   - Residual samples (after inverse transform)
+   - Reconstruction (before filters)
+   - After deblocking
+   - After SAO
+6. **Identify the stage** where the divergence starts
 
-### Outils de debug
+### Debug tools
 
 ```cpp
-// Mode debug : dumper les valeurs intermediaires pour un CU donne
+// Debug mode: dump the intermediate values for a given CU
 #ifdef HEVC_DEBUG
 void dump_cu_debug(int x, int y, int size, const char* stage,
                     const int16_t* samples, int stride) {
@@ -252,10 +252,10 @@ oracle-test:
 
 ## Checklist
 
-- [ ] libde265 installe et fonctionnel
-- [ ] oracle_compare.py operationnel
-- [ ] Script CTest pour tests oracle automatises
-- [ ] Bitstreams de conformite telecharges
-- [ ] CI avec tests oracle
-- [ ] Mode debug avec dump des valeurs intermediaires
-- [ ] Documentation du processus de debugging des mismatches
+- [ ] libde265 installed and working
+- [ ] oracle_compare.py operational
+- [ ] CTest script for automated oracle tests
+- [ ] Conformance bitstreams downloaded
+- [ ] CI with oracle tests
+- [ ] Debug mode with a dump of the intermediate values
+- [ ] Documentation of the mismatch debugging process
