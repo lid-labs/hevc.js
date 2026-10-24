@@ -86,6 +86,34 @@ jobs:
           echo "hosts and #254 should be settled by gitignoring the binary instead."
           exit 1
 
+      # Every other decoder check runs the native build, while @hevcjs/core ships
+      # this one, built by another compiler (emscripten, -msimd128). This decodes
+      # the stream set of decoder-output-diff.sh with both and fails on any
+      # difference: both come from the same sources, so unlike an output that moves
+      # between base and head, a difference here is never a legitimate change (#298).
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 20
+
+      - name: Build the native decoder
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF
+          cmake --build build -j --target hevc-decode
+
+      - name: Native and WASM output match
+        # 24 streams, 4K included: 38s on an Apple M4 Pro (2026-10-24). This only
+        # bounds a decoder that loops on one.
+        timeout-minutes: 15
+        run: |
+          # Same capture as in decoder-output-diff below: the report has to reach the
+          # summary whatever the exit status.
+          STATUS=0
+          REPORT=$(scripts/wasm-native-diff.sh build/hevc-decode build-wasm) || STATUS=$?
+          echo "$REPORT" >> "$GITHUB_STEP_SUMMARY"
+          echo "$REPORT" | grep -v '^::' || true
+          exit "$STATUS"
+
   # The oracle suite proves the decoder matches a stored reference; it does not
   # prove a change leaves the output alone. A PR that changes decoding and updates
   # the reference data in the same commit keeps the oracle green while the picture

@@ -104,17 +104,22 @@ bool ScalingListData::parse(BitstreamReader& bs) {
             if (!scaling_list_pred_mode_flag) {
                 // Copy from another matrix
                 uint32_t delta = bs.read_ue();
+                // §7.4.5: scaling_list_pred_matrix_id_delta in 0..matrixId / step, so
+                // refMatrixId below stays in 0..matrixId
+                if (delta > static_cast<uint32_t>(matrixId / step)) {
+                    HEVC_LOG(PARSE, "scaling list rejected: pred_matrix_id_delta=%u matrixId=%d",
+                             delta, matrixId);
+                    return false;
+                }
                 if (delta == 0) {
                     // Use default values (already set)
                 } else {
                     // Copy from matrixId - delta (same sizeId)
                     int refMatrixId = matrixId - static_cast<int>(delta) * step;
-                    if (refMatrixId >= 0) {
-                        scaling_list[sizeId][matrixId] = scaling_list[sizeId][refMatrixId];
-                        if (sizeId > 1) {
-                            scaling_list_dc[sizeId - 2][matrixId] =
-                                scaling_list_dc[sizeId - 2][refMatrixId];
-                        }
+                    scaling_list[sizeId][matrixId] = scaling_list[sizeId][refMatrixId];
+                    if (sizeId > 1) {
+                        scaling_list_dc[sizeId - 2][matrixId] =
+                            scaling_list_dc[sizeId - 2][refMatrixId];
                     }
                 }
             } else {
@@ -123,13 +128,18 @@ bool ScalingListData::parse(BitstreamReader& bs) {
                 int coefNum = std::min(64, 1 << (4 + (sizeId << 1)));
 
                 if (sizeId > 1) {
-                    int dc_coef = bs.read_se() + 8;
+                    // §7.4.5: scaling_list_dc_coef_minus8 in -7..247
+                    int32_t dc_coef_minus8 = bs.read_se();
+                    if (dc_coef_minus8 < -7 || dc_coef_minus8 > 247) return false;
+                    int dc_coef = dc_coef_minus8 + 8;
                     scaling_list_dc[sizeId - 2][matrixId] = static_cast<uint8_t>(dc_coef);
                     nextCoef = dc_coef;
                 }
 
                 for (int i = 0; i < coefNum; i++) {
-                    int delta_coef = bs.read_se();
+                    // §7.4.5: scaling_list_delta_coef in -128..127
+                    int32_t delta_coef = bs.read_se();
+                    if (delta_coef < -128 || delta_coef > 127) return false;
                     nextCoef = (nextCoef + delta_coef + 256) % 256;
                     const int pos = (sizeId == 0) ? scan4[i] : scan8[i];
                     scaling_list[sizeId][matrixId][pos] = static_cast<uint8_t>(nextCoef);
@@ -538,7 +548,7 @@ bool SPS::parse(BitstreamReader& bs) {
     if (scaling_list_enabled_flag) {
         sps_scaling_list_data_present_flag = bs.read_flag();
         if (sps_scaling_list_data_present_flag) {
-            scaling_list_data.parse(bs);
+            if (!scaling_list_data.parse(bs)) return false;
         } else {
             // Use default (non-flat) scaling lists
             scaling_list_data.set_defaults();
