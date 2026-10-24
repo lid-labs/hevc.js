@@ -234,6 +234,21 @@ if(BUILD_TESTS AND NOT BUILD_WASM)
     set_tests_properties(oracle_opengop_qcif_eos PROPERTIES LABELS "oracle;phase6"
         SKIP_RETURN_CODE 2)
 
+    # Coding tools no other fixture uses (#300), from tools/gen_coding_tool_fixtures.sh:
+    # transform skip, and scaling lists sent in the SPS — asymmetric, so the hash only
+    # matches a decoder that places the coefficients through the diagonal scan.
+    add_test(NAME oracle_tskip_qcif_6f
+        COMMAND ${ORACLE_SCRIPT} ${FIXTURES_DIR}/tskip_qcif_6f.265 176 144
+            5ad310626adaab5f06237b5b2a0d5834 $<TARGET_FILE:hevc-decode>)
+    set_tests_properties(oracle_tskip_qcif_6f PROPERTIES LABELS "oracle;phase6"
+        SKIP_RETURN_CODE 2)
+
+    add_test(NAME oracle_scaling_list_qcif_6f
+        COMMAND ${ORACLE_SCRIPT} ${FIXTURES_DIR}/scaling_list_qcif_6f.265 176 144
+            96cd30a17f4dab096e324d3cfd93f5c7 $<TARGET_FILE:hevc-decode>)
+    set_tests_properties(oracle_scaling_list_qcif_6f PROPERTIES LABELS "oracle;phase6"
+        SKIP_RETURN_CODE 2)
+
     # Real-world bitstreams — Big Buck Bunny (Main profile, full pipeline)
     add_test(NAME oracle_bbb1080_50f
         COMMAND ${ORACLE_SCRIPT} ${FIXTURES_DIR}/bbb1080_50f.265 1920 1080
