@@ -296,11 +296,17 @@ static void derive_spatial_merge_candidates(
     }
 
     // Second pass: apply pruning per spec, using rawAvail for conditions
+    // Only the lists in use carry motion: the 8x4/4x8 bi-to-uni restriction
+    // (§8.5.3.2.2) clears predFlagL1 but leaves a stale mvL1 behind.
     auto same_motion_raw = [](const PUMotionInfo& a, const PUMotionInfo& b) {
-        return a.mv[0].x == b.mv[0].x && a.mv[0].y == b.mv[0].y &&
-               a.mv[1].x == b.mv[1].x && a.mv[1].y == b.mv[1].y &&
-               a.ref_idx[0] == b.ref_idx[0] && a.ref_idx[1] == b.ref_idx[1] &&
-               a.pred_flag[0] == b.pred_flag[0] && a.pred_flag[1] == b.pred_flag[1];
+        for (int l = 0; l < 2; l++) {
+            if (a.pred_flag[l] != b.pred_flag[l]) return false;
+            if (a.pred_flag[l] &&
+                (a.mv[l].x != b.mv[l].x || a.mv[l].y != b.mv[l].y ||
+                 a.ref_idx[l] != b.ref_idx[l]))
+                return false;
+        }
+        return true;
     };
 
     for (int i = 0; i < 5; i++) {
