@@ -72,8 +72,28 @@ void ScalingListData::set_defaults() {
     }
 }
 
+// Raster index of each position of the up-right diagonal scan of a blkSize x blkSize
+// block (§6.5.3). scaling_list_delta_coef comes in this order (§7.4.5), and the
+// lists are stored in raster order, which is how perform_dequant reads them.
+static void diag_scan_raster(int blkSize, uint8_t* out) {
+    int i = 0, x = 0, y = 0;
+    while (i < blkSize * blkSize) {
+        while (y >= 0) {
+            if (x < blkSize && y < blkSize) out[i++] = static_cast<uint8_t>(y * blkSize + x);
+            y--;
+            x++;
+        }
+        y = x;
+        x = 0;
+    }
+}
+
 // Spec §7.3.4 — scaling_list_data()
 bool ScalingListData::parse(BitstreamReader& bs) {
+    uint8_t scan4[16], scan8[64];
+    diag_scan_raster(4, scan4);
+    diag_scan_raster(8, scan8);
+
     // Start with defaults, then override with parsed data
     set_defaults();
 
@@ -111,7 +131,8 @@ bool ScalingListData::parse(BitstreamReader& bs) {
                 for (int i = 0; i < coefNum; i++) {
                     int delta_coef = bs.read_se();
                     nextCoef = (nextCoef + delta_coef + 256) % 256;
-                    scaling_list[sizeId][matrixId][i] = static_cast<uint8_t>(nextCoef);
+                    const int pos = (sizeId == 0) ? scan4[i] : scan8[i];
+                    scaling_list[sizeId][matrixId][pos] = static_cast<uint8_t>(nextCoef);
                 }
             }
         }

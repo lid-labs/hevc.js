@@ -395,8 +395,9 @@ void perform_transform_inverse(int log2TrafoSize, int cIdx,
     int trSize = 1 << log2TrafoSize;
 
     if (transform_skip) {
-        // Transform skip: shift = 15 - BitDepth
-        int shift = std::max(0, 15 - bit_depth);
+        // Transform skip — §8.6.4.2 scales by tsShift = 5 + log2(nTbS), then §8.6.2
+        // shifts down by bdShift = 20 - BitDepth: one shift of 15 - BitDepth - log2(nTbS).
+        int shift = std::max(0, 15 - bit_depth - log2TrafoSize);
         int add = (shift > 0) ? (1 << (shift - 1)) : 0;
         for (int i = 0; i < trSize * trSize; i++) {
             residual[i] = static_cast<int16_t>((scaled[i] + add) >> shift);
