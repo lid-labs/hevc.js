@@ -69,6 +69,16 @@ The same comparison runs locally:
 scripts/decoder-output-diff.sh <base-decoder> <head-decoder> [stream...]
 ```
 
+The same streams are also decoded with the native decoder and the WASM build of your
+head. Unlike the comparison above, any difference there fails the build: both come
+from the same sources, so a WASM picture that differs from the native one is a bug —
+a miscompile, undefined behaviour, or a code path only one build takes. Locally, with
+a WASM build in `packages/core/wasm/` (`pnpm build:wasm`) and Node:
+
+```bash
+scripts/wasm-native-diff.sh <native-decoder> packages/core/wasm [stream...]
+```
+
 ### Running tests
 
 ```bash
