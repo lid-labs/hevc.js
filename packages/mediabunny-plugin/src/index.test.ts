@@ -45,6 +45,12 @@ afterAll(() => {
 });
 
 describe("registerHevcDecoder", () => {
+  // Runs first: registration is module-wide, and the next test needs it to succeed afterwards
+  it("lets a call retry after a failed registration", async () => {
+    await expect(registerHevcDecoder(null as unknown as {})).rejects.toThrow(TypeError);
+    await expect(registerHevcDecoder()).resolves.toBeUndefined();
+  });
+
   it("decodes an HEVC track through Mediabunny, frames timed in display order", async () => {
     await registerHevcDecoder();
 

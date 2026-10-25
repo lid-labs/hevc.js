@@ -60,7 +60,11 @@ let registration: Promise<void> | null = null;
  * HEVC at that level but not at a higher one is not detected.
  */
 export function registerHevcDecoder(options: HevcDecoderPluginOptions = {}): Promise<void> {
-  registration ??= register(options);
+  registration ??= register(options).catch((error: unknown) => {
+    // A failed registration (null options from plain JS, say) must not block a later, valid call
+    registration = null;
+    throw error;
+  });
   return registration;
 }
 
