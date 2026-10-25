@@ -348,6 +348,49 @@ static void inter_prediction(DecodingContext& ctx,
     int compW = nPbW / subW;
     int compH = nPbH / subH;
 
+    // §8.5.3.3.4.1: weightedPredFlag
+    bool weightedPredFlag = false;
+    if (ctx.sh->slice_type == SliceType::P)
+        weightedPredFlag = ctx.pps->weighted_pred_flag;
+    else if (ctx.sh->slice_type == SliceType::B)
+        weightedPredFlag = ctx.pps->weighted_bipred_flag;
+
+    // Uni-prediction from an integer position with default weighting: eq 8-262
+    // shifts back down by the shift3 the interpolation shifted up by, so the
+    // prediction is the reference samples themselves. Up to 12-bit depth, where
+    // the shifted-up sample still fits the int16 intermediate.
+    if (predFlagL0 != predFlagL1 && !weightedPredFlag && bitDepth <= 12) {
+        const int refIdx = predFlagL0 ? refIdxL0 : refIdxL1;
+        const MV& mv = predFlagL0 ? mvL0 : mvL1;
+        Picture* refPic = (refIdx < 0) ? nullptr
+            : predFlagL0 ? ctx.dpb->ref_pic_list0(refIdx) : ctx.dpb->ref_pic_list1(refIdx);
+        const int fracBits = (cIdx == 0) ? 2 : 3;
+        const int fracMask = (1 << fracBits) - 1;
+        if (refPic && (mv.x & fracMask) == 0 && (mv.y & fracMask) == 0) {
+            const int xInt = xPb / subW + (mv.x >> fracBits);
+            const int yInt = yPb / subH + (mv.y >> fracBits);
+            const int picW = refPic->width[cIdx];
+            const int picH = refPic->height[cIdx];
+            const ptrdiff_t stride = refPic->stride[cIdx];
+            const uint16_t* plane = refPic->planes[cIdx].data();
+            const bool interior = xInt >= 0 && yInt >= 0 &&
+                                  xInt + compW <= picW && yInt + compH <= picH;
+            for (int y = 0; y < compH; y++) {
+                Out* o = out + y * outStride;
+                if (interior) {
+                    const uint16_t* row = plane + (yInt + y) * stride + xInt;
+                    for (int x = 0; x < compW; x++) o[x] = static_cast<Out>(row[x]);
+                } else {
+                    const int sy = std::max(0, std::min(yInt + y, picH - 1));
+                    const uint16_t* row = plane + sy * stride;
+                    for (int x = 0; x < compW; x++)
+                        o[x] = static_cast<Out>(row[std::max(0, std::min(xInt + x, picW - 1))]);
+                }
+            }
+            return;
+        }
+    }
+
     int16_t predL0_buf[64 * 64];  // max PU 64x64
     int16_t predL1_buf[64 * 64];
     int16_t* predL0 = predL0_buf;
@@ -433,13 +476,6 @@ static void inter_prediction(DecodingContext& ctx,
             std::fill_n(out + y * outStride, compW, static_cast<Out>(grey));
         return;
     }
-
-    // §8.5.3.3.4.1: Determine weightedPredFlag
-    bool weightedPredFlag = false;
-    if (ctx.sh->slice_type == SliceType::P)
-        weightedPredFlag = ctx.pps->weighted_pred_flag;
-    else if (ctx.sh->slice_type == SliceType::B)
-        weightedPredFlag = ctx.pps->weighted_bipred_flag;
 
     if (weightedPredFlag) {
         // §8.5.3.3.4.3: Explicit weighted sample prediction
