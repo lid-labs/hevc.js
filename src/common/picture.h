@@ -52,8 +52,15 @@ struct Picture {
     PUMotionInfoCompact* motion_info_data() { return motion_info_buf.data(); }
     const PUMotionInfoCompact* motion_info_data() const { return motion_info_buf.data(); }
 
-    // Ref POC lists (snapshot at decode time, for TMVP MV scaling)
-    std::vector<int32_t> ref_poc[2];  // ref_poc[0] = L0 POCs, ref_poc[1] = L1 POCs
+    // POCs of the reference picture lists of each slice segment, which §8.3.4
+    // builds per slice, read by TMVP MV scaling and by deblocking. Indexed by
+    // ctb_slice_idx; kNoRefPoc marks an entry with no picture.
+    static constexpr int32_t kNoRefPoc = -999999;
+    struct SliceRefPocs {
+        std::vector<int32_t> list[2];
+    };
+    std::vector<SliceRefPocs> slice_ref_poc;
+    std::vector<uint8_t> ctb_slice_idx;  // slice segment index of each CTB, raster order
 
     // Allocate planes based on dimensions and chroma format
     void allocate(int width, int height, ChromaFormat fmt, int bd_luma, int bd_chroma);

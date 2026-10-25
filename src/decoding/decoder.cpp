@@ -127,16 +127,6 @@ DecodeStatus Decoder::decode_picture(const std::vector<NalUnit>& nals,
     // §8.3.2 — RPS derivation and picture marking
     dpb_.derive_rps(first_sh, *sps, nal.header.nal_unit_type, poc);
 
-    // §8.3.4 — Reference picture list construction. Called on I slices too,
-    // where it just clears the lists: skipping it left the previous picture's
-    // entries in place, and they dangle as soon as alloc_picture() evicts one
-    // of them — which is what an IRAP does to the sequence that just ended.
-    dpb_.construct_ref_pic_lists(first_sh, *sps, *pps);
-    if (first_sh.slice_type != SliceType::I) {
-        // §8.3.5 — Collocated picture derivation
-        dpb_.derive_colpic(first_sh);
-    }
-
     // Allocate CU info grid (min-CB granularity)
     int cuGridW = sps->PicWidthInMinCbsY;
     int cuGridH = sps->PicHeightInMinCbsY;
@@ -241,11 +231,31 @@ DecodeStatus Decoder::decode_picture(const std::vector<NalUnit>& nals,
     ctx.slice_headers = slice_header_ptrs.data();
     ctx.num_slices = static_cast<int>(vcl_count);
 
+    pic->slice_ref_poc.assign(vcl_count, {});
+
     for (size_t s = 0; s < vcl_count; s++) {
         const auto& slice_nal = nals[first_vcl_idx + s];
 
         ctx.sh = &slice_headers[s];
         ctx.current_slice_idx = static_cast<int>(s);
+
+        // §8.3.4, §8.3.5 — Reference picture lists and collocated picture, per
+        // slice: each has its own num_ref_idx_active, list modification and
+        // collocated_ref_idx. Built on I slices too, where it just clears the
+        // lists: skipping it left the previous slice's entries in place, and
+        // they dangle as soon as alloc_picture() evicts one of them — which is
+        // what an IRAP does to the sequence that just ended.
+        dpb_.construct_ref_pic_lists(slice_headers[s], *sps, *pps);
+        dpb_.derive_colpic(slice_headers[s]);
+        auto& ref_pocs = pic->slice_ref_poc[s];
+        for (int i = 0; i < dpb_.num_ref_list0(); i++) {
+            auto* ref = dpb_.ref_pic_list0(i);
+            ref_pocs.list[0].push_back(ref ? ref->poc : Picture::kNoRefPoc);
+        }
+        for (int i = 0; i < dpb_.num_ref_list1(); i++) {
+            auto* ref = dpb_.ref_pic_list1(i);
+            ref_pocs.list[1].push_back(ref ? ref->poc : Picture::kNoRefPoc);
+        }
 
         HEVC_LOG(PARSE, "Slice %zu: addr=%d type=%d QP=%d dependent=%d",
                  s, slice_headers[s].slice_segment_address,
@@ -302,17 +312,8 @@ DecodeStatus Decoder::decode_picture(const std::vector<NalUnit>& nals,
         dst.ref_idx[0] = src.ref_idx[0]; dst.ref_idx[1] = src.ref_idx[1];
         dst.pred_flag[0] = src.pred_flag[0]; dst.pred_flag[1] = src.pred_flag[1];
     }
-    // Store ref POC lists for TMVP MV scaling
-    pic->ref_poc[0].clear();
-    pic->ref_poc[1].clear();
-    for (int i = 0; i < dpb_.num_ref_list0(); i++) {
-        auto* ref = dpb_.ref_pic_list0(i);
-        pic->ref_poc[0].push_back(ref ? ref->poc : 0);
-    }
-    for (int i = 0; i < dpb_.num_ref_list1(); i++) {
-        auto* ref = dpb_.ref_pic_list1(i);
-        pic->ref_poc[1].push_back(ref ? ref->poc : 0);
-    }
+    // Slice of each CTB, for TMVP to find the lists a collocated ref_idx indexes
+    pic->ctb_slice_idx = slice_idx_buf_;
 
     // §8.1 step 4: mark current picture as short-term reference
     dpb_.mark_current_as_short_term_ref();
