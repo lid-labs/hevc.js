@@ -1,16 +1,16 @@
 # Cross-Reference Index
 
-Mapping entre sections de la spec, fichiers source, docs et tests.
+Mapping between spec sections, source files, docs and tests.
 
-## Comment utiliser
+## How to use
 
-Quand tu travailles sur une section de la spec, ce tableau te dit exactement quels fichiers lire et modifier.
+When you work on a section of the spec, this table tells you exactly which files to read and change.
 
 ## Index
 
-| Section spec | Sujet | Doc spec | Tables | Source (.h/.cpp) | Test | Phase |
+| Spec section | Topic | Spec doc | Tables | Source (.h/.cpp) | Test | Phase |
 |-------------|-------|----------|--------|------------------|------|-------|
-| Annexe B | Byte stream format | `07-03-nal-unit.md` | — | `bitstream/byte_stream.*` | `test_byte_stream.cpp` | 2 |
+| Annex B | Byte stream format | `07-03-nal-unit.md` | — | `bitstream/byte_stream.*` | `test_byte_stream.cpp` | 2 |
 | §7.3.1 | NAL unit syntax | `07-03-nal-unit.md` | — | `bitstream/nal_unit.*` | `test_nal_unit.cpp` | 2 |
 | §7.2 | more_rbsp_data | `07-03-nal-unit.md` | — | `bitstream/bitstream_reader.*` | `test_bitstream_reader.cpp` | 2 |
 | §7.4.2.4.4 | AU boundary | `07-03-nal-unit.md` | — | `bitstream/nal_unit.*` | `test_nal_unit.cpp` | 2 |
@@ -18,7 +18,7 @@ Quand tu travailles sur une section de la spec, ce tableau te dit exactement que
 | §7.3.2.2 | SPS | `07-04-parameter-sets.md` | `scaling-list-defaults.md` | `syntax/sps.*` | `test_sps.cpp` | 3 |
 | §7.3.2.3 | PPS | `07-04-parameter-sets.md` | — | `syntax/pps.*` | `test_pps.cpp` | 3 |
 | §7.3.6 | Slice header | `07-05-slice-header.md` | — | `syntax/slice_header.*` | `test_slice_header.cpp` | 3 |
-| Annexe A | Profile/Tier/Level | `07-04-parameter-sets.md` | — | `syntax/profile_tier_level.*` | `test_profile_tier_level.cpp` | 3 |
+| Annex A | Profile/Tier/Level | `07-04-parameter-sets.md` | — | `syntax/profile_tier_level.*` | `test_profile_tier_level.cpp` | 3 |
 | §9.3.4 | CABAC arithmetic | `09-parsing.md` | `cabac-arithmetic.md` | `bitstream/cabac.*` | `test_cabac.cpp` | 4 |
 | §9.2 | CABAC init | `09-parsing.md` | `cabac-init-values.md` | `bitstream/cabac.*` | `test_cabac.cpp` | 4 |
 | §9.3.3 | Binarization | `09-parsing.md` | — | `bitstream/cabac.*` | `test_cabac.cpp` | 4 |
@@ -33,13 +33,13 @@ Quand tu travailles sur une section de la spec, ce tableau te dit exactement que
 | §8.7.2 | Deblocking | `08-07-deblocking.md` | — | `filters/deblocking.*` | `test_deblocking.cpp` | 6 |
 | §8.7.3 | SAO | `08-08-sao.md` | — | `filters/sao.*` | `test_sao.cpp` | 6 |
 
-## Docs de support
+## Supporting docs
 
-| Doc | Contenu | Quand le lire |
+| Doc | Content | When to read it |
 |-----|---------|---------------|
-| `MASTER-PLAN.md` | Plan global, dépendances, 23 pièges | Au début de chaque phase |
-| `DECISIONS.md` | Choix d'architecture (AD-001 à AD-006) | Avant de créer des structs/interfaces |
-| `BACKLOG.md` | Statut et prochaines tâches | Pour savoir quoi faire |
-| `docs/spec/test-bitstreams.md` | Mini-bitstreams hex pour les tests | Quand tu écris des tests |
-| `docs/oracle/oracle-strategy.md` | Stratégie de validation oracle | Quand tu debuggues un mismatch |
-| `docs/phases/phase-XX-*.md` | Détail des tâches par phase | Pendant l'implémentation |
+| `MASTER-PLAN.md` | Overall plan, dependencies, 23 pitfalls | At the start of each phase |
+| `DECISIONS.md` | Architecture choices (AD-001 to AD-006) | Before creating structs/interfaces |
+| `BACKLOG.md` | Status and next tasks | To know what to do |
+| `docs/spec/test-bitstreams.md` | Hex mini-bitstreams for tests | When you write tests |
+| `docs/oracle/oracle-strategy.md` | Oracle validation strategy | When you debug a mismatch |
+| `docs/phases/phase-XX-*.md` | Detailed tasks per phase | During implementation |
