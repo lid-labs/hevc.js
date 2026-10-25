@@ -1,9 +1,9 @@
 # 5.2 -- RPS + Reference Picture Lists
 
-## Objectif
+## Goal
 
-Verifier que les Reference Picture Sets (RPS) sont correctement derives et que
-RefPicList0/RefPicList1 sont construites comme attendu pour chaque slice.
+Verify that the Reference Picture Sets (RPS) are derived correctly and that
+RefPicList0/RefPicList1 are built as expected for each slice.
 
 ## Spec refs
 
@@ -12,52 +12,52 @@ RefPicList0/RefPicList1 sont construites comme attendu pour chaque slice.
 - S8.3.4 : Decoding process for reference picture marking
 - S7.3.6.2 : ref_pic_lists_modification
 
-## Code existant
+## Existing code
 
 `src/decoding/dpb.cpp` : `derive_rps()`, `construct_ref_pic_lists()`
 
-## Points critiques a verifier
+## Critical points to verify
 
 ### RPS derivation (S8.3.2)
-- st_ref_pic_set parsing avec inter_ref_pic_set_prediction_flag
-- Calcul DeltaPocS0/S1 et UsedByCurrPicS0/S1
+- st_ref_pic_set parsing with inter_ref_pic_set_prediction_flag
+- Computation of DeltaPocS0/S1 and UsedByCurrPicS0/S1
 - Long-term refs (poc_lsb_lt, delta_poc_msb_present)
 
 ### RefPicList construction (S8.3.3)
-- P-slice : RefPicList0 = RefPicListTemp0 (sauf si modification)
-- B-slice : RefPicList0 et RefPicList1 construits separement
-- Ordre dans RefPicListTemp : RefPicSetStCurrBefore, StCurrAfter, LtCurr
-- `ref_pic_list_modification` override des positions
+- P-slice : RefPicList0 = RefPicListTemp0 (unless modified)
+- B-slice : RefPicList0 and RefPicList1 are built separately
+- Order in RefPicListTemp : RefPicSetStCurrBefore, StCurrAfter, LtCurr
+- `ref_pic_list_modification` overrides the positions
 
 ### Reference picture marking (S8.3.4)
-- "no reference picture" pour les indices manquants
-- Handling des lost pictures
+- "no reference picture" for missing indices
+- Handling of lost pictures
 
-## Audit a faire
+## Audit to do
 
-1. Lire S8.3.2-8.3.4 du PDF (pages 141-145)
-2. Ajouter un log RefPicList0/1 par slice : `[ref_idx] POC=X`
-3. Comparer avec HM qui loggue aussi les ref lists
+1. Read S8.3.2-8.3.4 of the PDF (pages 141-145)
+2. Add a RefPicList0/1 log per slice : `[ref_idx] POC=X`
+3. Compare with HM, which also logs the ref lists
 
-## Test de validation
+## Validation test
 
 ```cpp
-// Test unitaire :
-// - Sequence P-only (10 frames) : RefPicList0 = [poc-1, poc-2, ...]
-// - Sequence B hierarchique : verifier RefPicList0 et 1 pour chaque type de frame
+// Unit test:
+// - P-only sequence (10 frames) : RefPicList0 = [poc-1, poc-2, ...]
+// - Hierarchical B sequence : check RefPicList0 and 1 for each frame type
 // - ref_pic_list_modification active
 ```
 
-Comparaison automatisee :
+Automated comparison:
 ```bash
-# Notre decodeur loggue les ref lists
+# Our decoder logs the ref lists
 HEVC_DEBUG=DPB ./build/hevc-decode tests/conformance/fixtures/p_qcif_10f.265 -o /dev/null 2>&1 | grep "RefPicList"
 
-# HM loggue aussi les ref lists (a verifier)
+# HM also logs the ref lists (to be checked)
 ```
 
-## Critere de sortie
+## Exit criterion
 
-- [ ] RefPicList0 identique a HM pour chaque P-slice de `p_qcif_10f.265`
-- [ ] RefPicList0 et RefPicList1 identiques a HM pour chaque B-slice de `b_qcif_10f.265`
-- [ ] Test unitaire avec ref_pic_list_modification
+- [ ] RefPicList0 identical to HM for each P-slice of `p_qcif_10f.265`
+- [ ] RefPicList0 and RefPicList1 identical to HM for each B-slice of `b_qcif_10f.265`
+- [ ] Unit test with ref_pic_list_modification

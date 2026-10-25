@@ -1,22 +1,22 @@
-# ADR-001 : Architecture initiale du décodeur
+# ADR-001: Initial decoder architecture
 
-## Statut
-Accepté
+## Status
+Accepted
 
 ## Date
 2026-03-19
 
-## Contexte
+## Context
 
-Nous construisons un décodeur HEVC (H.265) en C++17, compilé en WebAssembly. Le décodeur doit :
-- Être conforme à la spec ITU-T H.265 v8 (2021)
-- Produire des frames pixel-perfect par rapport à libde265
-- Tourner dans un Web Worker pour un player web
-- Supporter jusqu'à 4K@60fps (Main/Main 10/4:2:2/4:4:4, Level 5.1)
+We are building an HEVC (H.265) decoder in C++17, compiled to WebAssembly. The decoder must:
+- Conform to the ITU-T H.265 v8 (2021) spec
+- Produce frames that are pixel-perfect against libde265
+- Run in a Web Worker for a web player
+- Support up to 4K@60fps (Main/Main 10/4:2:2/4:4:4, Level 5.1)
 
-## Décision
+## Decision
 
-### Architecture en modules
+### Module architecture
 
 ```
 BitstreamReader (bits) → NAL Parser → Syntax Parser (VPS/SPS/PPS/Slice)
@@ -40,25 +40,25 @@ BitstreamReader (bits) → NAL Parser → Syntax Parser (VPS/SPS/PPS/Slice)
                                       DPB / Output
 ```
 
-### Choix techniques
+### Technical choices
 
-1. **C++17** : templates pour le bit depth (8/10/16), constexpr pour les tables
-2. **Pas d'allocation dynamique dans le hot path** : pools pré-alloués
-3. **Séparation parsing / décodage** : le parsing (CABAC) produit des structures de données, le décodage les consomme
-4. **API C pour WASM** : interface C pure, pas d'exceptions C++ dans l'API publique
-5. **Build dual** : natif (pour les tests/debug) et WASM (pour la prod)
+1. **C++17**: templates for the bit depth (8/10/16), constexpr for the tables
+2. **No dynamic allocation in the hot path**: pre-allocated pools
+3. **Parsing / decoding separation**: parsing (CABAC) produces data structures, decoding consumes them
+4. **C API for WASM**: pure C interface, no C++ exceptions in the public API
+5. **Dual build**: native (for tests/debug) and WASM (for production)
 
-### Ce qu'on ne fait PAS
+### What we do NOT do
 
-- Pas d'encodeur
-- Pas de support multi-layer (nuh_layer_id != 0)
-- Pas de HRD (Hypothetical Reference Decoder)
-- Pas de SEI au-delà de decoded_picture_hash
-- Pas de range extensions au-delà de 4:4:4 (pas de 12-bit, pas de cross-component prediction)
+- No encoder
+- No multi-layer support (nuh_layer_id != 0)
+- No HRD (Hypothetical Reference Decoder)
+- No SEI beyond decoded_picture_hash
+- No range extensions beyond 4:4:4 (no 12-bit, no cross-component prediction)
 
-## Conséquences
+## Consequences
 
-- Le code suit la structure de la spec (un fichier par section majeure)
-- Les noms de fonctions miroir la spec pour la traçabilité
-- libde265 est utilisé comme oracle, jamais comme source de code
-- Les phases sont incrémentales : chaque phase produit un décodeur fonctionnel pour un sous-ensemble de la spec
+- The code follows the structure of the spec (one file per major section)
+- Function names mirror the spec for traceability
+- libde265 is used as an oracle, never as a source of code
+- The phases are incremental: each phase produces a working decoder for a subset of the spec

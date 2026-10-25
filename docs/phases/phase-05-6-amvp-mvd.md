@@ -1,8 +1,8 @@
 # 5.6 -- AMVP + MVD
 
-## Objectif
+## Goal
 
-Verifier la derivation AMVP (Advanced Motion Vector Prediction) et l'application du MVD.
+Verify the AMVP (Advanced Motion Vector Prediction) derivation and the application of the MVD.
 
 ## Spec refs
 
@@ -10,7 +10,7 @@ Verifier la derivation AMVP (Advanced Motion Vector Prediction) et l'application
 - S7.3.8.9 : mvd_coding syntax
 - S7.3.8.6 : prediction_unit inter syntax (mvp_l0_flag, mvp_l1_flag)
 
-## Code existant
+## Existing code
 
 `src/decoding/inter_prediction.cpp` : `derive_amvp_predictor()`
 `src/decoding/syntax_elements.cpp` : `decode_mvd()`
@@ -19,47 +19,47 @@ Verifier la derivation AMVP (Advanced Motion Vector Prediction) et l'application
 
 | Aspect | Merge | AMVP |
 |--------|-------|------|
-| Candidats | 5 (spatial+temporal+combined+zero) | 2 (spatial+temporal) |
-| Selection | merge_idx | mvp_flag (0 ou 1) |
-| MVD | non | oui (additionnel) |
-| refIdx | implicite (du candidat) | explicite (parse dans le bitstream) |
+| Candidates | 5 (spatial+temporal+combined+zero) | 2 (spatial+temporal) |
+| Selection | merge_idx | mvp_flag (0 or 1) |
+| MVD | no | yes (additional) |
+| refIdx | implicit (from the candidate) | explicit (parsed from the bitstream) |
 
-## Construction AMVP list (S8.5.3.2.6)
+## AMVP list construction (S8.5.3.2.6)
 
-1. **Candidat spatial A** : scan A0, A1 pour un MV vers la meme ref picture
-2. **Candidat spatial B** : scan B0, B1, B2 pour un MV vers la meme ref picture
-3. Si < 2 candidats : **scaling** -- meme voisin mais ref picture differente, MV scale
-4. Si < 2 candidats : **Temporal** -- collocated MV (meme process que TMVP)
-5. Si < 2 candidats : **Zero MV** padding
+1. **Spatial candidate A** : scan A0, A1 for an MV pointing to the same ref picture
+2. **Spatial candidate B** : scan B0, B1, B2 for an MV pointing to the same ref picture
+3. If < 2 candidates : **scaling** -- same neighbour but different ref picture, scaled MV
+4. If < 2 candidates : **Temporal** -- collocated MV (same process as TMVP)
+5. If < 2 candidates : **Zero MV** padding
 
-## Pieges identifies
+## Known pitfalls
 
-1. **"Same ref picture"** : le candidat doit pointer vers la MEME reference picture
-   (meme POC), pas juste le meme index
-2. **Scaling entre ref pictures** : quand le voisin pointe vers une ref differente,
-   on scale le MV par le ratio des distances POC
-3. **2 candidats max** : s'arreter des qu'on en a 2
-4. **Deduplication** : si candidat A == candidat B, n'en garder qu'un
-5. **MV addition modular** : `mv = (mvp + mvd + 0x10000) % 0x10000` (spec eq 8-94..8-97)
+1. **"Same ref picture"** : the candidate must point to the SAME reference picture
+   (same POC), not just the same index
+2. **Scaling between ref pictures** : when the neighbour points to a different ref,
+   the MV is scaled by the ratio of the POC distances
+3. **2 candidates max** : stop as soon as there are 2
+4. **Deduplication** : if candidate A == candidate B, keep only one
+5. **Modular MV addition** : `mv = (mvp + mvd + 0x10000) % 0x10000` (spec eq 8-94..8-97)
 
-## Audit a faire
+## Audit to do
 
-1. Lire S8.5.3.2.6 du PDF (pages 176-180)
-2. Verifier la condition "same ref picture" (POC comparison, pas index)
-3. Verifier le MV scaling dans le fallback
-4. Verifier l'addition modulaire MV + MVD
-5. Comparer les MVs AMVP vs HM
+1. Read S8.5.3.2.6 of the PDF (pages 176-180)
+2. Check the "same ref picture" condition (POC comparison, not index)
+3. Check the MV scaling in the fallback
+4. Check the modular MV + MVD addition
+5. Compare the AMVP MVs against HM
 
-## Test de validation
+## Validation test
 
 ```bash
-# Logger pour chaque PU AMVP :
+# Log for each AMVP PU:
 # "amvp PU(%d,%d): cand[0]=(%d,%d) cand[1]=(%d,%d) mvp_flag=%d mvd=(%d,%d) final=(%d,%d)"
-# Comparer avec HM
+# Compare with HM
 ```
 
-## Critere de sortie
+## Exit criterion
 
-- [ ] MV final identique a HM pour tous les PUs AMVP du premier P-frame
-- [ ] Test unitaire : MV addition modulaire (wrap-around 16-bit)
-- [ ] AMVP scaling verifie (cas ou le voisin pointe vers une ref differente)
+- [ ] Final MV identical to HM for all AMVP PUs of the first P-frame
+- [ ] Unit test : modular MV addition (16-bit wrap-around)
+- [ ] AMVP scaling verified (case where the neighbour points to a different ref)
