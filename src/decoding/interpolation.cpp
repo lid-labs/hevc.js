@@ -108,23 +108,24 @@ static void filter_pass_8bit(const uint16_t* s, ptrdiff_t sstride, ptrdiff_t ste
 }
 
 // The vertical pass of a 2D filter, over its int16 intermediate: int16 loads,
-// 8 outputs per iteration, products and sums in int32.
+// 8 outputs per iteration, products and sums in two int32 halves.
 template <int N>
 static void filter_pass_tmp(const int16_t* s, int w, int h, const int16_t* f,
                             int shift, int16_t* out) {
     using namespace simd;
-    i32x8 c[N];
     i32x4 c4[N];
-    for (int k = 0; k < N; k++) {
-        c[k] = splat8w(f[k]);
-        c4[k] = splat(f[k]);
-    }
+    for (int k = 0; k < N; k++) c4[k] = splat(f[k]);
     for (int y = 0; y < h; y++, s += w, out += w) {
         int x = 0;
         for (; x + 8 <= w; x += 8) {
-            i32x8 acc = c[0] * widen(load8(s + x));
-            for (int k = 1; k < N; k++) acc += c[k] * widen(load8(s + x + k * w));
-            store8(out + x, acc >> shift);
+            i16x8 v = load8(s + x);
+            i32x4 lo = c4[0] * widen_lo(v), hi = c4[0] * widen_hi(v);
+            for (int k = 1; k < N; k++) {
+                v = load8(s + x + k * w);
+                lo += c4[k] * widen_lo(v);
+                hi += c4[k] * widen_hi(v);
+            }
+            store8(out + x, pack(lo >> shift, hi >> shift));
         }
         if (x < w) row_tail<N>(s, w, x, w, c4, f, shift, out);
     }

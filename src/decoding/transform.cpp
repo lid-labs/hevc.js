@@ -115,7 +115,9 @@ static inline void idct_cols(const simd::i32x4* in, int limit, simd::i32x4* out)
         out[0] = limit > 0 ? 64 * in[0] : splat(0);
     } else {
         constexpr int step = 32 / N;
-        i32x4 even[N / 2], E[N / 2];
+        // Zero-initialised for GCC's -Wmaybe-uninitialized: only rows below
+        // the limit are read
+        i32x4 even[N / 2] = {}, E[N / 2];
         const int evenLimit = (limit + 1) / 2;
         for (int n = 0; n < evenLimit; n++) even[n] = in[2 * n];
         idct_cols<N / 2>(even, evenLimit, E);
@@ -137,7 +139,7 @@ static void idct_pass(const int16_t* src, int16_t* dst, int shift, int line,
     using namespace simd;
     int add = 1 << (shift - 1);
     for (int j = 0; j < cols; j += 4) {
-        i32x4 in[N], out[N];
+        i32x4 in[N] = {}, out[N];
         for (int n = 0; n < limit; n++) in[n] = S(n);
         idct_cols<N>(in, limit, out);
         for (int k = 0; k < N; k++) D(k, out[k] + add);

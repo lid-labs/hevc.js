@@ -16,8 +16,6 @@ typedef int32_t i32x4 __attribute__((vector_size(16)));
 typedef uint16_t u16x4 __attribute__((vector_size(8)));
 typedef int16_t i16x4 __attribute__((vector_size(8)));
 typedef int16_t i16x8 __attribute__((vector_size(16)));
-// Two registers: the widened products of an i16x8.
-typedef int32_t i32x8 __attribute__((vector_size(32)));
 
 // 4 consecutive samples, widened. memcpy keeps the unaligned loads well defined.
 inline i32x4 load4(const uint16_t* p) {
@@ -117,38 +115,28 @@ inline void store8(uint16_t* p, i16x8 v) {
     __builtin_shuffle((a), (b), ::hevc::simd::i16x8{__VA_ARGS__})
 #endif
 
-// Lanes 0-3 and 4-7 of an i32x8
-inline i32x4 lo(const i32x8& v) {
-    i32x4 r;
-    memcpy(&r, &v, sizeof(r));
-    return r;
+// Lanes 0-3 / 4-7 of an i16x8, widened. 32-byte vectors are avoided: on x86
+// without AVX, GCC warns that passing them changes the ABI (-Wpsabi).
+inline i32x4 widen_lo(i16x8 v) {
+    i16x4 h;
+    memcpy(&h, &v, sizeof(h));
+    return __builtin_convertvector(h, i32x4);
 }
 
-inline i32x4 hi(const i32x8& v) {
-    i32x4 r;
-    memcpy(&r, reinterpret_cast<const char*>(&v) + sizeof(r), sizeof(r));
-    return r;
+inline i32x4 widen_hi(i16x8 v) {
+    i16x4 h;
+    memcpy(&h, reinterpret_cast<const char*>(&v) + sizeof(h), sizeof(h));
+    return __builtin_convertvector(h, i32x4);
 }
 
 // a then b, narrowed to int16 (truncating, like store4)
 inline i16x8 pack(i32x4 a, i32x4 b) {
-    i32x8 v;
-    memcpy(&v, &a, sizeof(a));
-    memcpy(reinterpret_cast<char*>(&v) + sizeof(a), &b, sizeof(b));
-    return __builtin_convertvector(v, i16x8);
-}
-
-inline i32x8 widen(i16x8 v) {
-    return __builtin_convertvector(v, i32x8);
-}
-
-inline i32x8 splat8w(int32_t x) {
-    return i32x8{x, x, x, x, x, x, x, x};
-}
-
-// Narrowing store of 8 lanes, truncated to int16 like store4.
-inline void store8(int16_t* p, i32x8 v) {
-    store8(p, __builtin_convertvector(v, i16x8));
+    const i16x4 na = __builtin_convertvector(a, i16x4);
+    const i16x4 nb = __builtin_convertvector(b, i16x4);
+    i16x8 v;
+    memcpy(&v, &na, sizeof(na));
+    memcpy(reinterpret_cast<char*>(&v) + sizeof(na), &nb, sizeof(nb));
+    return v;
 }
 
 } // namespace simd

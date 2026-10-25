@@ -417,12 +417,14 @@ void apply_deblocking(DecodingContext& ctx) {
                             const i16x8 b2 = HEVC_SHUFFLE16(a2, a3, 0, 8, 1, 9, 2, 10, 3, 11);
                             const i16x8 b3 = HEVC_SHUFFLE16(a2, a3, 4, 12, 5, 13, 6, 14, 7, 15);
                             // Two columns each, lines 0-3: (p3, p2) (p1, p0) (q0, q1) (q2, q3)
-                            const i32x8 c0 = widen(HEVC_SHUFFLE16(b0, b2, 0, 1, 8, 9, 2, 3, 10, 11));
-                            const i32x8 c1 = widen(HEVC_SHUFFLE16(b0, b2, 4, 5, 12, 13, 6, 7, 14, 15));
-                            const i32x8 c2 = widen(HEVC_SHUFFLE16(b1, b3, 0, 1, 8, 9, 2, 3, 10, 11));
-                            const i32x8 c3 = widen(HEVC_SHUFFLE16(b1, b3, 4, 5, 12, 13, 6, 7, 14, 15));
-                            P[3] = lo(c0); P[2] = hi(c0); P[1] = lo(c1); P[0] = hi(c1);
-                            Q[0] = lo(c2); Q[1] = hi(c2); Q[2] = lo(c3); Q[3] = hi(c3);
+                            const i16x8 c0 = HEVC_SHUFFLE16(b0, b2, 0, 1, 8, 9, 2, 3, 10, 11);
+                            const i16x8 c1 = HEVC_SHUFFLE16(b0, b2, 4, 5, 12, 13, 6, 7, 14, 15);
+                            const i16x8 c2 = HEVC_SHUFFLE16(b1, b3, 0, 1, 8, 9, 2, 3, 10, 11);
+                            const i16x8 c3 = HEVC_SHUFFLE16(b1, b3, 4, 5, 12, 13, 6, 7, 14, 15);
+                            P[3] = widen_lo(c0); P[2] = widen_hi(c0);
+                            P[1] = widen_lo(c1); P[0] = widen_hi(c1);
+                            Q[0] = widen_lo(c2); Q[1] = widen_hi(c2);
+                            Q[2] = widen_lo(c3); Q[3] = widen_hi(c3);
                         } else {
                             const uint16_t* c = lumaPlane + yQ * lumaStride + xQ;
                             for (int i = 0; i < 4; i++) {
