@@ -99,7 +99,7 @@ static void build_reference_samples(const DecodingContext& ctx, int x0, int y0,
     uint32_t curZScan = zscan_addr((x0 - ctbOriginX) / minBlkSize,
                                     (y0 - ctbOriginY) / minBlkSize);
 
-    auto is_reconstructed = [&](int rx, int ry) -> bool {
+    auto is_decoded = [&](int rx, int ry) -> bool {
         if (rx < 0 || ry < 0 || rx >= picW || ry >= picH) return false;
 
         int refCtbX = rx / ctbSize;
@@ -130,6 +130,15 @@ static void build_reference_samples(const DecodingContext& ctx, int x0, int y0,
         uint32_t refZScan = zscan_addr((lumaRx - ctbOriginX) / minBlkSize,
                                         (lumaRy - ctbOriginY) / minBlkSize);
         return refZScan < curZScan;
+    };
+    // §8.4.4.2.2: with constrained_intra_pred_flag, samples of a coding unit
+    // that is not intra coded are not available for intra prediction either
+    auto is_reconstructed = [&](int rx, int ry) -> bool {
+        if (!is_decoded(rx, ry)) return false;
+        if (!ctx.pps->constrained_intra_pred_flag) return true;
+        int lumaRx = (cIdx > 0) ? rx * sps.SubWidthC : rx;
+        int lumaRy = (cIdx > 0) ? ry * sps.SubHeightC : ry;
+        return ctx.cu_at(lumaRx, lumaRy).pred_mode == PredMode::MODE_INTRA;
     };
 
     // Sample ordering in the reference array:

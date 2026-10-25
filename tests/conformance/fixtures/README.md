@@ -129,6 +129,9 @@ and ffmpeg versions, so regenerating may give a stream that no longer does.
 | `WPP_A_ericsson_MAIN_2.265` | 66K | 416x240 | 48 | WPP with independent and dependent slice segments down to one CTB | `cd7e815eb47e8138fec2185d4de84304` |
 | `WPP_D_ericsson_MAIN_2.265` | 22K | 64x240 | 48 | the same, one CTB wide | `f710612103f386c415be3e6300693451` |
 | `DBLK_D_VIXS_2.265` | 17K | 1280x720 | 8 | slices and dependent slice segments over 4x3 tiles, no loop filtering across slices | `f6f3075edca573f5dfe4e352d26170f1` |
+| `CIP_A_Panasonic_3.265` | 12K | 416x240 | 2 | constrained intra prediction, one I and one B picture, one slice | `4cbf601ba98d63f642defab5eaa12c8d` |
+| `cip_B_NEC_3.265` | 13K | 416x240 | 5 | constrained intra prediction, one I and four P pictures, one slice each | `1315714c7b3f3237b469259f66d9b7aa` |
+| `CIP_C_Panasonic_2.265` | 13K | 416x240 | 2 | constrained intra prediction, one I and one B picture, three slices each | `ed985932fef2aa8a74ded970070bdab2` |
 | `PMERGE_B_TI_3.265` | 16K | 416x240 | 8 | `log2_parallel_merge_level_minus2` = 1 | `7d0e57ebdbbc6633c972083a17d97550` |
 
 Bitstreams of the HEVC v1 conformance suite, unmodified apart from the extension
@@ -153,6 +156,11 @@ previous segment of the same slice as another slice, WPP rows synced from anothe
 slice's contexts, and the QP predictor restarted at every segment. `WPP_D` also hung
 the parallel WPP path, which now only takes single-segment pictures at least two CTBs
 wide. Each of these causes, put back on its own, makes at least one of the three fail.
+
+The `CIP` streams failed before #317's fix: the decoder ignored
+`constrained_intra_pred_flag`, which makes the samples of inter coded units unavailable
+to intra prediction (§8.4.4.2.2), so they are substituted like samples outside the
+picture.
 
 `PMERGE_B` failed before #316's fix. Above parallel merge level 2, the prediction units
 of an 8x8 coding unit share the merge list of the whole coding unit (§8.5.3.2.2), and
