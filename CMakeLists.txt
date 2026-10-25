@@ -116,6 +116,7 @@ if(BUILD_TESTS AND NOT BUILD_WASM)
         tests/unit/test_pic_output_flag.cpp
         tests/unit/test_rasl_output.cpp
         tests/unit/test_end_of_sequence.cpp
+        tests/unit/test_thread_pool.cpp
     )
 
     target_link_libraries(hevc_tests PRIVATE

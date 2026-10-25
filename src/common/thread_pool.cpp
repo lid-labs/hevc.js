@@ -1,5 +1,7 @@
 #include "common/thread_pool.h"
 
+#include <cstdlib>
+
 namespace hevc {
 
 ThreadPool::ThreadPool(int num_threads) {
@@ -8,6 +10,16 @@ ThreadPool::ThreadPool(int num_threads) {
     (void)num_threads;
     return;
 #else
+    if (num_threads <= 0) {
+        // HEVC_THREADS overrides the core count, for benchmarks: 1 decodes WPP
+        // rows serially, as the WASM build does. Invalid values are ignored.
+        if (const char* env = std::getenv("HEVC_THREADS")) {
+            char* end = nullptr;
+            long n = std::strtol(env, &end, 10);
+            if (end != env && *end == '\0' && n > 0 && n <= 256)
+                num_threads = static_cast<int>(n);
+        }
+    }
     if (num_threads <= 0) {
         num_threads = static_cast<int>(std::thread::hardware_concurrency());
         if (num_threads <= 0) num_threads = 4;
