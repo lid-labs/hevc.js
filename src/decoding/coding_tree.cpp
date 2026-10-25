@@ -2,25 +2,18 @@
 #include "decoding/syntax_elements.h"
 #include "decoding/cabac_tables.h"
 #include "decoding/interpolation.h"
+#include "decoding/residual_coding.h"
+#include "decoding/transform.h"
 #include "decoding/dpb.h"
 #include "common/debug.h"
+#include "common/simd.h"
 
 #include <cstring>
 #include <algorithm>
 
 namespace hevc {
 
-// Forward declarations for residual/transform/intra (implemented in separate files)
-void decode_residual_coding(DecodingContext& ctx, int x0, int y0,
-                            int log2TrafoSize, int cIdx,
-                            int16_t* coefficients);
-void perform_dequant(DecodingContext& ctx, int x0, int y0,
-                     int log2TrafoSize, int cIdx, int qp,
-                     const int16_t* coefficients, int16_t* scaled);
-void perform_transform_inverse(int log2TrafoSize, int cIdx,
-                                bool is_intra, bool transform_skip,
-                                int bit_depth,
-                                const int16_t* scaled, int16_t* residual);
+// Forward declarations for intra (implemented in a separate file)
 void perform_intra_prediction(DecodingContext& ctx, int x0, int y0,
                               int log2PredSize, int cIdx, int intra_mode,
                               int16_t* pred_samples);
@@ -368,9 +361,13 @@ static int derive_qp_y(DecodingContext& ctx, int xCb, int yCb) {
 // Reconstruction: pred + residual, clipping (§8.6.5)
 // ============================================================
 
+// Writes Clip3(0, maxVal, pred + residual) into the picture. pred == nullptr
+// takes the prediction from the picture itself (inter: written by the PU-level
+// motion compensation); residual == nullptr adds nothing.
 static void reconstruct_block(DecodingContext& ctx, int x0, int y0,
                                int log2Size, int cIdx,
                                const int16_t* pred, const int16_t* residual) {
+    using namespace simd;
     int size = 1 << log2Size;
     int bitDepth = (cIdx == 0) ? ctx.sps->BitDepthY : ctx.sps->BitDepthC;
     int maxVal = (1 << bitDepth) - 1;
@@ -384,13 +381,24 @@ static void reconstruct_block(DecodingContext& ctx, int x0, int y0,
                ctx.sps->pic_width_in_luma_samples / ctx.sps->SubWidthC;
     int picH = (cIdx == 0) ? ctx.sps->pic_height_in_luma_samples :
                ctx.sps->pic_height_in_luma_samples / ctx.sps->SubHeightC;
+    const int w = std::min(size, picW - xC);
+    const int h = std::min(size, picH - yC);
+    const ptrdiff_t stride = pic.stride[cIdx];
+    uint16_t* out = pic.planes[cIdx].data() + yC * stride + xC;
+    const i32x4 zero = splat(0), vmax = splat(maxVal);
 
-    for (int j = 0; j < size; j++) {
-        for (int i = 0; i < size; i++) {
-            if (xC + i >= picW || yC + j >= picH) continue;
-            int val = pred[j * size + i] + residual[j * size + i];
-            val = Clip3(0, maxVal, val);
-            pic.sample(cIdx, xC + i, yC + j) = static_cast<uint16_t>(val);
+    for (int j = 0; j < h; j++, out += stride) {
+        const int16_t* p = pred ? pred + j * size : nullptr;
+        const int16_t* r = residual ? residual + j * size : nullptr;
+        int i = 0;
+        for (; i + 4 <= w; i += 4) {
+            i32x4 v = p ? load4(p + i) : load4(out + i);
+            if (r) v += load4(r + i);
+            store4(out + i, clip3(zero, vmax, v));
+        }
+        for (; i < w; i++) {
+            int val = (p ? p[i] : out[i]) + (r ? r[i] : 0);
+            out[i] = static_cast<uint16_t>(Clip3(0, maxVal, val));
         }
     }
 }
@@ -1348,38 +1356,36 @@ void decode_transform_unit(DecodingContext& ctx, int x0, int y0,
             transform_skip = decode_transform_skip_flag(cabac, 0);
         }
 
-        decode_residual_coding(ctx, x0, y0, log2TrafoSize, 0, coefficients);
+        CoeffExtent ext = decode_residual_coding(ctx, x0, y0, log2TrafoSize, 0, coefficients);
+        // 4x4 transforms and transform skip read the whole block
+        if (log2TrafoSize == 2) ext = {3, 3};
 
         if (!cu.cu_transquant_bypass) {
             int qpPrime = qpY + sps.QpBdOffsetY;
-            perform_dequant(ctx, x0, y0, log2TrafoSize, 0, qpPrime,
+            perform_dequant(ctx, x0, y0, log2TrafoSize, 0, qpPrime, ext,
                            coefficients, scaled);
 
             perform_transform_inverse(log2TrafoSize, 0,
                                        cu.pred_mode == PredMode::MODE_INTRA,
-                                       transform_skip, sps.BitDepthY,
+                                       transform_skip, sps.BitDepthY, ext,
                                        scaled, residual);
 
         } else {
             std::memcpy(residual, coefficients, sizeof(int16_t) * trSize * trSize);
         }
 
-        // Prediction for luma
+        // Prediction for luma; inter: already in the picture from PU-level MC
         int16_t pred_samples[64 * 64];
+        const int16_t* pred = nullptr;
         if (cu.pred_mode == PredMode::MODE_INTRA) {
             int intra_mode = ctx.intra_mode_at(x0, y0);
             perform_intra_prediction(ctx, x0, y0, log2TrafoSize, 0, intra_mode,
                                      pred_samples);
-        } else {
-            // Inter: pred already in picture from PU-level MC, read it back
-            for (int y = 0; y < trSize; y++)
-                for (int x = 0; x < trSize; x++)
-                    pred_samples[y * trSize + x] = static_cast<int16_t>(
-                        ctx.pic->sample(0, x0 + x, y0 + y));
+            pred = pred_samples;
         }
 
         // Reconstruct
-        reconstruct_block(ctx, x0, y0, log2TrafoSize, 0, pred_samples, residual);
+        reconstruct_block(ctx, x0, y0, log2TrafoSize, 0, pred, residual);
 
     } else if (cu.pred_mode == PredMode::MODE_INTRA) {
         // No residual but still need intra prediction
@@ -1389,9 +1395,7 @@ void decode_transform_unit(DecodingContext& ctx, int x0, int y0,
                                  pred_samples);
 
         // Reconstruct with zero residual
-        int16_t zero[64 * 64];
-        std::memset(zero, 0, sizeof(int16_t) * trSize * trSize);
-        reconstruct_block(ctx, x0, y0, log2TrafoSize, 0, pred_samples, zero);
+        reconstruct_block(ctx, x0, y0, log2TrafoSize, 0, pred_samples, nullptr);
 
     }
 
@@ -1421,8 +1425,9 @@ void decode_transform_unit(DecodingContext& ctx, int x0, int y0,
                         transform_skip = decode_transform_skip_flag(cabac, cIdx);
                     }
 
-                    decode_residual_coding(ctx, xC, yC, log2TrafoSizeC, cIdx,
-                                          coefficients);
+                    CoeffExtent ext = decode_residual_coding(ctx, xC, yC, log2TrafoSizeC,
+                                                             cIdx, coefficients);
+                    if (log2TrafoSizeC == 2) ext = {3, 3};
 
                     if (!cu.cu_transquant_bypass) {
                         // Chroma QP derivation
@@ -1438,43 +1443,35 @@ void decode_transform_unit(DecodingContext& ctx, int x0, int y0,
                         int qpPrimeC = qPc + sps.QpBdOffsetC;
 
                         perform_dequant(ctx, xC, yC, log2TrafoSizeC, cIdx,
-                                       qpPrimeC, coefficients, scaled);
+                                       qpPrimeC, ext, coefficients, scaled);
                         perform_transform_inverse(log2TrafoSizeC, cIdx,
                                                    cu.pred_mode == PredMode::MODE_INTRA,
-                                                   transform_skip, sps.BitDepthC,
+                                                   transform_skip, sps.BitDepthC, ext,
                                                    scaled, residual);
                     } else {
                         std::memcpy(residual, coefficients,
                                     sizeof(int16_t) * trSizeC * trSizeC);
                     }
 
-                    // Chroma prediction
+                    // Chroma prediction; inter: already written by PU-level MC
                     int16_t pred_samples[32 * 32];
+                    const int16_t* pred = nullptr;
                     if (cu.pred_mode == PredMode::MODE_INTRA) {
                         int chroma_mode = ctx.chroma_mode_at(xC, yC);
                         perform_intra_prediction(ctx, xC, yC, log2TrafoSizeC, cIdx,
                                                 chroma_mode, pred_samples);
-                    } else {
-                        // Inter: pred already written by PU-level MC
-                        int xCC = xC / sps.SubWidthC;
-                        int yCC = yC / sps.SubHeightC;
-                        for (int y = 0; y < trSizeC; y++)
-                            for (int x = 0; x < trSizeC; x++)
-                                pred_samples[y * trSizeC + x] = static_cast<int16_t>(
-                                    ctx.pic->sample(cIdx, xCC + x, yCC + y));
+                        pred = pred_samples;
                     }
 
                     reconstruct_block(ctx, xC, yC, log2TrafoSizeC, cIdx,
-                                     pred_samples, residual);
+                                     pred, residual);
                 } else if (cu.pred_mode == PredMode::MODE_INTRA) {
                     int chroma_mode = ctx.chroma_mode_at(xC, yC);
                     int16_t pred_samples[32 * 32];
                     perform_intra_prediction(ctx, xC, yC, log2TrafoSizeC, cIdx,
                                             chroma_mode, pred_samples);
-                    int16_t zero[32 * 32];
-                    std::memset(zero, 0, sizeof(int16_t) * trSizeC * trSizeC);
                     reconstruct_block(ctx, xC, yC, log2TrafoSizeC, cIdx,
-                                     pred_samples, zero);
+                                     pred_samples, nullptr);
                 }
             }
         }

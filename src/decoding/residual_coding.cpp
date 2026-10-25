@@ -4,6 +4,7 @@
 #include "decoding/cabac_tables.h"
 #include "common/debug.h"
 
+#include <algorithm>
 #include <cstring>
 
 namespace hevc {
@@ -162,9 +163,10 @@ static inline int sig_ctx(const SigCtxSubBlock& sb, int xP, int yP) {
 // residual_coding (§7.3.8.11)
 // ============================================================
 
-void decode_residual_coding(DecodingContext& ctx, int x0, int y0,
-                            int log2TrafoSize, int cIdx,
-                            int16_t* coefficients) {
+CoeffExtent decode_residual_coding(DecodingContext& ctx, int x0, int y0,
+                                   int log2TrafoSize, int cIdx,
+                                   int16_t* coefficients) {
+    CoeffExtent extent;
     auto& cabac = *ctx.cabac;
     int trSize = 1 << log2TrafoSize;
     std::memset(coefficients, 0, sizeof(int16_t) * trSize * trSize);
@@ -411,6 +413,8 @@ void decode_residual_coding(DecodingContext& ctx, int x0, int y0,
             }
 
             coefficients[yC * trSize + xC] = static_cast<int16_t>(sign * absLevel);
+            extent.max_x = std::max(extent.max_x, xC);
+            extent.max_y = std::max(extent.max_y, yC);
 
             sumAbsLevel += absLevel;
         }
@@ -430,6 +434,7 @@ void decode_residual_coding(DecodingContext& ctx, int x0, int y0,
 
     HEVC_LOG(CABAC, "residual_coding done: %d bins consumed, %d nonzero coeffs",
              cabac.bin_count() - bins_start, totalNonzero);
+    return extent;
 }
 
 } // namespace hevc
