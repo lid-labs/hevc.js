@@ -37,21 +37,29 @@ public:
     // cabac_init_flag: permutes P/B tables when true
     void init_contexts(int sliceType, int SliceQpY, bool cabac_init_flag);
 
+    // The engine reads ahead: value_ holds ivlOffset (§9.3.4.3) in its top 9
+    // bits, followed by bits_ bits of the bitstream not consumed yet. Comparing
+    // value_ with ivlCurrRange << bits_ is comparing ivlOffset with
+    // ivlCurrRange, and a renormalisation only lowers bits_, so the reader is
+    // called once per 32 bits instead of once per renormalisation.
+
     // §9.3.4.3.2 — Arithmetic decoding of a bin with context (inline hot path)
     inline int decode_decision(int ctxIdx) {
         auto& ctx = contexts_[ctxIdx];
         uint8_t pStateIdx = ctx.pStateIdx;
         uint8_t valMps    = ctx.valMps;
 
-        uint16_t ivlLpsRange = rangeTabLps[pStateIdx][(ivlCurrRange_ >> 6) & 3];
-        ivlCurrRange_ -= ivlLpsRange;
+        uint32_t range = ivlCurrRange_;
+        uint32_t ivlLpsRange = rangeTabLps[pStateIdx][(range >> 6) & 3];
+        range -= ivlLpsRange;
+        const uint64_t scaled = static_cast<uint64_t>(range) << bits_;
 
         int binVal;
-        if (ivlOffset_ >= ivlCurrRange_) {
+        if (value_ >= scaled) {
             // LPS path
             binVal = 1 - valMps;
-            ivlOffset_ -= ivlCurrRange_;
-            ivlCurrRange_ = ivlLpsRange;
+            value_ -= scaled;
+            range = ivlLpsRange;
             if (pStateIdx == 0)
                 ctx.valMps = 1 - valMps;
             ctx.pStateIdx = transIdxLps[pStateIdx];
@@ -61,7 +69,15 @@ public:
             ctx.pStateIdx = transIdxMps[pStateIdx];
         }
 
-        renormalize();
+        // §9.3.4.3.3 — Renormalization: the offset takes its new low bits
+        // from the look-ahead
+        if (range < 256) {
+            int shift = __builtin_clz(range) - 23;
+            range <<= shift;
+            bits_ -= shift;
+            if (bits_ < kMinBits) refill();
+        }
+        ivlCurrRange_ = range;
 
 #ifdef HEVC_DEBUG
         bin_count_++;
@@ -71,11 +87,13 @@ public:
 
     // §9.3.4.3.4 — Bypass decoding (inline, branchless)
     inline int decode_bypass() {
-        ivlOffset_ = static_cast<uint16_t>((ivlOffset_ << 1) | bs_->read_bit_fast());
-
+        // ivlOffset = (ivlOffset << 1) | read_bits(1): one more look-ahead bit
+        bits_--;
+        const uint64_t scaled = static_cast<uint64_t>(ivlCurrRange_) << bits_;
         // Branchless: avoid unpredictable branch on 50/50 bypass bins
-        int val = (ivlOffset_ >= ivlCurrRange_);
-        ivlOffset_ -= ivlCurrRange_ & static_cast<uint16_t>(-val);
+        int val = (value_ >= scaled);
+        value_ -= scaled & (0 - static_cast<uint64_t>(val));
+        if (bits_ < kMinBits) refill();
 
 #ifdef HEVC_DEBUG
         bin_count_++;
@@ -83,22 +101,11 @@ public:
         return val;
     }
 
-    // Decode multiple bypass bins, MSB first (batched bit read)
+    // Decode multiple bypass bins, MSB first
     inline int decode_bypass_bins(int numBins) {
-        // Read all bits at once — eliminates N-1 refill checks
-        uint32_t bits = bs_->read_bits_safe(numBins);
-
         int value = 0;
-        for (int i = numBins - 1; i >= 0; i--) {
-            ivlOffset_ = static_cast<uint16_t>((ivlOffset_ << 1) | ((bits >> i) & 1));
-            int val = (ivlOffset_ >= ivlCurrRange_);
-            ivlOffset_ -= ivlCurrRange_ & static_cast<uint16_t>(-val);
-            value = (value << 1) | val;
-        }
-
-#ifdef HEVC_DEBUG
-        bin_count_ += numBins;
-#endif
+        for (int i = 0; i < numBins; i++)
+            value = (value << 1) | decode_bypass();
         return value;
     }
 
@@ -131,22 +138,31 @@ public:
     int bin_count() const { return 0; }
     void reset_bin_count() {}
 #endif
-    uint16_t dbg_range() const { return ivlCurrRange_; }
-    uint16_t dbg_offset() const { return ivlOffset_; }
+    uint16_t dbg_range() const { return static_cast<uint16_t>(ivlCurrRange_); }
+    uint16_t dbg_offset() const { return static_cast<uint16_t>(value_ >> bits_); }
 
 private:
-    // §9.3.4.3.3 — Renormalization (batched clz + bulk read)
-    inline void renormalize() {
-        if (ivlCurrRange_ >= 256) return;
-        int shift = __builtin_clz(static_cast<unsigned>(ivlCurrRange_)) - 23;
-        ivlCurrRange_ <<= shift;
-        uint32_t bits = bs_->read_bits_safe(shift);
-        ivlOffset_ = static_cast<uint16_t>((ivlOffset_ << shift) | bits);
+    // Look-ahead kept at or above kMinBits, enough for one renormalisation
+    // (at most 6 bits) or one bypass bin; a refill adds 32, so value_ never
+    // holds more than 9 + kMinBits + 31 bits.
+    static constexpr int kMinBits = 16;
+    inline void refill() {
+        value_ = (value_ << 32) | bs_->read_bits_safe(32);
+        bits_ += 32;
+    }
+
+    // Puts the reader back at the position the arithmetic decoder has
+    // consumed, dropping the look-ahead, for the raw reads that may follow a
+    // terminating bin (PCM samples, alignment, next substream).
+    void sync_reader() {
+        bs_->seek_to_bit(bs_->bits_read() - bits_);
+        bits_ = 0;
     }
 
     CabacContext contexts_[NUM_CABAC_CONTEXTS] = {};
-    uint16_t ivlCurrRange_ = 0;
-    uint16_t ivlOffset_ = 0;
+    uint32_t ivlCurrRange_ = 0;
+    uint64_t value_ = 0;   // ivlOffset, then bits_ look-ahead bits
+    int bits_ = 0;
     BitstreamReader* bs_ = nullptr;
 #ifdef HEVC_DEBUG
     int bin_count_ = 0;

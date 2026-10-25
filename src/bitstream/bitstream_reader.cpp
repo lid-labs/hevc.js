@@ -1,3 +1,4 @@
+#include <algorithm>
 #include "bitstream/bitstream_reader.h"
 #include <cassert>
 #include <cstring>
@@ -161,6 +162,12 @@ void BitstreamReader::seek_to_byte(size_t pos) {
     cache_ = 0;
     cache_bits_ = 0;
     refill();
+}
+
+void BitstreamReader::seek_to_bit(size_t pos) {
+    seek_to_byte(std::min(pos / 8, size_));
+    if (pos / 8 < size_) read_bits_safe(static_cast<int>(pos % 8));
+    else bit_pos_ = pos;
 }
 
 // Emulation prevention byte removal (§7.3.1.1)
