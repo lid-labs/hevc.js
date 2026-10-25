@@ -4,6 +4,7 @@
 #include "filters/deblocking.h"
 #include "decoding/dpb.h"
 #include "common/types.h"
+#include "common/simd.h"
 
 #include <cstdlib>
 #include <algorithm>
@@ -281,62 +282,53 @@ static int decision_luma_sample(int p0, int p3, int q0, int q3,
 }
 
 // ============================================================
-// Luma filtering — §8.7.2.5.7
+// Luma filtering of a whole edge segment — §8.7.2.5.7
+// Lane k is line k of the segment: the arithmetic of filter_luma_sample on 4
+// lines at once. p[i] and q[i] hold p_i and q_i, and are updated in place where
+// filter_luma_sample would write (nDp, nDq); keepP / keepQ leave a side as is
+// (PCM with pcm_loop_filter_disabled_flag, or transquant bypass).
 // ============================================================
-static void filter_luma_sample(int p[4], int q[4],
-                                int dE, int dEp, int dEq, int tC,
-                                int bitDepth,
-                                bool pcmP, bool pcmQ,
-                                bool bypassP, bool bypassQ,
-                                bool pcmFilterDisabled,
-                                int* nDp, int* nDq,
-                                int pOut[3], int qOut[3]) {
-    int maxVal = (1 << bitDepth) - 1;
-    *nDp = 0;
-    *nDq = 0;
-
+static inline void filter_luma_lines(simd::i32x4 p[4], simd::i32x4 q[4],
+                                     int dE, int dEp, int dEq, int tC, int maxVal,
+                                     bool keepP, bool keepQ) {
+    using namespace simd;
+    const i32x4 p0 = p[0], p1 = p[1], p2 = p[2], p3 = p[3];
+    const i32x4 q0 = q[0], q1 = q[1], q2 = q[2], q3 = q[3];
     if (dE == 2) {
         // Strong filter — eq 8-389 to 8-394
-        *nDp = 3;
-        *nDq = 3;
-        pOut[0] = Clip3(p[0] - 2*tC, p[0] + 2*tC,
-                        (p[2] + 2*p[1] + 2*p[0] + 2*q[0] + q[1] + 4) >> 3);
-        pOut[1] = Clip3(p[1] - 2*tC, p[1] + 2*tC,
-                        (p[2] + p[1] + p[0] + q[0] + 2) >> 2);
-        pOut[2] = Clip3(p[2] - 2*tC, p[2] + 2*tC,
-                        (2*p[3] + 3*p[2] + p[1] + p[0] + q[0] + 4) >> 3);
-        qOut[0] = Clip3(q[0] - 2*tC, q[0] + 2*tC,
-                        (p[1] + 2*p[0] + 2*q[0] + 2*q[1] + q[2] + 4) >> 3);
-        qOut[1] = Clip3(q[1] - 2*tC, q[1] + 2*tC,
-                        (p[0] + q[0] + q[1] + q[2] + 2) >> 2);
-        qOut[2] = Clip3(q[2] - 2*tC, q[2] + 2*tC,
-                        (p[0] + q[0] + q[1] + 3*q[2] + 2*q[3] + 4) >> 3);
-    } else {
-        // Weak filter — eq 8-395 to 8-402
-        int delta = (9 * (q[0] - p[0]) - 3 * (q[1] - p[1]) + 8) >> 4;
-        if (std::abs(delta) < tC * 10) {
-            delta = Clip3(-tC, tC, delta);
-            pOut[0] = Clip3(0, maxVal, p[0] + delta);
-            qOut[0] = Clip3(0, maxVal, q[0] - delta);
-
-            if (dEp == 1) {
-                int deltaP = Clip3(-(tC >> 1), tC >> 1,
-                                    (((p[2] + p[0] + 1) >> 1) - p[1] + delta) >> 1);
-                pOut[1] = Clip3(0, maxVal, p[1] + deltaP);
-            }
-            if (dEq == 1) {
-                int deltaQ = Clip3(-(tC >> 1), tC >> 1,
-                                    (((q[2] + q[0] + 1) >> 1) - q[1] - delta) >> 1);
-                qOut[1] = Clip3(0, maxVal, q[1] + deltaQ);
-            }
-            *nDp = dEp + 1;
-            *nDq = dEq + 1;
+        const i32x4 t2 = splat(2 * tC);
+        if (!keepP) {
+            p[0] = clip3(p0 - t2, p0 + t2, (p2 + 2*p1 + 2*p0 + 2*q0 + q1 + 4) >> 3);
+            p[1] = clip3(p1 - t2, p1 + t2, (p2 + p1 + p0 + q0 + 2) >> 2);
+            p[2] = clip3(p2 - t2, p2 + t2, (2*p3 + 3*p2 + p1 + p0 + q0 + 4) >> 3);
+        }
+        if (!keepQ) {
+            q[0] = clip3(q0 - t2, q0 + t2, (p1 + 2*p0 + 2*q0 + 2*q1 + q2 + 4) >> 3);
+            q[1] = clip3(q1 - t2, q1 + t2, (p0 + q0 + q1 + q2 + 2) >> 2);
+            q[2] = clip3(q2 - t2, q2 + t2, (p0 + q0 + q1 + 3*q2 + 2*q3 + 4) >> 3);
+        }
+        return;
+    }
+    // Weak filter — eq 8-395 to 8-402; a line with |delta| >= 10 tC is left alone
+    const i32x4 zero = splat(0), vmax = splat(maxVal);
+    const i32x4 tc = splat(tC), tc2 = splat(tC >> 1);
+    i32x4 delta = (9 * (q0 - p0) - 3 * (q1 - p1) + 8) >> 4;
+    const i32x4 on = abs(delta) < splat(tC * 10);
+    delta = clip3(-tc, tc, delta);
+    if (!keepP) {
+        p[0] = select(on, clip3(zero, vmax, p0 + delta), p0);
+        if (dEp == 1) {
+            i32x4 dP = clip3(-tc2, tc2, (((p2 + p0 + 1) >> 1) - p1 + delta) >> 1);
+            p[1] = select(on, clip3(zero, vmax, p1 + dP), p1);
         }
     }
-
-    // §8.7.2.5.7: PCM or transquant_bypass suppresses filtering on that side
-    if (*nDp > 0 && ((pcmFilterDisabled && pcmP) || bypassP)) *nDp = 0;
-    if (*nDq > 0 && ((pcmFilterDisabled && pcmQ) || bypassQ)) *nDq = 0;
+    if (!keepQ) {
+        q[0] = select(on, clip3(zero, vmax, q0 - delta), q0);
+        if (dEq == 1) {
+            i32x4 dQ = clip3(-tc2, tc2, (((q2 + q0 + 1) >> 1) - q1 - delta) >> 1);
+            q[1] = select(on, clip3(zero, vmax, q1 + dQ), q1);
+        }
+    }
 }
 
 // ============================================================
@@ -452,31 +444,32 @@ void apply_deblocking(DecodingContext& ctx) {
                         int tC = tcPrime * (1 << (bitDepthY - 8)); // eq 8-351
 
 
-                        // Decision process — §8.7.2.5.3
-                        // Read p0..p3 and q0..q3 for lines k=0 and k=3
-                        int pSamp[4][2], qSamp[4][2]; // [i][k] k=0,1 maps to line 0 and 3
-
-                        for (int kk = 0; kk < 2; kk++) {
-                            int k = kk * 3; // k = 0 and 3
-                            if (edgeType == EDGE_VER) {
-                                uint16_t* rowQ = lumaPlane + (yQ + k) * lumaStride;
-                                for (int i = 0; i < 4; i++) {
-                                    qSamp[i][kk] = rowQ[xQ + i];
-                                    pSamp[i][kk] = rowQ[xQ - i - 1];
-                                }
-                            } else {
-                                for (int i = 0; i < 4; i++) {
-                                    qSamp[i][kk] = lumaPlane[(yQ + i) * lumaStride + xQ + k];
-                                    pSamp[i][kk] = lumaPlane[(yQ - i - 1) * lumaStride + xQ + k];
-                                }
+                        // Decision process — §8.7.2.5.3. P[i] / Q[i] hold p_i / q_i of
+                        // the 4 lines, lane k for line k.
+                        using namespace simd;
+                        i32x4 P[4], Q[4];
+                        if (edgeType == EDGE_VER) {
+                            const uint16_t* r0 = lumaPlane + yQ * lumaStride + xQ;
+                            const uint16_t* r1 = r0 + lumaStride;
+                            const uint16_t* r2 = r1 + lumaStride;
+                            const uint16_t* r3 = r2 + lumaStride;
+                            for (int i = 0; i < 4; i++) {
+                                Q[i] = i32x4{r0[i], r1[i], r2[i], r3[i]};
+                                P[i] = i32x4{r0[-i - 1], r1[-i - 1], r2[-i - 1], r3[-i - 1]};
+                            }
+                        } else {
+                            const uint16_t* c = lumaPlane + yQ * lumaStride + xQ;
+                            for (int i = 0; i < 4; i++) {
+                                Q[i] = load4(c + i * lumaStride);
+                                P[i] = load4(c - (i + 1) * lumaStride);
                             }
                         }
 
-                        // dp, dq, d (eq 8-352 to 8-360 / 8-361 to 8-369)
-                        int dp0 = std::abs(pSamp[2][0] - 2*pSamp[1][0] + pSamp[0][0]);
-                        int dp3 = std::abs(pSamp[2][1] - 2*pSamp[1][1] + pSamp[0][1]);
-                        int dq0 = std::abs(qSamp[2][0] - 2*qSamp[1][0] + qSamp[0][0]);
-                        int dq3 = std::abs(qSamp[2][1] - 2*qSamp[1][1] + qSamp[0][1]);
+                        // dp, dq, d (eq 8-352 to 8-360 / 8-361 to 8-369), lines 0 and 3
+                        const i32x4 dpv = abs(P[2] - 2 * P[1] + P[0]);
+                        const i32x4 dqv = abs(Q[2] - 2 * Q[1] + Q[0]);
+                        int dp0 = dpv[0], dp3 = dpv[3];
+                        int dq0 = dqv[0], dq3 = dqv[3];
                         int dpq0 = dp0 + dq0;
                         int dpq3 = dp3 + dq3;
                         int dp = dp0 + dp3;
@@ -487,12 +480,10 @@ void apply_deblocking(DecodingContext& ctx) {
                         if (d < beta) {
                             // §8.7.2.5.6 for line 0
                             int dSam0 = decision_luma_sample(
-                                pSamp[0][0], pSamp[3][0], qSamp[0][0], qSamp[3][0],
-                                2 * dpq0, beta, tC);
+                                P[0][0], P[3][0], Q[0][0], Q[3][0], 2 * dpq0, beta, tC);
                             // §8.7.2.5.6 for line 3
                             int dSam3 = decision_luma_sample(
-                                pSamp[0][1], pSamp[3][1], qSamp[0][1], qSamp[3][1],
-                                2 * dpq3, beta, tC);
+                                P[0][3], P[3][3], Q[0][3], Q[3][3], 2 * dpq3, beta, tC);
 
                             dE = 1;
                             if (dSam0 == 1 && dSam3 == 1) dE = 2;
@@ -501,42 +492,26 @@ void apply_deblocking(DecodingContext& ctx) {
                         }
 
                         // §8.7.2.5.4: Filter all 4 luma lines (only if dE > 0)
-                        if (dE > 0)
-                        for (int k = 0; k < 4; k++) {
-                            int pLine[4], qLine[4];
+                        const bool keepP = (pcmFilterDisabled && pcmP) || bypassP;
+                        const bool keepQ = (pcmFilterDisabled && pcmQ) || bypassQ;
+                        if (dE > 0 && !(keepP && keepQ)) {
+                            filter_luma_lines(P, Q, dE, dEp, dEq, tC, (1 << bitDepthY) - 1,
+                                              keepP, keepQ);
+                            // Write back p0..p2, q0..q2: lanes left unfiltered still hold
+                            // their own sample.
                             if (edgeType == EDGE_VER) {
-                                uint16_t* row = lumaPlane + (yQ + k) * lumaStride;
-                                for (int i = 0; i < 4; i++) {
-                                    qLine[i] = row[xQ + i];
-                                    pLine[i] = row[xQ - i - 1];
-                                }
+                                uint16_t* row = lumaPlane + yQ * lumaStride + xQ;
+                                for (int k = 0; k < 4; k++, row += lumaStride)
+                                    for (int i = 0; i < 3; i++) {
+                                        row[-i - 1] = static_cast<uint16_t>(P[i][k]);
+                                        row[i] = static_cast<uint16_t>(Q[i][k]);
+                                    }
                             } else {
-                                for (int i = 0; i < 4; i++) {
-                                    qLine[i] = lumaPlane[(yQ + i) * lumaStride + xQ + k];
-                                    pLine[i] = lumaPlane[(yQ - i - 1) * lumaStride + xQ + k];
+                                uint16_t* c = lumaPlane + yQ * lumaStride + xQ;
+                                for (int i = 0; i < 3; i++) {
+                                    store4(c - (i + 1) * lumaStride, P[i]);
+                                    store4(c + i * lumaStride, Q[i]);
                                 }
-                            }
-
-                            int nDp, nDq;
-                            int pOut[3] = {pLine[0], pLine[1], pLine[2]};
-                            int qOut[3] = {qLine[0], qLine[1], qLine[2]};
-                            filter_luma_sample(pLine, qLine, dE, dEp, dEq, tC, bitDepthY,
-                                               pcmP, pcmQ, bypassP, bypassQ,
-                                               pcmFilterDisabled,
-                                               &nDp, &nDq, pOut, qOut);
-
-                            // Write back filtered samples
-                            if (edgeType == EDGE_VER) {
-                                uint16_t* row = lumaPlane + (yQ + k) * lumaStride;
-                                for (int i = 0; i < nDp; i++)
-                                    row[xQ - i - 1] = static_cast<uint16_t>(pOut[i]);
-                                for (int j = 0; j < nDq; j++)
-                                    row[xQ + j] = static_cast<uint16_t>(qOut[j]);
-                            } else {
-                                for (int i = 0; i < nDp; i++)
-                                    lumaPlane[(yQ - i - 1) * lumaStride + xQ + k] = static_cast<uint16_t>(pOut[i]);
-                                for (int j = 0; j < nDq; j++)
-                                    lumaPlane[(yQ + j) * lumaStride + xQ + k] = static_cast<uint16_t>(qOut[j]);
                             }
                         }
                     }
