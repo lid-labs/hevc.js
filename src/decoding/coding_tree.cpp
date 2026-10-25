@@ -833,6 +833,7 @@ void decode_coding_unit(DecodingContext& ctx, int x0, int y0, int log2CbSize) {
 
     PredMode pred_mode = PredMode::MODE_INTRA;
     PartMode part_mode = PartMode::PART_2Nx2N;
+    bool is_pcm = false;
 
     if (cu_skip) {
         // §7.3.8.5: Skip mode = merge without residual
@@ -917,31 +918,21 @@ void decode_coding_unit(DecodingContext& ctx, int x0, int y0, int log2CbSize) {
 
         if (pred_mode == PredMode::MODE_INTRA) {
             // Check PCM — §7.3.8.5
-            bool is_pcm = false;
             if (part_mode == PartMode::PART_2Nx2N && sps.pcm_enabled_flag &&
                 log2CbSize >= sps.Log2MinIpcmCbSizeY &&
                 log2CbSize <= sps.Log2MaxIpcmCbSizeY) {
                 is_pcm = cabac.decode_terminate();
             }
 
+            // A PCM CU carries its samples instead of a prediction and a
+            // residual, but goes through the rest of the CU like any other:
+            // its transquant bypass flag, filter edges and QP (§8.6.1) are
+            // what the loop filters read on both sides of its edges.
             if (is_pcm) {
                 decode_pcm_samples(ctx, x0, y0, log2CbSize);
-                // Store CU info
-                int n = cbSize / sps.MinCbSizeY;
-                for (int j = 0; j < n; j++)
-                    for (int i = 0; i < n; i++) {
-                        auto& cu = ctx.cu_at(x0 + i * sps.MinCbSizeY,
-                                              y0 + j * sps.MinCbSizeY);
-                        cu.pred_mode = PredMode::MODE_INTRA;
-                        cu.log2CbSize = log2CbSize;
-                        cu.is_pcm = true;
-                        cu.qp_y = ctx.QpY_prev;
-                    }
-                return;
+            } else {
+                decode_prediction_unit_intra(ctx, x0, y0, log2CbSize, part_mode);
             }
-
-            // Intra prediction
-            decode_prediction_unit_intra(ctx, x0, y0, log2CbSize, part_mode);
         }
         if (pred_mode == PredMode::MODE_INTER) {
             // §7.3.8.5: parse prediction_unit(s) and perform motion compensation
@@ -1029,6 +1020,7 @@ void decode_coding_unit(DecodingContext& ctx, int x0, int y0, int log2CbSize) {
             cu.part_mode = part_mode;
             cu.log2CbSize = log2CbSize;
             cu.cu_transquant_bypass = cu_transquant_bypass;
+            cu.is_pcm = is_pcm;
         }
 
     // Phase 6: initialize grids for this CU
@@ -1091,7 +1083,7 @@ void decode_coding_unit(DecodingContext& ctx, int x0, int y0, int log2CbSize) {
     ctx.cu_y0 = y0;
 
     // Transform tree (only for non-skip, non-PCM)
-    if (!cu_skip) {
+    if (!cu_skip && !is_pcm) {
         bool rqt_root_cbf = true;
         if (pred_mode != PredMode::MODE_INTRA) {
             // §7.3.8.5: rqt_root_cbf parsed when NOT (PART_2Nx2N && merge_flag)
@@ -1494,8 +1486,10 @@ void decode_pcm_samples(DecodingContext& ctx, int x0, int y0, int log2CbSize) {
 
     HEVC_LOG(TREE, "PCM samples at (%d,%d) size=%d", x0, y0, 1 << log2CbSize);
 
-    // Byte alignment before PCM data
-    bs->byte_alignment();
+    // §7.3.8.7: pcm_alignment_zero_bit up to the next byte boundary — none when
+    // already aligned. byte_alignment() would read a 1 bit first (§7.2) and,
+    // on an aligned position, skip a whole byte of samples.
+    while (!bs->byte_aligned()) bs->read_bits(1);
 
     int cbSize = 1 << log2CbSize;
     int numLumaSamples = cbSize * cbSize;
@@ -1505,7 +1499,8 @@ void decode_pcm_samples(DecodingContext& ctx, int x0, int y0, int log2CbSize) {
     for (int i = 0; i < numLumaSamples; i++) {
         int y = i / cbSize;
         int x = i % cbSize;
-        uint16_t val = static_cast<uint16_t>(bs->read_bits(lumaBits));
+        // §8.4.4.1: PCM samples are stored on PcmBitDepth bits, shifted up
+        uint16_t val = static_cast<uint16_t>(bs->read_bits(lumaBits) << (sps.BitDepthY - lumaBits));
         ctx.pic->sample(0, x0 + x, y0 + y) = val;
     }
 
@@ -1522,15 +1517,14 @@ void decode_pcm_samples(DecodingContext& ctx, int x0, int y0, int log2CbSize) {
             for (int i = 0; i < numChromaSamples; i++) {
                 int y = i / chromaW;
                 int x = i % chromaW;
-                uint16_t val = static_cast<uint16_t>(bs->read_bits(chromaBits));
+                uint16_t val = static_cast<uint16_t>(bs->read_bits(chromaBits) << (sps.BitDepthC - chromaBits));
                 ctx.pic->sample(cIdx, xC + x, yC + y) = val;
             }
         }
     }
 
-    // Reset CABAC contexts after PCM (§9.3.1.2)
-    int sliceType = static_cast<int>(ctx.sh->slice_type);
-    ctx.cabac->init_contexts(sliceType, ctx.sh->SliceQpY, ctx.sh->cabac_init_flag);
+    // §9.3.2.5: the arithmetic decoding engine restarts after the PCM samples;
+    // the context variables carry on
     ctx.cabac->init_decoder(*bs);
 }
 
