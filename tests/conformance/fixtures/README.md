@@ -133,6 +133,10 @@ and ffmpeg versions, so regenerating may give a stream that no longer does.
 | `ipcm_C_NEC_3.265` | 6K | 416x240 | 1 | `pcm_loop_filter_disabled_flag` = 1 | `c3e74c399b73a5ab2dbd20523f583464` |
 | `ipcm_D_NEC_3.265` | 6K | 416x240 | 1 | PCM with `cu_transquant_bypass_flag` | `aa64a16240064bc2a90fadf979a62a7b` |
 | `ipcm_E_NEC_2.265` | 5K | 416x240 | 1 | PCM luma on 6 bits, chroma on 8 | `e1cd7a16d3f6a342855044ccba3e41f5` |
+| `POC_A_Bossen_3.265` | 83K | 416x240 | 5 | POC derivation around RADL and TRAIL_N pictures | `faf33bec64d3e58c426ed2772903a0bf` |
+| `NUT_A_ericsson_5.265` | 295K | 416x240 | 34 | every VCL NAL unit type, CRAs with a nonzero POC | `9dbe33badd0cc6dfcd1b53e546968fbd` |
+| `BUMPING_A_ericsson_1.265` | 515K | 416x240 | 49 | output order, BLAs with `no_output_of_prior_pics_flag` | `64f213eb1cf45614f0eeb50fd1b725bf` |
+| `TUSIZE_A_Samsung_1.265` | 1.2M | 2560x1600 | 5 | 16x16 minimum transform size | `5e6c198c852e92cdcca0e137fc2610c4` |
 | `CIP_A_Panasonic_3.265` | 12K | 416x240 | 2 | constrained intra prediction, one I and one B picture, one slice | `4cbf601ba98d63f642defab5eaa12c8d` |
 | `cip_B_NEC_3.265` | 13K | 416x240 | 5 | constrained intra prediction, one I and four P pictures, one slice each | `1315714c7b3f3237b469259f66d9b7aa` |
 | `CIP_C_Panasonic_2.265` | 13K | 416x240 | 2 | constrained intra prediction, one I and one B picture, three slices each | `ed985932fef2aa8a74ded970070bdab2` |
@@ -179,6 +183,16 @@ picture.
 of an 8x8 coding unit share the merge list of the whole coding unit (§8.5.3.2.2), and
 the decoder then applied the 8x4/4x8 bi-to-uni restriction to that shared 8x8 size, so
 never. The restriction reads the unit's own size, `nOrigPbW + nOrigPbH`.
+
+`POC_A`, `NUT_A`, `BUMPING_A` and `TUSIZE_A` failed before #320's fixes. §8.3.1 derives
+the POC against `prevTid0Pic`, which excludes every sub-layer non-reference picture —
+the even VCL types up to 14, whatever their TemporalId — and which, for an IRAP, keeps
+the IRAP's own lsb: the decoder excluded them only above TemporalId 0 (`POC_A`) and
+reset the lsb to 0 after an IRAP (`NUT_A`, whose CRAs have a nonzero POC). An IRAP with
+`NoOutputOfPriorPicsFlag` drops only the pictures the output process of §C.5.2 has not
+output yet; the decoder approximated which, and dropped too many (`BUMPING_A`, 42
+pictures out instead of 49). And the per-picture grids were sized by `MinTbSizeY`, 16 in
+`TUSIZE_A`, while the loop filters index them in 4x4 units.
 
 The slices of an `RPLM_B` picture have different reference picture lists, which §8.3.4
 builds per slice. It fails on a decoder that builds them once per picture, from the

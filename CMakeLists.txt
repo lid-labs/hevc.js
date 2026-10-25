@@ -371,6 +371,28 @@ if(BUILD_TESTS AND NOT BUILD_WASM)
     set_tests_properties(oracle_pmerge_b_ti_3 PROPERTIES LABELS "oracle;phase5;conformance"
         SKIP_RETURN_CODE 2)
 
+    # POC derivation, the output process and a 16x16 minimum transform size (#320).
+    add_test(NAME oracle_poc_a_bossen_3
+        COMMAND ${ORACLE_SCRIPT} ${FIXTURES_DIR}/POC_A_Bossen_3.265 416 240
+            faf33bec64d3e58c426ed2772903a0bf $<TARGET_FILE:hevc-decode>)
+    set_tests_properties(oracle_poc_a_bossen_3 PROPERTIES LABELS "oracle;phase6;conformance"
+        SKIP_RETURN_CODE 2)
+    add_test(NAME oracle_nut_a_ericsson_5
+        COMMAND ${ORACLE_SCRIPT} ${FIXTURES_DIR}/NUT_A_ericsson_5.265 416 240
+            9dbe33badd0cc6dfcd1b53e546968fbd $<TARGET_FILE:hevc-decode>)
+    set_tests_properties(oracle_nut_a_ericsson_5 PROPERTIES LABELS "oracle;phase6;conformance"
+        SKIP_RETURN_CODE 2)
+    add_test(NAME oracle_bumping_a_ericsson_1
+        COMMAND ${ORACLE_SCRIPT} ${FIXTURES_DIR}/BUMPING_A_ericsson_1.265 416 240
+            64f213eb1cf45614f0eeb50fd1b725bf $<TARGET_FILE:hevc-decode>)
+    set_tests_properties(oracle_bumping_a_ericsson_1 PROPERTIES LABELS "oracle;phase6;conformance"
+        SKIP_RETURN_CODE 2)
+    add_test(NAME oracle_tusize_a_samsung_1
+        COMMAND ${ORACLE_SCRIPT} ${FIXTURES_DIR}/TUSIZE_A_Samsung_1.265 2560 1600
+            5e6c198c852e92cdcca0e137fc2610c4 $<TARGET_FILE:hevc-decode>)
+    set_tests_properties(oracle_tusize_a_samsung_1 PROPERTIES LABELS "oracle;phase6;conformance"
+        SKIP_RETURN_CODE 2)
+
     # Real-world bitstreams — Big Buck Bunny (Main profile, full pipeline)
     add_test(NAME oracle_bbb1080_50f
         COMMAND ${ORACLE_SCRIPT} ${FIXTURES_DIR}/bbb1080_50f.265 1920 1080
