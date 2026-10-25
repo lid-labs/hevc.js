@@ -60,7 +60,7 @@ struct Picture {
         std::vector<int32_t> list[2];
     };
     std::vector<SliceRefPocs> slice_ref_poc;
-    std::vector<uint8_t> ctb_slice_idx;  // slice segment index of each CTB, raster order
+    std::vector<uint16_t> ctb_slice_idx;  // slice segment index of each CTB, raster order
 
     // Allocate planes based on dimensions and chroma format
     void allocate(int width, int height, ChromaFormat fmt, int bd_luma, int bd_chroma);

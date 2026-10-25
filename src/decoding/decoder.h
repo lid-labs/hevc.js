@@ -99,7 +99,7 @@ private:
     std::vector<uint16_t> sao_backup_[3];
 
     // Phase 10: slice index per CTU
-    std::vector<uint8_t> slice_idx_buf_;
+    std::vector<uint16_t> slice_idx_buf_;
 
     // Phase 9B: persistent thread pool for WPP parallel decode
     ThreadPool thread_pool_;
