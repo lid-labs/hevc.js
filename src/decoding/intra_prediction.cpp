@@ -92,7 +92,7 @@ static void build_reference_samples(const DecodingContext& ctx, int x0, int y0,
     };
 
     // Use min-TB granularity (4x4) for Z-scan to handle NxN sub-PU correctly
-    int minBlkSize = sps.MinTbSizeY;
+    int minBlkSize = kGridSize;
     int ctbOriginX = curCtbX * static_cast<int>(sps.CtbSizeY);
     int ctbOriginY = curCtbY * static_cast<int>(sps.CtbSizeY);
     // Current TU's Z-scan address (in min-TB units within CTU)

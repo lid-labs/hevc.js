@@ -38,6 +38,12 @@ struct Picture {
     bool used_for_short_term_ref = false;
     bool used_for_long_term_ref = false;
     bool needed_for_output = false;
+    // §C.5.2: whether the output process of the spec would already have output
+    // this picture, and its PicLatencyCount. Output itself is left to the
+    // caller (drain/flush); these only decide which pictures an IRAP with
+    // NoOutputOfPriorPicsFlag empties without output.
+    bool spec_output = false;
+    uint32_t pic_latency_count = 0;
 
     // Inter: per-PU motion info for TMVP (stored after decoding)
     struct PUMotionInfoCompact {

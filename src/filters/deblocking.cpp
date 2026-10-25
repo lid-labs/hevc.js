@@ -171,7 +171,7 @@ static int derive_bs(const DecodingContext& ctx, int xP, int yP, int xQ, int yQ)
         return 1;
 
     // Inter prediction comparison
-    int minTb = sps.MinTbSizeY;
+    int minTb = kGridSize;
     int miStride = ctx.motion_info_stride;
     auto& miP = ctx.motion_info[(yP / minTb) * miStride + (xP / minTb)];
     auto& miQ = ctx.motion_info[(yQ / minTb) * miStride + (xQ / minTb)];

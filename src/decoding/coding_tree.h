@@ -19,6 +19,13 @@
 
 namespace hevc {
 
+// Granularity of the per-picture grids (intra modes, motion, filter flags): 4x4,
+// the smallest prediction or transform block, whatever MinTbSizeY says — a
+// stream with 16x16 minimum transforms still has 32x8 prediction units, and the
+// loop filters index these grids in 4-sample units.
+constexpr int kGridLog2 = 2;
+constexpr int kGridSize = 1 << kGridLog2;
+
 // Per-CU info stored in the picture grid (for neighbour access)
 struct CUInfo {
     PredMode pred_mode = PredMode::MODE_INTRA;
@@ -62,7 +69,7 @@ struct DecodingContext {
 
     // Inter: per-PU motion info at min-PU (4x4) granularity
     PUMotionInfo* motion_info = nullptr;
-    int motion_info_stride = 0;  // = pic_width / MinTbSizeY
+    int motion_info_stride = 0;  // = pic_width / kGridSize
 
     // Phase 6: deblocking data at min-TB (4x4) granularity
     uint8_t* cbf_luma_grid = nullptr;    // 1 if TU has nonzero luma coefficients
@@ -122,13 +129,13 @@ struct DecodingContext {
     // Get intra mode at position (luma) — min-TB granularity for NxN support
     int intra_mode_at(int x, int y) const {
         assert(x >= 0 && y >= 0);
-        int shift = sps->MinTbLog2SizeY;
+        int shift = kGridLog2;
         return intra_pred_mode_y[(y >> shift) * intra_pred_mode_stride + (x >> shift)];
     }
     // Get chroma intra mode at position
     int chroma_mode_at(int x, int y) const {
         assert(x >= 0 && y >= 0);
-        int shift = sps->MinTbLog2SizeY;
+        int shift = kGridLog2;
         return intra_pred_mode_c[(y >> shift) * intra_pred_mode_stride + (x >> shift)];
     }
     void set_intra_mode(int x, int y, int size, int mode);

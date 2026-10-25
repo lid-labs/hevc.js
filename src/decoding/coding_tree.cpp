@@ -30,7 +30,7 @@ void perform_intra_prediction(DecodingContext& ctx, int x0, int y0,
 // ============================================================
 
 void DecodingContext::set_intra_mode(int x, int y, int size, int mode) {
-    int minTbSize = sps->MinTbSizeY;
+    int minTbSize = kGridSize;
     int x0 = x / minTbSize;
     int y0 = y / minTbSize;
     int n = std::max(1, size / minTbSize);
@@ -40,7 +40,7 @@ void DecodingContext::set_intra_mode(int x, int y, int size, int mode) {
 }
 
 void DecodingContext::set_chroma_mode(int x, int y, int size, int mode) {
-    int minTbSize = sps->MinTbSizeY;
+    int minTbSize = kGridSize;
     int x0 = x / minTbSize;
     int y0 = y / minTbSize;
     int n = std::max(1, size / minTbSize);
