@@ -39,7 +39,7 @@
         "name": "Is hevc.js faster than libde265 compiled to WASM?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "No comparable measurement is published here: comparing the two would need libde265 built with the same toolchain, which has not been done. For reference, hevc.js decodes a 1080p stream with SAO at about 91 fps as WebAssembly, measured on an Apple M4 Pro under Node 24 (see the README for the method). The clearer differences are size and license: hevc.js is 270 KB of WASM (~100 KB gzip-compressed) against roughly 2 MB, and it is MIT-licensed rather than LGPL-3.0. It also ships a complete MSE streaming pipeline with dash.js and Shaka Player plugins rather than a raw decoder."
+          "text": "No comparable measurement is published here: comparing the two would need libde265 built with the same toolchain, which has not been done. For reference, hevc.js decodes a 1080p stream with SAO at about 91 fps as WebAssembly, measured on an Apple M4 Pro under Node 24 (see the README for the method). The clearer differences are size and license: hevc.js is 278 KB of WASM (~102 KB gzip-compressed) against roughly 2 MB, and it is MIT-licensed rather than LGPL-3.0. It also ships a complete MSE streaming pipeline with dash.js and Shaka Player plugins rather than a raw decoder."
         }
       },
       {
@@ -240,7 +240,7 @@
               </tr>
               <tr>
                 <td class="param-name">WASM size</td>
-                <td class="text-accent-light"><span class="font-semibold">270 KB</span><div class="text-xs text-silver/70">~100 KB gzipped</div></td>
+                <td class="text-accent-light"><span class="font-semibold">278 KB</span><div class="text-xs text-silver/70">~102 KB gzipped</div></td>
                 <td>~2 MB</td>
                 <td>Tens of MB (core)</td>
                 <td>Multiple builds (incl. 256/512 MB memory variants)</td>
@@ -296,7 +296,7 @@
               </tr>
               <tr>
                 <td class="param-name">Validation</td>
-                <td>Pixel-perfect vs ffmpeg on 128 bitstreams</td>
+                <td>All 147 streams of the JCT-VC HEVC v1 conformance suite bit-exact vs the reference MD5</td>
                 <td>Mature libde265 core, early JS port</td>
                 <td>FFmpeg itself</td>
                 <td>Production usage at large platforms</td>

@@ -14,7 +14,9 @@
 
 一个用 C++17 从零开始编写的 HEVC 解码器,编译为 WebAssembly,并附带开箱即用的 dash.js、Shaka Player 和 hls.js 插件。在 Web Worker 中通过 WebCodecs 实时将 HEVC 转码为 H.264,完全在客户端完成。可在所有支持 WebCodecs H.264 编码的 Chrome、Edge 和 Firefox 上运行。
 
-1080p @ 60fps。WASM 体积 270 KB,gzip 后约 100 KB。零依赖。无需特殊服务器标头。
+**逐比特正确解码官方 HEVC v1 一致性测试集的全部 147 个比特流** — [详情](#规范一致性)。
+
+1080p @ 60fps。WASM 体积 278 KB,gzip 后约 102 KB。零依赖。无需特殊服务器标头。
 
 由一名开发者在 AI 协助下用 8 天构建完成 — [阅读完整故事](https://www.developpement.ai/blog/hevcjs-decodeur-h265-navigateur-wasm)。
 
@@ -66,7 +68,7 @@ npm install @hevcjs/hlsjs-plugin    # hls.js
 
 - `transcode-worker.js` — Web Worker(IIFE 格式,独立运行)
 - `wasm/hevc-decode.js` — Emscripten 胶水代码
-- `wasm/hevc-decode.wasm` — WASM 二进制文件(270 KB,gzip 后约 100 KB)
+- `wasm/hevc-decode.wasm` — WASM 二进制文件(278 KB,gzip 后约 102 KB)
 
 将它们从 `node_modules/@hevcjs/core/dist/` 复制到你的公共目录:
 
@@ -174,7 +176,7 @@ hevc.js 在客户端将 HEVC 转码为 H.264。这需要浏览器提供两样东
 
 这个实现在三个维度上瞄准了不同的细分市场:
 
-- **体积** — 编译为 WASM 后只有 270 KB(gzip 后约 100 KB),而 libde265 编译到 WASM 大约 2 MB。**小 8 倍** — 这在向浏览器、microVM 或沙盒运行时分发时很关键。
+- **体积** — 编译为 WASM 后只有 278 KB(gzip 后约 102 KB),而 libde265 编译到 WASM 大约 2 MB。**小 7 倍** — 这在向浏览器、microVM 或沙盒运行时分发时很关键。
 - **现代化与许可证** — 全代码使用 C++17(`std::optional`、`std::shared_ptr`、`std::array`、`constexpr`),零依赖,**MIT 许可证**(libde265 是 LGPL — 这对在商业产品中静态链接很重要)。
 - **规范可追溯性** — 函数命名直接对应 ITU-T H.265 规范的章节号,且 [`docs/cross-reference.md`](docs/cross-reference.md) 把每个规范章节映射到对应的源文件和测试。如果你想 *理解* HEVC 而不只是解码它,这很有用(高校、编解码器研究、贡献者)。
 
@@ -241,7 +243,7 @@ cd build && ctest --output-on-failure    # 153 个测试
 
 ```bash
 pnpm build:wasm
-# 输出:build-wasm/hevc-decode.js + hevc-decode.wasm(270 KB,gzip 后约 100 KB),
+# 输出:build-wasm/hevc-decode.js + hevc-decode.wasm(278 KB,gzip 后约 102 KB),
 # 并复制到 packages/core/wasm/
 ```
 
@@ -267,7 +269,19 @@ WASM 构建没有线程,因此应与单线程原生列对比:WASM 在 1080p 下�
 
 ### 规范一致性
 
-按 **ITU-T H.265(v8,08/2021)** 实现 — 716 页规范直接转录为代码。在 128 个测试比特流上与 ffmpeg 进行了逐像素对比验证。每个规范章节都在 [`docs/cross-reference.md`](docs/cross-reference.md) 中 1:1 映射到对应的源文件和测试。
+按 **ITU-T H.265(v8,08/2021)** 实现 — 716 页规范直接转录为代码。
+
+**JCT-VC HEVC v1 一致性测试集的全部 147 个比特流均逐比特正确解码。** 每个比特流解码得到的 YUV 的 MD5,都与 JCT-VC 随比特流提供的 HM 参考解码器输出的 MD5 一致。该测试集覆盖 Main 和 Main 10 档次:编码工具、slice 与依赖 slice 段、tile、WPP、PCM、缩放列表、长期参考帧、图像输出顺序。测量于 2026-10-25,`main` 位于 8417151,Release 构建。作为对比,ffmpeg 9.0.2 用同一脚本测得 143 个:它不支持亮度与色度位深不同的 `TSUNEQBD_A_MAIN10_Technicolor_2`,并且在 `SAODBLK_A_MainConcept_4`、`SAODBLK_B_MainConcept_4` 和 `VPSSPSPPS_A_MainConcept_1` 上的输出与参考不同。
+
+任何人都可以复现 — 该脚本会从 ITU 网站下载测试集,约 140 MB:
+
+```bash
+tools/run_conformance.sh build/hevc-decode /tmp/hevc-conformance
+```
+
+其中 25 个比特流已提交到 `tests/conformance/fixtures/`,CI 在每个 pull request 上将其作为 oracle 测试运行,并检查 WASM 构建与原生构建的解码结果完全一致。
+
+每个规范章节都在 [`docs/cross-reference.md`](docs/cross-reference.md) 中 1:1 映射到对应的源文件和测试。
 
 | 特性 | 状态 |
 |---|---|
@@ -304,7 +318,7 @@ hevc.js/
 │   └── dashjs-plugin/      @hevcjs/dashjs-plugin — dash.js 插件
 │
 ├── demo/                   浏览器 demo(DASH)
-└── tests/                  单元测试 + 128 个 oracle 测试(逐像素对比 ffmpeg)
+└── tests/                  单元测试 + oracle 测试(解码 YUV 的 MD5)
 ```
 
 ## Demo

@@ -176,9 +176,9 @@
             <div class="text-xs text-silver/50 mt-1">works on any static file server</div>
           </div>
           <div class="stat-card rounded-xl p-6 text-center transition-all">
-            <div class="text-4xl md:text-5xl font-extrabold text-white mb-2">128<span class="text-accent">/128</span></div>
-            <div class="text-sm text-silver uppercase tracking-wider">pixel-perfect</div>
-            <div class="text-xs text-silver/50 mt-1">vs ffmpeg on every test</div>
+            <div class="text-4xl md:text-5xl font-extrabold text-white mb-2">147<span class="text-accent">/147</span></div>
+            <div class="text-sm text-silver uppercase tracking-wider">conformance streams</div>
+            <div class="text-xs text-silver/50 mt-1">bit-exact vs the HEVC reference decoder</div>
           </div>
           <div class="stat-card rounded-xl p-6 text-center transition-all">
             <div class="text-4xl md:text-5xl font-extrabold text-white mb-2">60<span class="text-accent text-2xl">fps</span></div>
@@ -186,7 +186,7 @@
             <div class="text-xs text-silver/50 mt-1">WASM, single-thread</div>
           </div>
           <div class="stat-card rounded-xl p-6 text-center transition-all">
-            <div class="text-4xl md:text-5xl font-extrabold text-white mb-2">236<span class="text-accent text-2xl">KB</span></div>
+            <div class="text-4xl md:text-5xl font-extrabold text-white mb-2">102<span class="text-accent text-2xl">KB</span></div>
             <div class="text-sm text-silver uppercase tracking-wider">WASM binary</div>
             <div class="text-xs text-silver/50 mt-1">gzipped, zero dependencies</div>
           </div>
@@ -196,9 +196,9 @@
             <div class="text-xs text-silver/50 mt-1">ITU-T H.265 v8, transcribed to C++17</div>
           </div>
           <div class="stat-card rounded-xl p-6 text-center transition-all">
-            <div class="text-4xl md:text-5xl font-extrabold text-white mb-2">83<span class="text-accent text-2xl">%</span></div>
-            <div class="text-sm text-silver uppercase tracking-wider">of libde265 speed</div>
-            <div class="text-xs text-silver/50 mt-1">a decoder with 10 years of optimizations</div>
+            <div class="text-4xl md:text-5xl font-extrabold text-white mb-2">3</div>
+            <div class="text-sm text-silver uppercase tracking-wider">player plugins</div>
+            <div class="text-xs text-silver/50 mt-1">dash.js, Shaka Player, hls.js</div>
           </div>
         </div>
       </div>
@@ -313,7 +313,7 @@
           </p>
           <p>
             The decoder is a direct implementation of the ITU-T H.265 spec — 716 pages of it,
-            transcribed to C++17 and compiled to WebAssembly. Every frame is validated pixel-perfect against ffmpeg.
+            transcribed to C++17 and compiled to WebAssembly. It decodes all 147 bitstreams of the official HEVC v1 conformance suite bit-exactly.
           </p>
           <p>
             It is not the only way to do this. We wrote up
@@ -444,8 +444,9 @@
         </div>
 
         <p class="text-center text-sm text-silver/50 mt-6">
-          Reaches 83% of <a href="https://github.com/nicostahl/libde265" class="text-accent hover:text-accent-light" rel="noopener noreferrer" target="_blank">libde265</a>
-          speed — a decoder with 10 years of optimizations.
+          All 147 bitstreams of the <a href="https://www.itu.int/wftp3/av-arch/jctvc-site/bitstream_exchange/draft_conformance/HEVC_v1/" class="text-accent hover:text-accent-light" rel="noopener noreferrer" target="_blank">JCT-VC HEVC v1 conformance suite</a>
+          decode bit-exactly against the MD5 of the reference decoder shipped with each one (measured 2026-10-25).
+          Reproduce with <code>tools/run_conformance.sh</code> — see the <a href="https://github.com/lid-labs/hevc.js#spec-conformance" class="text-accent hover:text-accent-light" rel="noopener noreferrer" target="_blank">README</a>.
         </p>
       </div>
     </section>
