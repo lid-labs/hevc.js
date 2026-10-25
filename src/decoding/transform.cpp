@@ -154,6 +154,27 @@ static void idct_pass(const int16_t* src, int16_t* dst, int shift, int line,
 // Vertical pass -> clip -> horizontal pass
 // ============================================================
 
+// dst[y * n + x] = src[x * n + y] for rows y < rows of dst, in 4x4 tiles: two
+// 4x4 rows per vector, interleaved into columns. n and rows are multiples of 4.
+static void transpose(const int16_t* src, int16_t* dst, int n, int rows) {
+    using namespace simd;
+    for (int x = 0; x < n; x += 4)
+        for (int y = 0; y < rows; y += 4) {
+            // Rows x..x+3 of src, columns y..y+3
+            i16x8 r01, r23;
+            memcpy(&r01, src + x * n + y, 8);
+            memcpy(reinterpret_cast<char*>(&r01) + 8, src + (x + 1) * n + y, 8);
+            memcpy(&r23, src + (x + 2) * n + y, 8);
+            memcpy(reinterpret_cast<char*>(&r23) + 8, src + (x + 3) * n + y, 8);
+            const i16x8 c01 = HEVC_SHUFFLE16(r01, r23, 0, 4, 8, 12, 1, 5, 9, 13);
+            const i16x8 c23 = HEVC_SHUFFLE16(r01, r23, 2, 6, 10, 14, 3, 7, 11, 15);
+            memcpy(dst + y * n + x, &c01, 8);
+            memcpy(dst + (y + 1) * n + x, reinterpret_cast<const char*>(&c01) + 8, 8);
+            memcpy(dst + (y + 2) * n + x, &c23, 8);
+            memcpy(dst + (y + 3) * n + x, reinterpret_cast<const char*>(&c23) + 8, 8);
+        }
+}
+
 static void inverse_transform_2d(int log2TrafoSize, bool use_dst,
                                   int bit_depth, const CoeffExtent& ext,
                                   const int16_t* coeff, int16_t* residual) {
@@ -204,16 +225,12 @@ static void inverse_transform_2d(int log2TrafoSize, bool use_dst,
     pass(coeff, tmp, shift1, cols, rows);
 
     // Transpose the columns pass 1 wrote, so pass 2 transforms rows
-    for (int y = 0; y < cols; y++)
-        for (int x = 0; x < trSize; x++)
-            tmp2[y * trSize + x] = tmp[x * trSize + y];
+    transpose(tmp, tmp2, trSize, cols);
 
     pass(tmp2, tmp, shift2, trSize, ext.max_x + 1);
 
     // Transpose back to get final residual in row-major order
-    for (int y = 0; y < trSize; y++)
-        for (int x = 0; x < trSize; x++)
-            residual[y * trSize + x] = tmp[x * trSize + y];
+    transpose(tmp, residual, trSize, trSize);
 }
 
 // ============================================================
