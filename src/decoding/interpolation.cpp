@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <type_traits>
 #include <cstring>
 
 namespace hevc {
@@ -157,6 +158,10 @@ static void interpolate_block(const P* src, ptrdiff_t stride, int w, int h,
             const P* s = src + y * stride;
             int16_t* out = pred + y * w;
             int x = 0;
+            // 8-bit: s << 6 fits int16
+            if (bitDepth == 8)
+                for (; x + 8 <= w; x += 8)
+                    simd::store8(out + x, simd::load8(s + x) << shift3);
             for (; x + 4 <= w; x += 4)
                 simd::store4(out + x, simd::load4(s + x) << shift3);
             for (; x < w; x++)
@@ -197,11 +202,17 @@ static void interpolate_from(const Picture& refPic, int cIdx,
 
     P buf[kMaxPadded * kMaxPadded];
     const int bw = w + N - 1;
+    // Columns [x0, x1) of the buffer lie inside the picture and are copied; the
+    // others repeat the edge sample
+    const int x0 = std::min(bw, std::max(0, before - xInt));
+    const int x1 = std::max(x0, std::min(bw, picW - xInt + before));
     for (int y = 0; y < h + N - 1; y++) {
         int sy = std::max(0, std::min(yInt + y - before, picH - 1));
         const P* row = plane + sy * stride;
-        for (int x = 0; x < bw; x++)
-            buf[y * bw + x] = row[std::max(0, std::min(xInt + x - before, picW - 1))];
+        P* b = buf + y * bw;
+        for (int x = 0; x < x0; x++) b[x] = row[0];
+        if (x1 > x0) std::memcpy(b + x0, row + xInt - before + x0, sizeof(P) * (x1 - x0));
+        for (int x = x1; x < bw; x++) b[x] = row[picW - 1];
     }
     interpolate_block<N>(buf + before * bw + before, bw, w, h, fH, fV, bitDepth, pred);
 }
@@ -404,11 +415,15 @@ static void inter_prediction(DecodingContext& ctx,
             const bool interior = xInt >= 0 && yInt >= 0 &&
                                   xInt + compW <= picW && yInt + compH <= picH;
             auto copy = [&](const auto* plane) {
+                using In = std::remove_const_t<std::remove_pointer_t<decltype(plane)>>;
                 for (int y = 0; y < compH; y++) {
                     Out* o = out + y * outStride;
                     if (interior) {
                         const auto* row = plane + (yInt + y) * stride + xInt;
-                        for (int x = 0; x < compW; x++) o[x] = static_cast<Out>(row[x]);
+                        if constexpr (std::is_same_v<In, Out>)
+                            std::memcpy(o, row, sizeof(Out) * compW);
+                        else
+                            for (int x = 0; x < compW; x++) o[x] = static_cast<Out>(row[x]);
                     } else {
                         const int sy = std::max(0, std::min(yInt + y, picH - 1));
                         const auto* row = plane + sy * stride;
