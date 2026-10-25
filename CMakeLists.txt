@@ -62,6 +62,12 @@ add_executable(hevc-decode
 
 target_link_libraries(hevc-decode PRIVATE hevc-decode-lib)
 
+# Decode-only benchmark (tools/hevc_bench.cpp), native only
+if(NOT BUILD_WASM)
+    add_executable(hevc-bench tools/hevc_bench.cpp)
+    target_link_libraries(hevc-bench PRIVATE hevc-decode-lib)
+endif()
+
 # WASM-specific settings
 if(BUILD_WASM)
     # WASM target: build the C API as a JS+WASM module (not the CLI)
