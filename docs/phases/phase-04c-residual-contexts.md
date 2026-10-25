@@ -1,46 +1,46 @@
 # Phase 4C — Residual Coding Context Derivation
 
-## Statut : A VALIDER
+## Status: TO VALIDATE
 
-## Objectif
+## Goal
 
-Valider que CHAQUE fonction `derive_*_ctx()` produit le MEME index de contexte que HM,
-pour toutes les combinaisons de parametres. Test purement fonctionnel, pas de CABAC.
+Validate that EACH `derive_*_ctx()` function produces the SAME context index as HM,
+for all parameter combinations. Purely functional test, no CABAC.
 
-## Pourquoi c'est critique
+## Why it is critical
 
-Un mauvais index de contexte ne change pas forcement la valeur du bin decode
-(deux contextes differents peuvent decoder la meme valeur par coincidence),
-mais il corrompt l'etat arithmetique du moteur CABAC. Le bug apparait alors
-des dizaines ou centaines de bins plus tard, rendant le debug quasi-impossible.
+A wrong context index does not necessarily change the value of the decoded bin
+(two different contexts can decode the same value by coincidence),
+but it corrupts the arithmetic state of the CABAC engine. The bug then shows up
+tens or hundreds of bins later, making debugging nearly impossible.
 
-## Bugs trouves dans cette zone
+## Bugs found in this area
 
 | Bug | Cause | Fix |
 |-----|-------|-----|
-| Chroma sig_coeff_flag offset 27 vs 28 | Spec eq 9-55 vs HM layout | Base chroma = 28 |
-| Chroma 4x4 firstSigCtx = 9 au lieu de 0 | Confusion avec luma 4x4 | firstSigCtx[CHROMA][4x4] = 0 |
-| Chroma 8x8 firstSigCtx = 12 au lieu de 9 | Decalage d'un context type | firstSigCtx[CHROMA][8x8] = 9 |
-| Luma 8x8 firstSigCtx = 21 au lieu de 9 | Confusion NxN vs 8x8 | firstSigCtx[LUMA][8x8] = 9 |
+| Chroma sig_coeff_flag offset 27 vs 28 | Spec eq 9-55 vs HM layout | Chroma base = 28 |
+| Chroma 4x4 firstSigCtx = 9 instead of 0 | Confusion with luma 4x4 | firstSigCtx[CHROMA][4x4] = 0 |
+| Chroma 8x8 firstSigCtx = 12 instead of 9 | Off by one context type | firstSigCtx[CHROMA][8x8] = 9 |
+| Luma 8x8 firstSigCtx = 21 instead of 9 | Confusion NxN vs 8x8 | firstSigCtx[LUMA][8x8] = 9 |
 
 ## Spec refs
 
-- §9.3.4.2.5 : sig_coeff_flag context derivation (le plus complexe)
-- §9.3.4.2.6 : coeff_abs_level_greater1_flag ctxSet
-- §9.3.4.2.7 : coeff_abs_level_greater2_flag ctxSet
-- §9.3.3.5 : last_sig_coeff prefix context
-- HM `ContextTables.h` : tables de reference
-- HM `TComTrQuant.cpp` : `getSigCtxInc()`, `calcPatternSigCtx()`
-- HM `TComChromaFormat.h` : `getContextSetIndex()`, `significanceMapContextSetStart`
+- §9.3.4.2.5: sig_coeff_flag context derivation (the most complex)
+- §9.3.4.2.6: coeff_abs_level_greater1_flag ctxSet
+- §9.3.4.2.7: coeff_abs_level_greater2_flag ctxSet
+- §9.3.3.5: last_sig_coeff prefix context
+- HM `ContextTables.h`: reference tables
+- HM `TComTrQuant.cpp`: `getSigCtxInc()`, `calcPatternSigCtx()`
+- HM `TComChromaFormat.h`: `getContextSetIndex()`, `significanceMapContextSetStart`
 
-## Fonctions a tester
+## Functions to test
 
 ### 1. `derive_sig_coeff_flag_ctx(cIdx, log2TrafoSize, xC, yC, scanIdx, coded_sub_block_flag, numSbPerSide)`
 
-Valeurs de reference HM (`significanceMapContextSetStart` + `getSigCtxInc`) :
+HM reference values (`significanceMapContextSetStart` + `getSigCtxInc`):
 
 ```
-Luma (base=0) :
+Luma (base=0):
   DC (xC+yC==0) → 0
   4x4 non-DC → ctxIdxMap[pos]  (range 1-8)
   8x8 diag → 9 + offset  (range 9-14)
@@ -48,7 +48,7 @@ Luma (base=0) :
   NxN (>=16x16) → 21 + offset  (range 21-26)
   transform_skip → 27
 
-Chroma (base=28) :
+Chroma (base=28):
   DC → 28
   4x4 non-DC → 28 + ctxIdxMap[pos]  (range 29-36)
   8x8 → 28 + 9 + offset  (range 37-39)
@@ -56,7 +56,7 @@ Chroma (base=28) :
   transform_skip → 28 + 15 = 43
 ```
 
-Cas de test :
+Test cases:
 ```cpp
 // Luma DC
 EXPECT_EQ(derive_sig_coeff_flag_ctx(0, 4, 0, 0, 0, csbf, 4), 0);
@@ -74,7 +74,7 @@ EXPECT_EQ(derive_sig_coeff_flag_ctx(1, 3, 1, 0, 0, csbf, 2), 28+9+2);
 
 ### 2. `decode_coeff_abs_level_greater1_flag` context
 
-HM `getContextSetIndex` :
+HM `getContextSetIndex`:
 ```
 Luma:   ctxSet = (subsetIdx > 0 ? 2 : 0) + (prevGreater1==0 ? 1 : 0)
 Chroma: ctxSet = 0 + (prevGreater1==0 ? 1 : 0)
@@ -101,34 +101,34 @@ ctxIdx = ctxOffset + ctxOff + (i >> ctxShift)
 ctxInc = (cIdx > 0 ? 2 : 0) + (csbfRight || csbfBelow ? 1 : 0)
 ```
 
-## Methode de validation
+## Validation method
 
-### Option A : Test unitaire pur (recommande)
+### Option A: Pure unit test (recommended)
 
-Creer `tests/unit/test_residual_contexts.cpp` qui appelle chaque `derive_*` avec des parametres varies et compare avec des valeurs attendues calculees a la main depuis HM.
+Create `tests/unit/test_residual_contexts.cpp` that calls each `derive_*` with varied parameters and compares with expected values computed by hand from HM.
 
-Avantage : rapide, deterministe, pas de build HM necessaire.
+Advantage: fast, deterministic, no HM build needed.
 
-### Option B : Extraction automatique depuis HM
+### Option B: Automatic extraction from HM
 
-1. Modifier HM pour logger `(cIdx, log2, xC, yC, scanIdx, prevCsbf) → ctxIdx` pour chaque sig_coeff_flag
-2. Parser le log
-3. Rejouer les memes parametres dans notre `derive_sig_coeff_flag_ctx()`
-4. Comparer
+1. Modify HM to log `(cIdx, log2, xC, yC, scanIdx, prevCsbf) → ctxIdx` for each sig_coeff_flag
+2. Parse the log
+3. Replay the same parameters in our `derive_sig_coeff_flag_ctx()`
+4. Compare
 
-Avantage : couverture exhaustive sur un vrai bitstream.
+Advantage: exhaustive coverage on a real bitstream.
 
-## Taches
+## Tasks
 
-- [ ] Creer `tests/unit/test_residual_contexts.cpp`
-- [ ] Tester `derive_sig_coeff_flag_ctx` : 20+ cas couvrant luma/chroma x DC/4x4/8x8/NxN x prevCsbf
-- [ ] Tester `decode_coeff_abs_level_greater1_flag` context : luma/chroma x ctxSet x greater1Ctx
-- [ ] Tester `decode_coeff_abs_level_greater2_flag` context : luma/chroma x ctxSet
-- [ ] Tester `decode_last_sig_coeff_prefix` context : luma/chroma x log2 2-5
-- [ ] Tester `decode_coded_sub_block_flag` context : luma/chroma x neighbours
-- [ ] Valider par trace comparative vs HM sur i_64x64_qp22 (Option B)
+- [ ] Create `tests/unit/test_residual_contexts.cpp`
+- [ ] Test `derive_sig_coeff_flag_ctx`: 20+ cases covering luma/chroma x DC/4x4/8x8/NxN x prevCsbf
+- [ ] Test `decode_coeff_abs_level_greater1_flag` context: luma/chroma x ctxSet x greater1Ctx
+- [ ] Test `decode_coeff_abs_level_greater2_flag` context: luma/chroma x ctxSet
+- [ ] Test `decode_last_sig_coeff_prefix` context: luma/chroma x log2 2-5
+- [ ] Test `decode_coded_sub_block_flag` context: luma/chroma x neighbours
+- [ ] Validate by comparative trace vs HM on i_64x64_qp22 (Option B)
 
-## Critere de sortie
+## Exit criterion
 
-- [ ] test_residual_contexts passe avec 30+ cas
-- [ ] Trace sig_coeff_flag ctx identique a HM pour les 100 premiers sig_coeff_flag de i_64x64_qp22
+- [ ] test_residual_contexts passes with 30+ cases
+- [ ] sig_coeff_flag ctx trace identical to HM for the first 100 sig_coeff_flag of i_64x64_qp22

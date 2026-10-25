@@ -1,14 +1,14 @@
 # Phase 9 — Performance & Optimisation
 
-## Objectif
-Atteindre la lecture temps réel dans le navigateur. Cible : 1080p@30 minimum, 4K@60 en stretch goal.
+## Goal
+Reach real-time playback in the browser. Target: 1080p@30 minimum, 4K@60 as a stretch goal.
 
-## Prérequis
-Phase 8 complétée (WASM fonctionnel). Phase 7 pour les profils 10-bit.
+## Prerequisites
+Phase 8 completed (working WASM). Phase 7 for the 10-bit profiles.
 
-## Budget de temps par frame
+## Time budget per frame
 
-| Résolution | FPS | Budget/frame |
+| Resolution | FPS | Budget/frame |
 |------------|-----|-------------|
 | 720p@30 | 30 | 33ms |
 | 1080p@30 | 30 | 33ms |
@@ -16,28 +16,28 @@ Phase 8 complétée (WASM fonctionnel). Phase 7 pour les profils 10-bit.
 | 4K@30 | 30 | 33ms |
 | 4K@60 | 60 | 16.6ms |
 
-Référence : un décodeur C optimisé (libde265, ffmpeg) décode du 1080p@30 en ~5ms sur desktop. WASM est ~2-3x plus lent, donc ~10-15ms — faisable.
+Reference: an optimised C decoder (libde265, ffmpeg) decodes 1080p@30 in ~5ms on desktop. WASM is ~2-3x slower, so ~10-15ms — feasible.
 
-## Tâches
+## Tasks
 
 ### 9.1 — Profiling
-- [ ] Profiler le build natif (perf, Instruments)
-- [ ] Profiler le build WASM (Chrome DevTools Performance)
-- [ ] Identifier les top 5 hotspots (probablement : interpolation, CABAC, transform, deblocking, SAO)
-- [ ] Mesurer le ratio temps WASM/natif
+- [ ] Profile the native build (perf, Instruments)
+- [ ] Profile the WASM build (Chrome DevTools Performance)
+- [ ] Identify the top 5 hotspots (probably: interpolation, CABAC, transform, deblocking, SAO)
+- [ ] Measure the WASM/native time ratio
 
-### 9.2 — SIMD WASM
-WASM supporte les instructions SIMD 128-bit (depuis 2021, supporté par tous les navigateurs modernes).
+### 9.2 — WASM SIMD
+WASM supports 128-bit SIMD instructions (since 2021, supported by all modern browsers).
 
-- [ ] Interpolation luma 8-tap : vectoriser le filtre horizontal/vertical
-- [ ] Interpolation chroma 4-tap : idem
-- [ ] Transform inverse : partial butterfly SIMD
-- [ ] Deblocking : vectoriser le filtre sur les lignes de samples
-- [ ] SAO : vectoriser les comparaisons edge offset
-- [ ] Reconstruction : addition + clipping SIMD
+- [ ] 8-tap luma interpolation : vectorise the horizontal/vertical filter
+- [ ] 4-tap chroma interpolation : same
+- [ ] Inverse transform : SIMD partial butterfly
+- [ ] Deblocking : vectorise the filter over the sample lines
+- [ ] SAO : vectorise the edge offset comparisons
+- [ ] Reconstruction : SIMD addition + clipping
 
 ```cpp
-// Exemple : interpolation luma horizontale SIMD
+// Example: horizontal luma interpolation with SIMD
 #include <wasm_simd128.h>
 
 void luma_filter_h_simd(const uint8_t* src, int16_t* dst, int width, int frac) {
@@ -47,54 +47,54 @@ void luma_filter_h_simd(const uint8_t* src, int16_t* dst, int width, int frac) {
         luma_filter[frac][4], luma_filter[frac][5],
         luma_filter[frac][6], luma_filter[frac][7]
     );
-    // Traiter 8 pixels à la fois...
+    // Process 8 pixels at a time...
 }
 ```
 
-Compiler avec : `emcc -msimd128`
+Compile with: `emcc -msimd128`
 
 ### 9.3 — Threading (Web Workers)
-- [ ] Pipeline de décodage : Worker 1 parse CABAC, Worker 2 fait la reconstruction
-- [ ] Parallélisme par tile : chaque tile décodée dans un Worker séparé
-- [ ] WPP : parallélisme par ligne de CTU (dépendance diagonale)
-- [ ] SharedArrayBuffer pour partager le DPB entre workers
-- [ ] Nécessite les headers COOP/COEP :
+- [ ] Decoding pipeline : Worker 1 parses CABAC, Worker 2 does the reconstruction
+- [ ] Tile parallelism : each tile decoded in a separate Worker
+- [ ] WPP : CTU row parallelism (diagonal dependency)
+- [ ] SharedArrayBuffer to share the DPB between workers
+- [ ] Requires the COOP/COEP headers:
   ```
   Cross-Origin-Opener-Policy: same-origin
   Cross-Origin-Embedder-Policy: require-corp
   ```
 
-### 9.4 — Optimisations algorithmiques
-- [ ] Lookup tables pour CABAC (rangeTabLps pré-calculé en shifts)
-- [ ] Fast path pour les CU skip (pas de résidu = pas de transform)
-- [ ] Fast path pour QP constant (scaling simplifié)
-- [ ] Cache-friendly memory layout pour les pictures
-- [ ] Éviter les divisions (remplacer par shifts)
+### 9.4 — Algorithmic optimisations
+- [ ] Lookup tables for CABAC (rangeTabLps precomputed as shifts)
+- [ ] Fast path for skipped CUs (no residual = no transform)
+- [ ] Fast path for constant QP (simplified scaling)
+- [ ] Cache-friendly memory layout for the pictures
+- [ ] Avoid divisions (replace with shifts)
 
 ### 9.5 — Memory
-- [ ] Pool allocator pour les CU/PU/TU (éviter malloc par bloc)
-- [ ] Réutiliser les buffers de frame (ring buffer dans le DPB)
-- [ ] Minimiser les copies (zero-copy entre CABAC et reconstruction)
-- [ ] Alignement mémoire pour SIMD (16-byte aligned)
+- [ ] Pool allocator for CU/PU/TU (avoid malloc per block)
+- [ ] Reuse the frame buffers (ring buffer in the DPB)
+- [ ] Minimise copies (zero-copy between CABAC and reconstruction)
+- [ ] Memory alignment for SIMD (16-byte aligned)
 
 ### 9.6 — Benchmarks
-- [ ] Suite de benchmarks reproductibles :
+- [ ] Reproducible benchmark suite:
   - 720p I-only @QP22
   - 1080p IPB @QP22
   - 4K IPB @QP22
-- [ ] Mesure : FPS, ms/frame, mémoire peak
-- [ ] Tracking CI : alerter si régression > 10%
-- [ ] Comparer avec libde265 WASM (si disponible) et ffmpeg WASM
+- [ ] Measurement : FPS, ms/frame, peak memory
+- [ ] CI tracking : alert on regression > 10%
+- [ ] Compare with libde265 WASM (if available) and ffmpeg WASM
 
-## Critère de sortie
+## Exit criterion
 
-| Cible | Critère | Statut |
+| Target | Criterion | Status |
 |-------|---------|--------|
-| Minimum | 720p@30 temps réel dans Chrome | Requis |
-| Objectif | 1080p@30 temps réel dans Chrome | Souhaité |
-| Stretch | 1080p@60 temps réel | Nice to have |
-| Stretch++ | 4K@30 temps réel | Ambitieux |
-| Stretch+++ | 4K@60 temps réel | Très ambitieux |
+| Minimum | 720p@30 real-time in Chrome | Required |
+| Goal | 1080p@30 real-time in Chrome | Desired |
+| Stretch | 1080p@60 real-time | Nice to have |
+| Stretch++ | 4K@30 real-time | Ambitious |
+| Stretch+++ | 4K@60 real-time | Very ambitious |
 
-## Estimation de complexité
-Élevée. L'optimisation SIMD est technique et fastidieuse. Le threading WASM ajoute de la complexité (synchronisation, headers COOP/COEP).
+## Complexity estimate
+High. SIMD optimisation is technical and tedious. WASM threading adds complexity (synchronisation, COOP/COEP headers).
