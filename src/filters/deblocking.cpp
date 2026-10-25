@@ -395,14 +395,23 @@ void apply_deblocking(DecodingContext& ctx) {
                         using namespace simd;
                         i32x4 P[4], Q[4];
                         if (edgeType == EDGE_VER) {
-                            const uint16_t* r0 = lumaPlane + yQ * lumaStride + xQ;
-                            const uint16_t* r1 = r0 + lumaStride;
-                            const uint16_t* r2 = r1 + lumaStride;
-                            const uint16_t* r3 = r2 + lumaStride;
-                            for (int i = 0; i < 4; i++) {
-                                Q[i] = i32x4{r0[i], r1[i], r2[i], r3[i]};
-                                P[i] = i32x4{r0[-i - 1], r1[-i - 1], r2[-i - 1], r3[-i - 1]};
-                            }
+                            // Rows of p3..q3, transposed into columns: 16-bit then
+                            // 32-bit interleaves
+                            const uint16_t* r0 = lumaPlane + yQ * lumaStride + xQ - 4;
+                            const i16x8 a0 = load8(r0), a1 = load8(r0 + lumaStride);
+                            const i16x8 a2 = load8(r0 + 2 * lumaStride);
+                            const i16x8 a3 = load8(r0 + 3 * lumaStride);
+                            const i16x8 b0 = HEVC_SHUFFLE16(a0, a1, 0, 8, 1, 9, 2, 10, 3, 11);
+                            const i16x8 b1 = HEVC_SHUFFLE16(a0, a1, 4, 12, 5, 13, 6, 14, 7, 15);
+                            const i16x8 b2 = HEVC_SHUFFLE16(a2, a3, 0, 8, 1, 9, 2, 10, 3, 11);
+                            const i16x8 b3 = HEVC_SHUFFLE16(a2, a3, 4, 12, 5, 13, 6, 14, 7, 15);
+                            // Two columns each, lines 0-3: (p3, p2) (p1, p0) (q0, q1) (q2, q3)
+                            const i32x8 c0 = widen(HEVC_SHUFFLE16(b0, b2, 0, 1, 8, 9, 2, 3, 10, 11));
+                            const i32x8 c1 = widen(HEVC_SHUFFLE16(b0, b2, 4, 5, 12, 13, 6, 7, 14, 15));
+                            const i32x8 c2 = widen(HEVC_SHUFFLE16(b1, b3, 0, 1, 8, 9, 2, 3, 10, 11));
+                            const i32x8 c3 = widen(HEVC_SHUFFLE16(b1, b3, 4, 5, 12, 13, 6, 7, 14, 15));
+                            P[3] = lo(c0); P[2] = hi(c0); P[1] = lo(c1); P[0] = hi(c1);
+                            Q[0] = lo(c2); Q[1] = hi(c2); Q[2] = lo(c3); Q[3] = hi(c3);
                         } else {
                             const uint16_t* c = lumaPlane + yQ * lumaStride + xQ;
                             for (int i = 0; i < 4; i++) {
@@ -446,12 +455,22 @@ void apply_deblocking(DecodingContext& ctx) {
                             // Write back p0..p2, q0..q2: lanes left unfiltered still hold
                             // their own sample.
                             if (edgeType == EDGE_VER) {
-                                uint16_t* row = lumaPlane + yQ * lumaStride + xQ;
-                                for (int k = 0; k < 4; k++, row += lumaStride)
-                                    for (int i = 0; i < 3; i++) {
-                                        row[-i - 1] = static_cast<uint16_t>(P[i][k]);
-                                        row[i] = static_cast<uint16_t>(Q[i][k]);
-                                    }
+                                // Columns back into rows, p3 and q3 unchanged
+                                const i16x8 e = pack(P[3], P[2]), f = pack(P[1], P[0]);
+                                const i16x8 g = pack(Q[0], Q[1]), h = pack(Q[2], Q[3]);
+                                // Lines 0 and 1, then 2 and 3, four columns of each
+                                const i16x8 ef01 = HEVC_SHUFFLE16(e, f, 0, 4, 8, 12, 1, 5, 9, 13);
+                                const i16x8 gh01 = HEVC_SHUFFLE16(g, h, 0, 4, 8, 12, 1, 5, 9, 13);
+                                const i16x8 ef23 = HEVC_SHUFFLE16(e, f, 2, 6, 10, 14, 3, 7, 11, 15);
+                                const i16x8 gh23 = HEVC_SHUFFLE16(g, h, 2, 6, 10, 14, 3, 7, 11, 15);
+                                uint16_t* row = lumaPlane + yQ * lumaStride + xQ - 4;
+                                store8(row, HEVC_SHUFFLE16(ef01, gh01, 0, 1, 2, 3, 8, 9, 10, 11));
+                                store8(row + lumaStride,
+                                       HEVC_SHUFFLE16(ef01, gh01, 4, 5, 6, 7, 12, 13, 14, 15));
+                                store8(row + 2 * lumaStride,
+                                       HEVC_SHUFFLE16(ef23, gh23, 0, 1, 2, 3, 8, 9, 10, 11));
+                                store8(row + 3 * lumaStride,
+                                       HEVC_SHUFFLE16(ef23, gh23, 4, 5, 6, 7, 12, 13, 14, 15));
                             } else {
                                 uint16_t* c = lumaPlane + yQ * lumaStride + xQ;
                                 for (int i = 0; i < 3; i++) {

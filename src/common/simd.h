@@ -108,6 +108,36 @@ inline void store8(uint16_t* p, i16x8 v) {
     memcpy(p, &v, sizeof(v));
 }
 
+// Lane permutation of two i16x8, constant indices 0-15 (8+ picks from b).
+// clang and GCC spell it differently (DECISIONS.md, AD-010).
+#if defined(__clang__)
+#define HEVC_SHUFFLE16(a, b, ...) __builtin_shufflevector((a), (b), __VA_ARGS__)
+#else
+#define HEVC_SHUFFLE16(a, b, ...) \
+    __builtin_shuffle((a), (b), ::hevc::simd::i16x8{__VA_ARGS__})
+#endif
+
+// Lanes 0-3 and 4-7 of an i32x8
+inline i32x4 lo(const i32x8& v) {
+    i32x4 r;
+    memcpy(&r, &v, sizeof(r));
+    return r;
+}
+
+inline i32x4 hi(const i32x8& v) {
+    i32x4 r;
+    memcpy(&r, reinterpret_cast<const char*>(&v) + sizeof(r), sizeof(r));
+    return r;
+}
+
+// a then b, narrowed to int16 (truncating, like store4)
+inline i16x8 pack(i32x4 a, i32x4 b) {
+    i32x8 v;
+    memcpy(&v, &a, sizeof(a));
+    memcpy(reinterpret_cast<char*>(&v) + sizeof(a), &b, sizeof(b));
+    return __builtin_convertvector(v, i16x8);
+}
+
 inline i32x8 widen(i16x8 v) {
     return __builtin_convertvector(v, i32x8);
 }
