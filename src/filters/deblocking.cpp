@@ -46,105 +46,47 @@ static const int qpc_table[58] = {
 enum EdgeType { EDGE_VER = 0, EDGE_HOR = 1 };
 
 // ============================================================
-// Helper: is position (x,y) at a picture/tile/slice boundary?
+// Boundary exclusions (§8.7.2.1)
 // Returns true if filtering should NOT cross this boundary.
 // ============================================================
-static bool is_boundary_excluded(const DecodingContext& ctx,
-                                  int x, int y, EdgeType edgeType) {
-    auto& sps = *ctx.sps;
+// The part of the exclusions that only applies across a CTB boundary: P and
+// Q in one CTB share its slice and tile. addr_q / addr_p: the CTBs of Q and P.
+static bool excluded_across_ctbs(const DecodingContext& ctx, const SliceHeader& sh_q,
+                                 int addr_q, int addr_p) {
     auto& pps = *ctx.pps;
-    int picW = sps.pic_width_in_luma_samples;
-    int picH = sps.pic_height_in_luma_samples;
-
-    // Picture boundary
-    if (edgeType == EDGE_VER && x == 0) return true;
-    if (edgeType == EDGE_HOR && y == 0) return true;
-    if (edgeType == EDGE_VER && x >= picW) return true;
-    if (edgeType == EDGE_HOR && y >= picH) return true;
-
-    // §8.7.2.1: slice_deblocking_filter_disabled_flag for the slice containing Q-side
-    // Grid indices: coordinates are non-negative here (picture-boundary edges
-    // returned above), so shifting matches the original division.
-    const int ctbLog2 = sps.CtbLog2SizeY;
-    int addr_q = (y >> ctbLog2) * sps.PicWidthInCtbsY + (x >> ctbLog2);
-    auto& sh_q = ctx.sh_at_ctb(addr_q);
-    if (sh_q.slice_deblocking_filter_disabled_flag) return true;
-
     // Tile boundary
     if (!pps.loop_filter_across_tiles_enabled_flag && !pps.TileId.empty()) {
-        if (edgeType == EDGE_VER) {
-            int rx_q = x >> ctbLog2;
-            int rx_p = (x - 1) >> ctbLog2;
-            int ry = y >> ctbLog2;
-            int addr_q = ry * sps.PicWidthInCtbsY + rx_q;
-            int addr_p = ry * sps.PicWidthInCtbsY + rx_p;
-            if (addr_q < (int)pps.TileId.size() && addr_p < (int)pps.TileId.size()) {
-                int ts_q = pps.CtbAddrRsToTs[addr_q];
-                int ts_p = pps.CtbAddrRsToTs[addr_p];
-                if (pps.TileId[ts_q] != pps.TileId[ts_p]) return true;
-            }
-        } else {
-            int ry_q = y >> ctbLog2;
-            int ry_p = (y - 1) >> ctbLog2;
-            int rx = x >> ctbLog2;
-            int addr_q = ry_q * sps.PicWidthInCtbsY + rx;
-            int addr_p = ry_p * sps.PicWidthInCtbsY + rx;
-            if (addr_q < (int)pps.TileId.size() && addr_p < (int)pps.TileId.size()) {
-                int ts_q = pps.CtbAddrRsToTs[addr_q];
-                int ts_p = pps.CtbAddrRsToTs[addr_p];
-                if (pps.TileId[ts_q] != pps.TileId[ts_p]) return true;
-            }
+        if (addr_q < (int)pps.TileId.size() && addr_p < (int)pps.TileId.size()) {
+            int ts_q = pps.CtbAddrRsToTs[addr_q];
+            int ts_p = pps.CtbAddrRsToTs[addr_p];
+            if (pps.TileId[ts_q] != pps.TileId[ts_p]) return true;
         }
     }
-
-    // Slice boundary — §8.7.2.1: exclude edges at slice boundaries
-    // when slice_loop_filter_across_slices_enabled_flag == 0
-    if (ctx.slice_idx) {
-        int addr_p;
-        if (edgeType == EDGE_VER) {
-            addr_p = (y >> ctbLog2) * sps.PicWidthInCtbsY + ((x - 1) >> ctbLog2);
-        } else {
-            addr_p = ((y - 1) >> ctbLog2) * sps.PicWidthInCtbsY + (x >> ctbLog2);
-        }
-        if (ctx.slice_idx[addr_q] != ctx.slice_idx[addr_p]) {
-            // §8.7.2.1: "left/top boundary of the slice and
-            // slice_loop_filter_across_slices_enabled_flag is equal to 0"
-            // This applies to the Q-side slice
-            if (!sh_q.slice_loop_filter_across_slices_enabled_flag)
-                return true;
-        }
-    }
-
-    // §8.7.2.1: Also check P-side — if the P-side slice has deblocking disabled,
-    // the edge should still be excluded
-    // (The filterLeftCbEdgeFlag/filterTopCbEdgeFlag is per-CU, driven by Q-side slice only)
-
+    // Slice boundary — §8.7.2.1, Q-side slice's
+    // slice_loop_filter_across_slices_enabled_flag
+    if (ctx.slice_idx && ctx.slice_idx[addr_q] != ctx.slice_idx[addr_p] &&
+        !sh_q.slice_loop_filter_across_slices_enabled_flag)
+        return true;
     return false;
 }
 
 // ============================================================
 // Boundary Strength derivation — §8.7.2.4
 // ============================================================
-static int derive_bs(const DecodingContext& ctx, int xP, int yP, int xQ, int yQ) {
+static int derive_bs(const DecodingContext& ctx, int xP, int yP, int xQ, int yQ,
+                     const CUInfo& cuP, const CUInfo& cuQ) {
     auto& sps = *ctx.sps;
-    int picW = sps.pic_width_in_luma_samples;
-    int picH = sps.pic_height_in_luma_samples;
-
-    // Out of bounds check
-    if (xP < 0 || yP < 0 || xP >= picW || yP >= picH) return 0;
-    if (xQ < 0 || yQ < 0 || xQ >= picW || yQ >= picH) return 0;
-
-    auto& cuP = ctx.cu_at(xP, yP);
-    auto& cuQ = ctx.cu_at(xQ, yQ);
 
     // Bs=2 if either side is intra (or PCM treated as intra)
     if (cuP.pred_mode == PredMode::MODE_INTRA || cuQ.pred_mode == PredMode::MODE_INTRA)
         return 2;
 
     // Check if edge is also a TU boundary with nonzero coefficients
+    // Coordinates are inside the picture (the caller skips picture edges), so
+    // shifts and masks stand for the divisions and modulos.
     int stride = ctx.filter_grid_stride;
-    int gxP = xP / 4, gyP = yP / 4;
-    int gxQ = xQ / 4, gyQ = yQ / 4;
+    int gxP = xP >> 2, gyP = yP >> 2;
+    int gxQ = xQ >> 2, gyQ = yQ >> 2;
     bool cbfP = ctx.cbf_luma_grid[gyP * stride + gxP] != 0;
     bool cbfQ = ctx.cbf_luma_grid[gyQ * stride + gxQ] != 0;
 
@@ -162,20 +104,19 @@ static int derive_bs(const DecodingContext& ctx, int xP, int yP, int xQ, int yQ)
     bool isTuEdge = false;
     if (xP != xQ) {
         // Vertical edge
-        isTuEdge = (xQ % tuSizeQ == 0) || ((xP + 1) % tuSizeP == 0 && (xP + 1) == xQ);
+        isTuEdge = (xQ & (tuSizeQ - 1)) == 0 || (((xP + 1) & (tuSizeP - 1)) == 0 && (xP + 1) == xQ);
     } else {
         // Horizontal edge
-        isTuEdge = (yQ % tuSizeQ == 0) || ((yP + 1) % tuSizeP == 0 && (yP + 1) == yQ);
+        isTuEdge = (yQ & (tuSizeQ - 1)) == 0 || (((yP + 1) & (tuSizeP - 1)) == 0 && (yP + 1) == yQ);
     }
 
     if (isTuEdge && (cbfP || cbfQ))
         return 1;
 
     // Inter prediction comparison
-    int minTb = kGridSize;
     int miStride = ctx.motion_info_stride;
-    auto& miP = ctx.motion_info[(yP / minTb) * miStride + (xP / minTb)];
-    auto& miQ = ctx.motion_info[(yQ / minTb) * miStride + (xQ / minTb)];
+    auto& miP = ctx.motion_info[(yP >> kGridLog2) * miStride + (xP >> kGridLog2)];
+    auto& miQ = ctx.motion_info[(yQ >> kGridLog2) * miStride + (xQ >> kGridLog2)];
 
     int nRefP = (miP.pred_flag[0] ? 1 : 0) + (miP.pred_flag[1] ? 1 : 0);
     int nRefQ = (miQ.pred_flag[0] ? 1 : 0) + (miQ.pred_flag[1] ? 1 : 0);
@@ -260,7 +201,7 @@ static int derive_bs(const DecodingContext& ctx, int xP, int yP, int xQ, int yQ)
 // ============================================================
 static bool has_edge(const DecodingContext& ctx, int x, int y, EdgeType edgeType) {
     int stride = ctx.filter_grid_stride;
-    int gx = x / 4, gy = y / 4;
+    int gx = x >> 2, gy = y >> 2;
     if (edgeType == EDGE_VER) {
         return ctx.edge_flags_v[gy * stride + gx] != 0;
     } else {
@@ -401,32 +342,37 @@ void apply_deblocking(DecodingContext& ctx) {
                     bool hasE = has_edge(ctx, x, y, edgeType);
                     if (!hasE) continue;
 
-                    // Check boundary exclusions
-                    bool excl = is_boundary_excluded(ctx, x, y, edgeType);
-                    if (excl) continue;
-
-                    // Derive Bs
+                    // Boundary exclusions (§8.7.2.1): the picture edge, a slice with
+                    // deblocking disabled, and tile and slice edges, which can only
+                    // lie on a CTB boundary
+                    if (edgeType == EDGE_VER ? x == 0 : y == 0) continue;
                     int xP, yP, xQ, yQ;
                     if (edgeType == EDGE_VER) {
                         xP = x - 1; yP = y; xQ = x; yQ = y;
                     } else {
                         xP = x; yP = y - 1; xQ = x; yQ = y;
                     }
-                    int bS = derive_bs(ctx, xP, yP, xQ, yQ);
+                    const int ctbLog2F = sps.CtbLog2SizeY;
+                    int addrQ = (yQ >> ctbLog2F) * sps.PicWidthInCtbsY + (xQ >> ctbLog2F);
+                    auto& sh_filt = ctx.sh_at_ctb(addrQ);
+                    if (sh_filt.slice_deblocking_filter_disabled_flag) continue;
+                    int addrP = (yP >> ctbLog2F) * sps.PicWidthInCtbsY + (xP >> ctbLog2F);
+                    if (addrP != addrQ && excluded_across_ctbs(ctx, sh_filt, addrQ, addrP))
+                        continue;
+
+                    // Derive Bs
+                    auto& cuP = ctx.cu_at(xP, yP);
+                    auto& cuQ = ctx.cu_at(xQ, yQ);
+                    int bS = derive_bs(ctx, xP, yP, xQ, yQ, cuP, cuQ);
                     if (bS == 0) continue;
 
                     // Get QP for both sides
-                    auto& cuP = ctx.cu_at(xP, yP);
-                    auto& cuQ = ctx.cu_at(xQ, yQ);
                     bool pcmP = cuP.is_pcm;
                     bool pcmQ = cuQ.is_pcm;
                     bool bypassP = cuP.cu_transquant_bypass;
                     bool bypassQ = cuQ.cu_transquant_bypass;
 
-                    // §8.7.2.5.3: slice parameters for the slice containing q0,0
-                    const int ctbLog2F = sps.CtbLog2SizeY;
-                    int addrQ = (yQ >> ctbLog2F) * sps.PicWidthInCtbsY + (xQ >> ctbLog2F);
-                    auto& sh_filt = ctx.sh_at_ctb(addrQ);
+                    // §8.7.2.5.3: slice parameters for the slice containing q0,0 — sh_filt
 
 
                     // ---- LUMA ----
@@ -529,8 +475,8 @@ void apply_deblocking(DecodingContext& ctx) {
                             chromaAligned = ((chromaY >> 3) << 3) == chromaY;
 
                         if (chromaAligned) {
-                            int QpP = ctx.cu_at(xP, yP).qp_y;
-                            int QpQ = ctx.cu_at(xQ, yQ).qp_y;
+                            int QpP = cuP.qp_y;
+                            int QpQ = cuQ.qp_y;
 
                             for (int cIdx = 1; cIdx <= 2; cIdx++) {
                                 int cQpPicOffset = (cIdx == 1) ? pps.pps_cb_qp_offset
