@@ -203,28 +203,32 @@ std::vector<uint8_t> extract_rbsp(const uint8_t* nal_data, size_t nal_size) {
 
 std::vector<uint8_t> extract_rbsp(const uint8_t* nal_data, size_t nal_size,
                                    std::vector<size_t>& epb_positions) {
-    std::vector<uint8_t> rbsp;
-    rbsp.reserve(nal_size);
+    std::vector<uint8_t> rbsp(nal_size);
     epb_positions.clear();
 
-    size_t i = 0;
-    while (i < nal_size) {
-        if (i + 2 < nal_size &&
-            nal_data[i] == 0x00 &&
-            nal_data[i + 1] == 0x00 &&
-            nal_data[i + 2] == 0x03 &&
-            (i + 3 >= nal_size || nal_data[i + 3] <= 0x03))
-        {
-            rbsp.push_back(0x00);
-            rbsp.push_back(0x00);
-            epb_positions.push_back(i + 2);  // position of the 0x03 byte
-            i += 3;
+    // An emulation prevention byte is a 0x03 after two 0x00 and before a byte
+    // <= 0x03. The test only looks at the original bytes around each 0x03, so
+    // memchr can jump from one candidate to the next, and the bytes between
+    // are copied in one go: the same bytes the byte-by-byte scan removes.
+    size_t out = 0, from = 0, p = 2;
+    while (p < nal_size) {
+        const void* hit = std::memchr(nal_data + p, 0x03, nal_size - p);
+        if (!hit) break;
+        p = static_cast<size_t>(static_cast<const uint8_t*>(hit) - nal_data);
+        if (nal_data[p - 1] == 0x00 && nal_data[p - 2] == 0x00 &&
+            (p + 1 >= nal_size || nal_data[p + 1] <= 0x03)) {
+            std::memcpy(rbsp.data() + out, nal_data + from, p - from);
+            out += p - from;
+            from = p + 1;
+            epb_positions.push_back(p);  // position of the 0x03 byte
+            p += 3;  // the next one needs two fresh zeros
         } else {
-            rbsp.push_back(nal_data[i]);
-            i++;
+            p++;
         }
     }
-
+    std::memcpy(rbsp.data() + out, nal_data + from, nal_size - from);
+    out += nal_size - from;
+    rbsp.resize(out);
     return rbsp;
 }
 
