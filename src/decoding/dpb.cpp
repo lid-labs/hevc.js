@@ -79,18 +79,14 @@ int32_t DPB::derive_poc(const SliceHeader& sh, const SPS& sps,
     //  TemporalId equal to 0 and that is not a RASL, RADL or SLNR picture."
     bool isRASL = (nal_type == NalUnitType::RASL_R || nal_type == NalUnitType::RASL_N);
     bool isRADL = (nal_type == NalUnitType::RADL_R || nal_type == NalUnitType::RADL_N);
-    bool isSLNR = (nuh_temporal_id != 0) &&
-                  (nal_type == NalUnitType::TRAIL_N || nal_type == NalUnitType::TSA_N ||
-                   nal_type == NalUnitType::STSA_N);
+    // A sub-layer non-reference picture is one of the even VCL types up to 14
+    // (TRAIL_N, TSA_N, STSA_N, RADL_N, RASL_N, RSV_VCL_N10/12/14), whatever its
+    // TemporalId. An IRAP is its own prevTid0Pic, with its own lsb.
+    const int typeVal = static_cast<int>(nal_type);
+    bool isSLNR = typeVal <= 14 && (typeVal % 2) == 0;
     if (nuh_temporal_id == 0 && !isRASL && !isRADL && !isSLNR) {
         prev_poc_lsb_ = static_cast<int32_t>(sh.slice_pic_order_cnt_lsb);
         prev_poc_msb_ = PicOrderCntMsb;
-    }
-
-    // Reset for IRAP with NoRaslOutputFlag
-    if (isIRAP && NoRaslOutputFlag) {
-        prev_poc_lsb_ = 0;
-        prev_poc_msb_ = 0;
     }
 
     HEVC_LOG(PARSE, "POC derived: %d (lsb=%d, msb=%d)",
@@ -104,29 +100,78 @@ void DPB::end_of_sequence() {
     after_eos_ = true;
 }
 
-std::vector<Picture*> DPB::discard_prior_output(const SPS& sps) {
-    std::vector<Picture*> pending;
+std::vector<Picture*> DPB::discard_prior_output() {
+    // The pictures the spec's bumping process output before this IRAP are not
+    // dropped, whenever the caller drains them: only those still pending are.
+    std::vector<Picture*> dropped;
     for (auto& pic : pictures_) {
-        if (pic->needed_for_output) pending.push_back(pic.get());
+        if (pic->needed_for_output && !pic->spec_output) {
+            pic->needed_for_output = false;
+            dropped.push_back(pic.get());
+        }
     }
-    std::sort(pending.begin(), pending.end(), [](const Picture* a, const Picture* b) {
+    std::sort(dropped.begin(), dropped.end(), [](const Picture* a, const Picture* b) {
         if (a->cvs_id != b->cvs_id) return a->cvs_id < b->cvs_id;
         return a->poc < b->poc;
     });
-
-    // What is pending here depends on how often the caller drained: the batch
-    // path never does. §C.5.2.3 bumps after each decoded picture while more than
-    // sps_max_num_reorder_pics wait for output, so the lowest of them have
-    // already left the DPB by the time this IRAP arrives, whichever path ran:
-    // keep them for output and drop only the last max_num_reorder_pics.
-    // The DPB-fullness and latency conditions are not modelled, as in drain().
-    int tid = sps.sps_max_sub_layers_minus1;
-    size_t max_reorder = sps.sub_layer_ordering[tid].max_num_reorder_pics;
-    size_t keep = pending.size() > max_reorder ? pending.size() - max_reorder : 0;
-
-    std::vector<Picture*> dropped(pending.begin() + keep, pending.end());
-    for (auto* pic : dropped) pic->needed_for_output = false;
     return dropped;
+}
+
+void DPB::output_all_prior() {
+    for (auto& pic : pictures_) {
+        if (pic->needed_for_output) pic->spec_output = true;
+    }
+}
+
+// One run of the "bumping" loop of §C.5.2.2 / §C.5.2.3 on spec_output. A
+// picture the spec has output and that is no longer a reference has its
+// storage buffer emptied (§C.5.2.4), so it stops counting towards fullness.
+static void bump_while(std::vector<std::shared_ptr<Picture>>& pictures,
+                       const Picture* exclude, const SPS& sps, bool check_fullness) {
+    int tid = sps.sps_max_sub_layers_minus1;
+    const auto& order = sps.sub_layer_ordering[tid];
+    const int max_reorder = static_cast<int>(order.max_num_reorder_pics);
+    const int max_dpb = static_cast<int>(order.max_dec_pic_buffering_minus1) + 1;
+    const bool latency_on = order.max_latency_increase_plus1 != 0;
+    const uint32_t max_latency = order.max_num_reorder_pics + order.max_latency_increase_plus1 - 1;
+    auto waiting = [&](const Picture* p) {
+        return p != exclude && p->needed_for_output && !p->spec_output;
+    };
+    while (true) {
+        int n_waiting = 0, n_occupied = 0;
+        bool latency_hit = false;
+        Picture* first = nullptr;
+        for (auto& sp : pictures) {
+            Picture* p = sp.get();
+            if (p == exclude) continue;
+            if (waiting(p)) {
+                n_waiting++;
+                if (latency_on && p->pic_latency_count >= max_latency) latency_hit = true;
+                if (!first || p->cvs_id < first->cvs_id ||
+                    (p->cvs_id == first->cvs_id && p->poc < first->poc))
+                    first = p;
+            }
+            if (p->is_reference() || waiting(p)) n_occupied++;
+        }
+        bool bump = n_waiting > max_reorder || latency_hit ||
+                    (check_fullness && n_occupied >= max_dpb);
+        if (!bump || !first) break;
+        first->spec_output = true;
+    }
+}
+
+void DPB::simulate_bumping_before_decode(const SPS& sps) {
+    bump_while(pictures_, current_pic_, sps, /*check_fullness=*/true);
+}
+
+void DPB::simulate_bumping_after_decode(const SPS& sps) {
+    // §C.5.2.3: the pictures already waiting age by one, the current one starts at 0
+    for (auto& sp : pictures_) {
+        Picture* p = sp.get();
+        if (p != current_pic_ && p->needed_for_output && !p->spec_output) p->pic_latency_count++;
+    }
+    if (current_pic_) current_pic_->pic_latency_count = 0;
+    bump_while(pictures_, nullptr, sps, /*check_fullness=*/false);
 }
 
 // ============================================================

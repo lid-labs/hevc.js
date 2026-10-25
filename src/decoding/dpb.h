@@ -44,7 +44,17 @@ public:
     // §C.5.2.2 with NoOutputOfPriorPicsFlag = 1: the pictures still pending
     // output are emptied without output. Called before the current picture is
     // allocated. Returns the pictures dropped, so the caller can report them.
-    std::vector<Picture*> discard_prior_output(const SPS& sps);
+    std::vector<Picture*> discard_prior_output();
+
+    // §C.5.2.2 with NoOutputOfPriorPicsFlag = 0: every picture still pending is
+    // output before the IRAP.
+    void output_all_prior();
+
+    // §C.5.2.2, before the current picture is decoded (after its RPS), and
+    // §C.5.2.3, after: mark spec_output on the pictures the spec's bumping
+    // process outputs at that point.
+    void simulate_bumping_before_decode(const SPS& sps);
+    void simulate_bumping_after_decode(const SPS& sps);
 
     // ============================================================
     // §8.3.2 — RPS derivation + picture marking

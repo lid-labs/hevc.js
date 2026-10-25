@@ -82,9 +82,11 @@ DecodeStatus Decoder::decode_picture(const std::vector<NalUnit>& nals,
     // §C.5.2.2: pictures emptied without output are reported like those with
     // PicOutputFlag = 0 — each one is a demuxed sample that produces no frame.
     if (dpb_.no_output_of_prior_pics()) {
-        for (Picture* dropped : dpb_.discard_prior_output(*sps)) {
+        for (Picture* dropped : dpb_.discard_prior_output()) {
             suppressed_.push_back({dropped->cvs_id, dropped->poc});
         }
+    } else if (is_irap(nal.header.nal_unit_type) && dpb_.no_rasl_output_flag()) {
+        dpb_.output_all_prior();
     }
 
     // Allocate picture in DPB
@@ -126,6 +128,7 @@ DecodeStatus Decoder::decode_picture(const std::vector<NalUnit>& nals,
 
     // §8.3.2 — RPS derivation and picture marking
     dpb_.derive_rps(first_sh, *sps, nal.header.nal_unit_type, poc);
+    dpb_.simulate_bumping_before_decode(*sps);
 
     // Allocate CU info grid (min-CB granularity)
     int cuGridW = sps->PicWidthInMinCbsY;
@@ -134,8 +137,8 @@ DecodeStatus Decoder::decode_picture(const std::vector<NalUnit>& nals,
     std::fill(cu_info_buf_.begin(), cu_info_buf_.end(), CUInfo{});
 
     // Intra mode grid uses min-TB granularity (4x4) to support NxN sub-PU
-    int modeGridW = sps->pic_width_in_luma_samples / sps->MinTbSizeY;
-    int modeGridH = sps->pic_height_in_luma_samples / sps->MinTbSizeY;
+    int modeGridW = sps->pic_width_in_luma_samples / kGridSize;
+    int modeGridH = sps->pic_height_in_luma_samples / kGridSize;
     intra_mode_buf_.resize(modeGridW * modeGridH);
     std::fill(intra_mode_buf_.begin(), intra_mode_buf_.end(), 1); // DC default
     chroma_mode_buf_.resize(modeGridW * modeGridH);
@@ -323,6 +326,7 @@ DecodeStatus Decoder::decode_picture(const std::vector<NalUnit>& nals,
 
     // §8.1 step 4: mark current picture as short-term reference
     dpb_.mark_current_as_short_term_ref();
+    dpb_.simulate_bumping_after_decode(*sps);
 
     // §C.3.1: the picture is marked "needed for output" iff PicOutputFlag is
     // 1 — derived at allocation time above. A picture with

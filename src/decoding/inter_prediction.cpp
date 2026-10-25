@@ -16,7 +16,7 @@ namespace hevc {
 
 void store_pu_motion(DecodingContext& ctx, int xPb, int yPb,
                      int nPbW, int nPbH, const PUMotionInfo& mi) {
-    int minPuSize = ctx.sps->MinTbSizeY;  // 4x4 granularity
+    int minPuSize = kGridSize;
     int stride = ctx.motion_info_stride;
     for (int y = 0; y < nPbH; y += minPuSize) {
         for (int x = 0; x < nPbW; x += minPuSize) {
@@ -27,7 +27,7 @@ void store_pu_motion(DecodingContext& ctx, int xPb, int yPb,
 }
 
 PUMotionInfo get_pu_motion(const DecodingContext& ctx, int x, int y) {
-    int minPuSize = ctx.sps->MinTbSizeY;
+    int minPuSize = kGridSize;
     int stride = ctx.motion_info_stride;
     int idx = (y / minPuSize) * stride + (x / minPuSize);
     return ctx.motion_info[idx];
@@ -71,7 +71,7 @@ static bool is_pu_available(const DecodingContext& ctx,
             availableN = true;
         } else {
             // Same CTU — z-scan check
-            int minTb = ctx.sps->MinTbSizeY;
+            int minTb = kGridSize;
             // Z-scan (Morton code): interleave bits of bx and by
             auto zscan = [](int bx, int by) -> uint32_t {
                 auto spread = [](uint32_t v) -> uint32_t {
@@ -146,7 +146,7 @@ static bool derive_collocated_mv_at(const DecodingContext& ctx,
                                      Picture* colPic, int xCol, int yCol,
                                      int refIdxLX, int listX,
                                      MV& mvLXCol) {
-    int minPuSize = ctx.sps->MinTbSizeY;
+    int minPuSize = kGridSize;
     int xColQ = (xCol >> 4) << 4;
     int yColQ = (yCol >> 4) << 4;
     int miIdx = (yColQ / minPuSize) * colPic->motion_info_stride + (xColQ / minPuSize);
@@ -531,7 +531,7 @@ static bool is_amvp_nb_available(const DecodingContext& ctx,
             availableN = true;
         } else {
             // Same CTU — z-scan check
-            int minTb = ctx.sps->MinTbSizeY;
+            int minTb = kGridSize;
             // Z-scan (Morton code): interleave bits of bx and by
             auto zscan = [](int bx, int by) -> uint32_t {
                 auto spread = [](uint32_t v) -> uint32_t {
