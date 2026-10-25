@@ -52,12 +52,24 @@ done
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
-is_failure() { case "$1" in decode-failed|no-output) return 0 ;; *) return 1 ;; esac; }
+is_failure() { case "$1" in decode-failed|no-output|timed-out) return 0 ;; *) return 1 ;; esac; }
+
+# A decoder that loops on one stream must not hold the job until its timeout:
+# a fix often adds the very stream the base decoder loops on. perl's alarm is
+# there on macOS, where coreutils' timeout is not.
+DECODE_TIMEOUT="${DECODE_TIMEOUT:-120}"
 
 hash_of() { # decoder, stream -> hash, or a word saying why there is none
   local bin="$1" stream="$2" out="$WORK/out.yuv"
   rm -f "$out"
-  if ! "$bin" -o "$out" "$stream" > /dev/null 2>&1; then
+  local status=0
+  perl -e 'alarm shift; exec @ARGV or die' "$DECODE_TIMEOUT" \
+    "$bin" -o "$out" "$stream" > /dev/null 2>&1 || status=$?
+  if [ "$status" -eq 142 ]; then
+    echo "timed-out"
+    return
+  fi
+  if [ "$status" -ne 0 ]; then
     echo "decode-failed"
     return
   fi
@@ -152,5 +164,6 @@ echo
 echo "This is expected when the change fixes decoding — that is what a decoding"
 echo "fix does. Worth reading rather than dismissing: a fix aimed at one case"
 echo "should move that case and little else. \`decode-failed\` means the decoder"
-echo "returned non-zero, \`no-output\` that it wrote nothing."
+echo "returned non-zero, \`no-output\` that it wrote nothing, \`timed-out\` that it ran"
+echo "past \$DECODE_TIMEOUT seconds (${DECODE_TIMEOUT})."
 report_gaps
