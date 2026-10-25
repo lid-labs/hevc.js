@@ -147,9 +147,8 @@ DecodeStatus Decoder::decode_picture(const std::vector<NalUnit>& nals,
     // Motion info grid at min-PU (4x4) granularity for inter MV storage
     motion_info_buf_.resize(modeGridW * modeGridH);
     std::fill(motion_info_buf_.begin(), motion_info_buf_.end(), PUMotionInfo{});
-    // Allocate compact motion info in the Picture itself (for TMVP by future frames)
-    pic->motion_info_buf.resize(modeGridW * modeGridH);
-    std::fill(pic->motion_info_buf.begin(), pic->motion_info_buf.end(), Picture::PUMotionInfoCompact{});
+    // The Picture's own copy, for TMVP by future frames, is taken once the
+    // picture is decoded
     pic->motion_info_stride = modeGridW;
 
     // Phase 6: filter grids at min-TB (4x4) granularity
@@ -315,14 +314,7 @@ DecodeStatus Decoder::decode_picture(const std::vector<NalUnit>& nals,
     apply_sao(ctx);
 
     // Store motion info in the Picture for TMVP access by future frames
-    for (int i = 0; i < modeGridW * modeGridH; i++) {
-        auto& src = motion_info_buf_[i];
-        auto& dst = pic->motion_info_buf[i];
-        dst.mv_x[0] = src.mv[0].x; dst.mv_y[0] = src.mv[0].y;
-        dst.mv_x[1] = src.mv[1].x; dst.mv_y[1] = src.mv[1].y;
-        dst.ref_idx[0] = src.ref_idx[0]; dst.ref_idx[1] = src.ref_idx[1];
-        dst.pred_flag[0] = src.pred_flag[0]; dst.pred_flag[1] = src.pred_flag[1];
-    }
+    pic->motion_info_buf = motion_info_buf_;
     // Slice of each CTB, for TMVP to find the lists a collocated ref_idx indexes
     pic->ctb_slice_idx = slice_idx_buf_;
 

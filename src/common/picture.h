@@ -46,17 +46,11 @@ struct Picture {
     uint32_t pic_latency_count = 0;
 
     // Inter: per-PU motion info for TMVP (stored after decoding)
-    struct PUMotionInfoCompact {
-        int16_t mv_x[2] = {};
-        int16_t mv_y[2] = {};
-        int8_t ref_idx[2] = {-1, -1};
-        bool pred_flag[2] = {};
-    };
-    std::vector<PUMotionInfoCompact> motion_info_buf;  // owned by this Picture
+    std::vector<PUMotionInfo> motion_info_buf;  // owned by this Picture
     int motion_info_stride = 0;
     // Convenience accessors
-    PUMotionInfoCompact* motion_info_data() { return motion_info_buf.data(); }
-    const PUMotionInfoCompact* motion_info_data() const { return motion_info_buf.data(); }
+    PUMotionInfo* motion_info_data() { return motion_info_buf.data(); }
+    const PUMotionInfo* motion_info_data() const { return motion_info_buf.data(); }
 
     // POCs of the reference picture lists of each slice segment, which §8.3.4
     // builds per slice, read by TMVP MV scaling and by deblocking. Indexed by
