@@ -360,6 +360,9 @@ static PUMotionInfo derive_merge_mode(DecodingContext& ctx,
                                        int xPb, int yPb, int nPbW, int nPbH,
                                        int partIdx, int mergeIdx) {
     auto& sh = *ctx.sh;
+    // §8.5.3.2.2: the 8x4/4x8 restriction below reads the PU's own size,
+    // nOrigPbW and nOrigPbH, not the shared 8x8 one set just after
+    const int nOrigPbW = nPbW, nOrigPbH = nPbH;
     // §8.5.3.2.2 eq 8-110..8-113: Log2ParMrgLevel override for 8x8 CU
     int Log2ParMrgLevel = ctx.pps->log2_parallel_merge_level_minus2 + 2;
     if (Log2ParMrgLevel > 2 && nCbS == 8) {
@@ -481,7 +484,7 @@ static PUMotionInfo derive_merge_mode(DecodingContext& ctx,
     result.pred_flag[1] = sel.pred_flag[1];
 
     // §8.5.3.2.2 step 10: bi-pred restriction for small PUs
-    if (result.pred_flag[0] && result.pred_flag[1] && (nPbW + nPbH) == 12) {
+    if (result.pred_flag[0] && result.pred_flag[1] && (nOrigPbW + nOrigPbH) == 12) {
         result.ref_idx[1] = -1;
         result.pred_flag[1] = false;
     }

@@ -133,6 +133,10 @@ and ffmpeg versions, so regenerating may give a stream that no longer does.
 | `ipcm_C_NEC_3.265` | 6K | 416x240 | 1 | `pcm_loop_filter_disabled_flag` = 1 | `c3e74c399b73a5ab2dbd20523f583464` |
 | `ipcm_D_NEC_3.265` | 6K | 416x240 | 1 | PCM with `cu_transquant_bypass_flag` | `aa64a16240064bc2a90fadf979a62a7b` |
 | `ipcm_E_NEC_2.265` | 5K | 416x240 | 1 | PCM luma on 6 bits, chroma on 8 | `e1cd7a16d3f6a342855044ccba3e41f5` |
+| `CIP_A_Panasonic_3.265` | 12K | 416x240 | 2 | constrained intra prediction, one I and one B picture, one slice | `4cbf601ba98d63f642defab5eaa12c8d` |
+| `cip_B_NEC_3.265` | 13K | 416x240 | 5 | constrained intra prediction, one I and four P pictures, one slice each | `1315714c7b3f3237b469259f66d9b7aa` |
+| `CIP_C_Panasonic_2.265` | 13K | 416x240 | 2 | constrained intra prediction, one I and one B picture, three slices each | `ed985932fef2aa8a74ded970070bdab2` |
+| `PMERGE_B_TI_3.265` | 16K | 416x240 | 8 | `log2_parallel_merge_level_minus2` = 1 | `7d0e57ebdbbc6633c972083a17d97550` |
 
 Bitstreams of the HEVC v1 conformance suite, unmodified apart from the extension
 (`.bit` upstream), from
@@ -165,6 +169,16 @@ PCM samples started on a byte boundary, reading `byte_alignment()` (§7.2) inste
 `pcm_alignment_zero_bit` (§7.3.8.7); and a PCM coding unit skipped the end of the coding
 unit — its QP derivation (§8.6.1), PCM and transquant bypass flags, which the loop
 filters read.
+
+The `CIP` streams failed before #317's fix: the decoder ignored
+`constrained_intra_pred_flag`, which makes the samples of inter coded units unavailable
+to intra prediction (§8.4.4.2.2), so they are substituted like samples outside the
+picture.
+
+`PMERGE_B` failed before #316's fix. Above parallel merge level 2, the prediction units
+of an 8x8 coding unit share the merge list of the whole coding unit (§8.5.3.2.2), and
+the decoder then applied the 8x4/4x8 bi-to-uni restriction to that shared 8x8 size, so
+never. The restriction reads the unit's own size, `nOrigPbW + nOrigPbH`.
 
 The slices of an `RPLM_B` picture have different reference picture lists, which §8.3.4
 builds per slice. It fails on a decoder that builds them once per picture, from the
