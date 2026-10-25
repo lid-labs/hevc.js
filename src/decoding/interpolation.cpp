@@ -2,8 +2,10 @@
 #include "decoding/coding_tree.h"
 #include "decoding/dpb.h"
 #include "common/debug.h"
+#include "common/simd.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstring>
 
 namespace hevc {
@@ -38,174 +40,188 @@ static const int16_t chroma_filter[8][4] = {
 };
 
 // ============================================================
-// Luma interpolation — §8.5.3.3.3
+// Separable N-tap interpolation — §8.5.3.3.3 (luma N = 8, chroma N = 4)
 // Output in extended precision (not clipped to [0, 2^BitDepth-1])
 // ============================================================
+
+// Largest block plus the filter margins: 64 + 8 - 1 rows of 64 + 8 - 1 samples.
+static constexpr int kMaxPadded = 71;
+
+// One filter pass over a w x h block:
+//   out[y * w + x] = (sum over k of f[k] * s[y * sstride + x + k * step]) >> shift
+// with step 1 for a horizontal pass and step = sstride for a vertical one; s
+// points at the first tap of the first output sample. The coefficients are
+// broadcast once per block, and the rows loop inside, since most blocks are 8
+// samples wide or less.
+
+// Columns from x on, four outputs per int32 vector, then a scalar tail (chroma
+// widths 2 and 6 only).
+template <int N, typename T>
+static inline void row_tail(const T* s, ptrdiff_t step, int x, int w,
+                            const simd::i32x4* c, const int16_t* f, int shift,
+                            int16_t* out) {
+    using namespace simd;
+    for (; x + 4 <= w; x += 4) {
+        i32x4 acc = c[0] * load4(s + x);
+        for (int k = 1; k < N; k++) acc += c[k] * load4(s + x + k * step);
+        store4(out + x, acc >> shift);
+    }
+    for (; x < w; x++) {
+        int sum = 0;
+        for (int k = 0; k < N; k++) sum += f[k] * s[x + k * step];
+        out[x] = static_cast<int16_t>(sum >> shift);
+    }
+}
+
+// Any input and bit depth: int32 lanes.
+template <int N, typename T>
+static void filter_pass(const T* s, ptrdiff_t sstride, ptrdiff_t step, int w, int h,
+                        const int16_t* f, int shift, int16_t* out) {
+    simd::i32x4 c[N];
+    for (int k = 0; k < N; k++) c[k] = simd::splat(f[k]);
+    for (int y = 0; y < h; y++, s += sstride, out += w)
+        row_tail<N>(s, step, 0, w, c, f, shift, out);
+}
+
+// A pass over 8-bit samples on 8 lanes of int16: its sums fit int16 (luma at
+// most 88 * 255, at least -24 * 255), so wrapping partial sums still end
+// exact. shift1 is 0 at that depth.
+template <int N>
+static void filter_pass_8bit(const uint16_t* s, ptrdiff_t sstride, ptrdiff_t step,
+                             int w, int h, const int16_t* f, int16_t* out) {
+    using namespace simd;
+    i16x8 c[N];
+    i32x4 c4[N];
+    for (int k = 0; k < N; k++) {
+        c[k] = splat8(f[k]);
+        c4[k] = splat(f[k]);
+    }
+    for (int y = 0; y < h; y++, s += sstride, out += w) {
+        int x = 0;
+        for (; x + 8 <= w; x += 8) {
+            i16x8 acc = c[0] * load8(s + x);
+            for (int k = 1; k < N; k++) acc += c[k] * load8(s + x + k * step);
+            store8(out + x, acc);
+        }
+        if (x < w) row_tail<N>(s, step, x, w, c4, f, 0, out);
+    }
+}
+
+// The vertical pass of a 2D filter, over its int16 intermediate: int16 loads,
+// 8 outputs per iteration, products and sums in int32.
+template <int N>
+static void filter_pass_tmp(const int16_t* s, int w, int h, const int16_t* f,
+                            int shift, int16_t* out) {
+    using namespace simd;
+    i32x8 c[N];
+    i32x4 c4[N];
+    for (int k = 0; k < N; k++) {
+        c[k] = splat8w(f[k]);
+        c4[k] = splat(f[k]);
+    }
+    for (int y = 0; y < h; y++, s += w, out += w) {
+        int x = 0;
+        for (; x + 8 <= w; x += 8) {
+            i32x8 acc = c[0] * widen(load8(s + x));
+            for (int k = 1; k < N; k++) acc += c[k] * widen(load8(s + x + k * w));
+            store8(out + x, acc >> shift);
+        }
+        if (x < w) row_tail<N>(s, w, x, w, c4, f, shift, out);
+    }
+}
+
+// Interpolates a w x h block whose top-left integer sample is src. Reads
+// N/2 - 1 samples before the block and N/2 after it on each filtered axis.
+template <int N>
+static void interpolate_block(const uint16_t* src, ptrdiff_t stride, int w, int h,
+                              const int16_t* fH, const int16_t* fV,
+                              int bitDepth, int16_t* pred) {
+    // §8.5.3.3.3: shift1 = Min(4, BitDepth - 8), shift2 = 6, shift3 = Max(2, 14 - BitDepth)
+    const int shift1 = std::min(4, bitDepth - 8);
+    const int shift2 = 6;
+    const int shift3 = std::max(2, 14 - bitDepth);
+    constexpr int before = N / 2 - 1;
+    // A pass over the samples themselves, h rows from s.
+    auto sample_pass = [&](const uint16_t* s, ptrdiff_t step, int rows,
+                           const int16_t* f, int16_t* out) {
+        if (bitDepth == 8)
+            filter_pass_8bit<N>(s, stride, step, w, rows, f, out);
+        else
+            filter_pass<N>(s, stride, step, w, rows, f, shift1, out);
+    };
+
+    if (!fH && !fV) {
+        for (int y = 0; y < h; y++) {
+            const uint16_t* s = src + y * stride;
+            int16_t* out = pred + y * w;
+            int x = 0;
+            for (; x + 4 <= w; x += 4)
+                simd::store4(out + x, simd::load4(s + x) << shift3);
+            for (; x < w; x++)
+                out[x] = static_cast<int16_t>(s[x] << shift3);
+        }
+    } else if (!fV) {
+        sample_pass(src - before, 1, h, fH, pred);
+    } else if (!fH) {
+        sample_pass(src - before * stride, stride, h, fV, pred);
+    } else {
+        int16_t tmp[64 * kMaxPadded];
+        sample_pass(src - before * stride - before, 1, h + N - 1, fH, tmp);
+        filter_pass_tmp<N>(tmp, w, h, fV, shift2, pred);
+    }
+}
+
+// Reference block at (xInt, yInt) in plane cIdx; frac 0 on an axis skips its pass.
+// A block whose filter taps would leave the picture is first copied with its
+// margins into a buffer, coordinates clamped to the picture (§8.5.3.3.3.1).
+template <int N>
+static void interpolate(const Picture& refPic, int cIdx,
+                        int xInt, int yInt, const int16_t* fH, const int16_t* fV,
+                        int w, int h, int bitDepth, int16_t* pred) {
+    constexpr int before = N / 2 - 1;
+    constexpr int after = N / 2;
+    const int picW = refPic.width[cIdx];
+    const int picH = refPic.height[cIdx];
+    const ptrdiff_t stride = refPic.stride[cIdx];
+    const uint16_t* plane = refPic.planes[cIdx].data();
+
+    bool interior = (xInt - before >= 0) && (yInt - before >= 0) &&
+                    (xInt + w + after <= picW) && (yInt + h + after <= picH);
+    if (interior) {
+        interpolate_block<N>(plane + yInt * stride + xInt, stride, w, h, fH, fV,
+                             bitDepth, pred);
+        return;
+    }
+
+    uint16_t buf[kMaxPadded * kMaxPadded];
+    const int bw = w + N - 1;
+    for (int y = 0; y < h + N - 1; y++) {
+        int sy = std::max(0, std::min(yInt + y - before, picH - 1));
+        const uint16_t* row = plane + sy * stride;
+        for (int x = 0; x < bw; x++)
+            buf[y * bw + x] = row[std::max(0, std::min(xInt + x - before, picW - 1))];
+    }
+    interpolate_block<N>(buf + before * bw + before, bw, w, h, fH, fV, bitDepth, pred);
+}
 
 static void interpolate_luma(const Picture& refPic,
                               int xInt, int yInt, int xFrac, int yFrac,
                               int nPbW, int nPbH, int bitDepth,
                               int16_t* pred) {
-    // §8.5.3.3.3: shift1 = Min(4, BitDepthY - 8), shift2 = 6, shift3 = Max(2, 14 - BitDepthY)
-    int shift1 = std::min(4, bitDepth - 8);
-    int shift2 = 6;
-    int shift3 = std::max(2, 14 - bitDepth);
-    int picW = refPic.width[0];
-    int picH = refPic.height[0];
-    int stride0 = refPic.stride[0];
-    const uint16_t* plane0 = refPic.planes[0].data();
-
-    // Fast direct access (no bounds check) — used for interior PUs
-    auto refDirect = [&](int x, int y) -> int {
-        return plane0[y * stride0 + x];
-    };
-
-    // Safe clamped access — used for edge PUs
-    auto refClamp = [&](int x, int y) -> int {
-        x = std::max(0, std::min(x, picW - 1));
-        y = std::max(0, std::min(y, picH - 1));
-        return plane0[y * stride0 + x];
-    };
-
-    // Check if all reference accesses are within bounds (including filter margin)
-    bool interior = (xInt - 3 >= 0) && (yInt - 3 >= 0) &&
-                    (xInt + nPbW + 4 <= picW) && (yInt + nPbH + 4 <= picH);
-
-    // Use a macro to avoid duplicating the filter code for interior vs edge
-    #define LUMA_INTERP(REF) do { \
-        if (xFrac == 0 && yFrac == 0) { \
-            for (int y = 0; y < nPbH; y++) \
-                for (int x = 0; x < nPbW; x++) \
-                    pred[y * nPbW + x] = static_cast<int16_t>(REF(xInt + x, yInt + y) << shift3); \
-        } else if (yFrac == 0) { \
-            const int16_t* f = luma_filter[xFrac]; \
-            for (int y = 0; y < nPbH; y++) \
-                for (int x = 0; x < nPbW; x++) { \
-                    int sum = 0; \
-                    for (int k = 0; k < 8; k++) \
-                        sum += f[k] * REF(xInt + x + k - 3, yInt + y); \
-                    pred[y * nPbW + x] = static_cast<int16_t>(sum >> shift1); \
-                } \
-        } else if (xFrac == 0) { \
-            const int16_t* f = luma_filter[yFrac]; \
-            for (int y = 0; y < nPbH; y++) \
-                for (int x = 0; x < nPbW; x++) { \
-                    int sum = 0; \
-                    for (int k = 0; k < 8; k++) \
-                        sum += f[k] * REF(xInt + x, yInt + y + k - 3); \
-                    pred[y * nPbW + x] = static_cast<int16_t>(sum >> shift1); \
-                } \
-        } else { \
-            int tmpH = nPbH + 7; \
-            int16_t tmp[64 * 71]; \
-            const int16_t* fH = luma_filter[xFrac]; \
-            for (int y = 0; y < tmpH; y++) \
-                for (int x = 0; x < nPbW; x++) { \
-                    int sum = 0; \
-                    for (int k = 0; k < 8; k++) \
-                        sum += fH[k] * REF(xInt + x + k - 3, yInt + y - 3); \
-                    tmp[y * nPbW + x] = static_cast<int16_t>(sum >> shift1); \
-                } \
-            const int16_t* fV = luma_filter[yFrac]; \
-            for (int y = 0; y < nPbH; y++) \
-                for (int x = 0; x < nPbW; x++) { \
-                    int sum = 0; \
-                    for (int k = 0; k < 8; k++) \
-                        sum += fV[k] * tmp[(y + k) * nPbW + x]; \
-                    pred[y * nPbW + x] = static_cast<int16_t>(sum >> shift2); \
-                } \
-        } \
-    } while(0)
-
-    if (interior) {
-        LUMA_INTERP(refDirect);
-    } else {
-        LUMA_INTERP(refClamp);
-    }
-
-    #undef LUMA_INTERP
+    interpolate<8>(refPic, 0, xInt, yInt,
+                   xFrac ? luma_filter[xFrac] : nullptr,
+                   yFrac ? luma_filter[yFrac] : nullptr,
+                   nPbW, nPbH, bitDepth, pred);
 }
-
-// ============================================================
-// Chroma interpolation — §8.5.3.3.3 (chroma part)
-// ============================================================
 
 static void interpolate_chroma(const Picture& refPic, int cIdx,
                                 int xInt, int yInt, int xFrac, int yFrac,
                                 int nPbWC, int nPbHC, int bitDepth,
                                 int16_t* pred) {
-    int shift1 = std::min(4, bitDepth - 8);
-    int shift2 = 6;
-    int shift3 = std::max(2, 14 - bitDepth);
-    int picW = refPic.width[cIdx];
-    int picH = refPic.height[cIdx];
-    int strideC = refPic.stride[cIdx];
-    const uint16_t* planeC = refPic.planes[cIdx].data();
-
-    auto refDirect = [&](int x, int y) -> int {
-        return planeC[y * strideC + x];
-    };
-    auto refClamp = [&](int x, int y) -> int {
-        x = std::max(0, std::min(x, picW - 1));
-        y = std::max(0, std::min(y, picH - 1));
-        return planeC[y * strideC + x];
-    };
-
-    // Chroma filter margin is 1 (4-tap: positions -1..+2)
-    bool interior = (xInt - 1 >= 0) && (yInt - 1 >= 0) &&
-                    (xInt + nPbWC + 2 <= picW) && (yInt + nPbHC + 2 <= picH);
-
-    #define CHROMA_INTERP(REF) do { \
-        if (xFrac == 0 && yFrac == 0) { \
-            for (int y = 0; y < nPbHC; y++) \
-                for (int x = 0; x < nPbWC; x++) \
-                    pred[y * nPbWC + x] = static_cast<int16_t>(REF(xInt + x, yInt + y) << shift3); \
-        } else if (yFrac == 0) { \
-            const int16_t* f = chroma_filter[xFrac]; \
-            for (int y = 0; y < nPbHC; y++) \
-                for (int x = 0; x < nPbWC; x++) { \
-                    int sum = 0; \
-                    for (int k = 0; k < 4; k++) \
-                        sum += f[k] * REF(xInt + x + k - 1, yInt + y); \
-                    pred[y * nPbWC + x] = static_cast<int16_t>(sum >> shift1); \
-                } \
-        } else if (xFrac == 0) { \
-            const int16_t* f = chroma_filter[yFrac]; \
-            for (int y = 0; y < nPbHC; y++) \
-                for (int x = 0; x < nPbWC; x++) { \
-                    int sum = 0; \
-                    for (int k = 0; k < 4; k++) \
-                        sum += f[k] * REF(xInt + x, yInt + y + k - 1); \
-                    pred[y * nPbWC + x] = static_cast<int16_t>(sum >> shift1); \
-                } \
-        } else { \
-            int tmpH = nPbHC + 3; \
-            int16_t tmp[32 * 35]; \
-            const int16_t* fH = chroma_filter[xFrac]; \
-            for (int y = 0; y < tmpH; y++) \
-                for (int x = 0; x < nPbWC; x++) { \
-                    int sum = 0; \
-                    for (int k = 0; k < 4; k++) \
-                        sum += fH[k] * REF(xInt + x + k - 1, yInt + y - 1); \
-                    tmp[y * nPbWC + x] = static_cast<int16_t>(sum >> shift1); \
-                } \
-            const int16_t* fV = chroma_filter[yFrac]; \
-            for (int y = 0; y < nPbHC; y++) \
-                for (int x = 0; x < nPbWC; x++) { \
-                    int sum = 0; \
-                    for (int k = 0; k < 4; k++) \
-                        sum += fV[k] * tmp[(y + k) * nPbWC + x]; \
-                    pred[y * nPbWC + x] = static_cast<int16_t>(sum >> shift2); \
-                } \
-        } \
-    } while(0)
-
-    if (interior) {
-        CHROMA_INTERP(refDirect);
-    } else {
-        CHROMA_INTERP(refClamp);
-    }
-    #undef CHROMA_INTERP
+    interpolate<4>(refPic, cIdx, xInt, yInt,
+                   xFrac ? chroma_filter[xFrac] : nullptr,
+                   yFrac ? chroma_filter[yFrac] : nullptr,
+                   nPbWC, nPbHC, bitDepth, pred);
 }
 
 // ============================================================
