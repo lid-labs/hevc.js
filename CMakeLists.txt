@@ -324,6 +324,23 @@ if(BUILD_TESTS AND NOT BUILD_WASM)
     set_tests_properties(oracle_dblk_d_vixs_2 PROPERTIES LABELS "oracle;phase10;conformance"
         SKIP_RETURN_CODE 2)
 
+    # constrained_intra_pred_flag: intra prediction ignores samples of inter CUs (#317).
+    add_test(NAME oracle_cip_a_panasonic_3
+        COMMAND ${ORACLE_SCRIPT} ${FIXTURES_DIR}/CIP_A_Panasonic_3.265 416 240
+            4cbf601ba98d63f642defab5eaa12c8d $<TARGET_FILE:hevc-decode>)
+    set_tests_properties(oracle_cip_a_panasonic_3 PROPERTIES LABELS "oracle;phase5;conformance"
+        SKIP_RETURN_CODE 2)
+    add_test(NAME oracle_cip_b_nec_3
+        COMMAND ${ORACLE_SCRIPT} ${FIXTURES_DIR}/cip_B_NEC_3.265 416 240
+            1315714c7b3f3237b469259f66d9b7aa $<TARGET_FILE:hevc-decode>)
+    set_tests_properties(oracle_cip_b_nec_3 PROPERTIES LABELS "oracle;phase5;conformance"
+        SKIP_RETURN_CODE 2)
+    add_test(NAME oracle_cip_c_panasonic_2
+        COMMAND ${ORACLE_SCRIPT} ${FIXTURES_DIR}/CIP_C_Panasonic_2.265 416 240
+            ed985932fef2aa8a74ded970070bdab2 $<TARGET_FILE:hevc-decode>)
+    set_tests_properties(oracle_cip_c_panasonic_2 PROPERTIES LABELS "oracle;phase5;conformance"
+        SKIP_RETURN_CODE 2)
+
     # Real-world bitstreams — Big Buck Bunny (Main profile, full pipeline)
     add_test(NAME oracle_bbb1080_50f
         COMMAND ${ORACLE_SCRIPT} ${FIXTURES_DIR}/bbb1080_50f.265 1920 1080
