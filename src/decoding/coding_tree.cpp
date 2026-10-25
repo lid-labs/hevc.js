@@ -820,6 +820,23 @@ void decode_coding_quadtree(DecodingContext& ctx, int x0, int y0,
 // coding_unit (§7.3.8.5)
 // ============================================================
 
+// §8.5.3: motion compensation of one PU, written into the picture's three planes
+static void write_inter_prediction(DecodingContext& ctx, int xPb, int yPb,
+                                   int nPbW, int nPbH, const PUMotionInfo& mi) {
+    auto& sps = *ctx.sps;
+    auto& pic = *ctx.pic;
+    const int numComp = (sps.ChromaArrayType != 0) ? 3 : 1;
+    for (int c = 0; c < numComp; c++) {
+        const int x = c ? xPb / sps.SubWidthC : xPb;
+        const int y = c ? yPb / sps.SubHeightC : yPb;
+        const ptrdiff_t stride = pic.stride[c];
+        perform_inter_prediction(ctx, xPb, yPb, nPbW, nPbH, c,
+            mi.mv[0], mi.mv[1], mi.ref_idx[0], mi.ref_idx[1],
+            mi.pred_flag[0], mi.pred_flag[1],
+            pic.planes[c].data() + y * stride + x, stride);
+    }
+}
+
 void decode_coding_unit(DecodingContext& ctx, int x0, int y0, int log2CbSize) {
     auto& sps = *ctx.sps;
     auto& pps = *ctx.pps;
@@ -862,38 +879,7 @@ void decode_coding_unit(DecodingContext& ctx, int x0, int y0, int log2CbSize) {
         decode_prediction_unit_inter(ctx, x0, y0, cbSize, x0, y0, cbSize, cbSize, 0);
         {
             PUMotionInfo mi = get_pu_motion(ctx, x0, y0);
-            int16_t pred[64*64];
-            perform_inter_prediction(ctx, x0, y0, cbSize, cbSize, 0,
-                mi.mv[0], mi.mv[1], mi.ref_idx[0], mi.ref_idx[1],
-                mi.pred_flag[0], mi.pred_flag[1], pred);
-            {
-                uint16_t* dst = ctx.pic->planes[0].data();
-                int dstStride = ctx.pic->stride[0];
-                for (int y = 0; y < cbSize; y++) {
-                    uint16_t* row = dst + (y0 + y) * dstStride + x0;
-                    const int16_t* src = pred + y * cbSize;
-                    for (int x = 0; x < cbSize; x++)
-                        row[x] = static_cast<uint16_t>(src[x]);
-                }
-            }
-            if (sps.ChromaArrayType != 0) {
-                int cW = cbSize / sps.SubWidthC, cH = cbSize / sps.SubHeightC;
-                int xC = x0 / sps.SubWidthC, yC = y0 / sps.SubHeightC;
-                for (int c = 1; c <= 2; c++) {
-                    int16_t cpred[32*32];
-                    perform_inter_prediction(ctx, x0, y0, cbSize, cbSize, c,
-                        mi.mv[0], mi.mv[1], mi.ref_idx[0], mi.ref_idx[1],
-                        mi.pred_flag[0], mi.pred_flag[1], cpred);
-                    uint16_t* dst = ctx.pic->planes[c].data();
-                    int dstStride = ctx.pic->stride[c];
-                    for (int y = 0; y < cH; y++) {
-                        uint16_t* row = dst + (yC + y) * dstStride + xC;
-                        const int16_t* src = cpred + y * cW;
-                        for (int x = 0; x < cW; x++)
-                            row[x] = static_cast<uint16_t>(src[x]);
-                    }
-                }
-            }
+            write_inter_prediction(ctx, x0, y0, cbSize, cbSize, mi);
         }
     } else {
         if (sh.slice_type != SliceType::I) {
@@ -948,44 +934,7 @@ void decode_coding_unit(DecodingContext& ctx, int x0, int y0, int log2CbSize) {
                 decode_prediction_unit_inter(ctx, x0, y0, cbSize, xPb, yPb, nPbW, nPbH, partIdx);
                 // §8.5.3: motion compensation → write prediction to picture
                 PUMotionInfo mi = get_pu_motion(ctx, xPb, yPb);
-                // Luma
-                {
-                    int16_t pred[64*64];
-                    perform_inter_prediction(ctx, xPb, yPb, nPbW, nPbH, 0,
-                        mi.mv[0], mi.mv[1], mi.ref_idx[0], mi.ref_idx[1],
-                        mi.pred_flag[0], mi.pred_flag[1], pred);
-                    {
-                        uint16_t* dst = ctx.pic->planes[0].data();
-                        int dstStride = ctx.pic->stride[0];
-                        for (int y = 0; y < nPbH; y++) {
-                            uint16_t* row = dst + (yPb + y) * dstStride + xPb;
-                            const int16_t* src = pred + y * nPbW;
-                            for (int x = 0; x < nPbW; x++)
-                                row[x] = static_cast<uint16_t>(src[x]);
-                        }
-                    }
-                }
-                // Chroma (4:2:0)
-                if (sps.ChromaArrayType != 0) {
-                    int cW = nPbW / sps.SubWidthC;
-                    int cH = nPbH / sps.SubHeightC;
-                    int xC = xPb / sps.SubWidthC;
-                    int yC = yPb / sps.SubHeightC;
-                    for (int c = 1; c <= 2; c++) {
-                        int16_t pred[32*32];
-                        perform_inter_prediction(ctx, xPb, yPb, nPbW, nPbH, c,
-                            mi.mv[0], mi.mv[1], mi.ref_idx[0], mi.ref_idx[1],
-                            mi.pred_flag[0], mi.pred_flag[1], pred);
-                        uint16_t* dst = ctx.pic->planes[c].data();
-                        int dstStride = ctx.pic->stride[c];
-                        for (int y = 0; y < cH; y++) {
-                            uint16_t* row = dst + (yC + y) * dstStride + xC;
-                            const int16_t* src = pred + y * cW;
-                            for (int x = 0; x < cW; x++)
-                                row[x] = static_cast<uint16_t>(src[x]);
-                        }
-                    }
-                }
+                write_inter_prediction(ctx, xPb, yPb, nPbW, nPbH, mi);
             };
             if (part_mode == PartMode::PART_2Nx2N) {
                 mc_pu(x0, y0, cbSize, cbSize, 0);

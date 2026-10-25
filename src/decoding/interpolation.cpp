@@ -228,30 +228,39 @@ static void interpolate_chroma(const Picture& refPic, int cIdx,
 // §8.5.3.3.4.2 — Default weighted sample prediction
 // ============================================================
 
-static void weighted_pred_default(int16_t* predL0, int16_t* predL1,
+template <typename Out>
+static void weighted_pred_default(const int16_t* predL0, const int16_t* predL1,
                                    bool flagL0, bool flagL1,
-                                   int nSamples, int bitDepth,
-                                   int16_t* output) {
+                                   int w, int h, int bitDepth,
+                                   Out* output, ptrdiff_t stride) {
+    using namespace simd;
     // §8.5.3.3.4.2
     int shift1 = std::max(2, 14 - bitDepth);
     int offset1 = 1 << (shift1 - 1);
     int shift2 = std::max(3, 15 - bitDepth);
     int offset2 = 1 << (shift2 - 1);
     int maxVal = (1 << bitDepth) - 1;
+    const i32x4 zero = splat(0), vmax = splat(maxVal);
 
-    if (flagL0 && !flagL1) {
-        // §8.5.3.3.4.2 eq 8-262: uni-pred L0
-        for (int i = 0; i < nSamples; i++)
-            output[i] = static_cast<int16_t>(Clip3(0, maxVal, (predL0[i] + offset1) >> shift1));
-    } else if (!flagL0 && flagL1) {
-        // eq 8-263: uni-pred L1
-        for (int i = 0; i < nSamples; i++)
-            output[i] = static_cast<int16_t>(Clip3(0, maxVal, (predL1[i] + offset1) >> shift1));
-    } else {
-        // eq 8-264: bi-pred
-        for (int i = 0; i < nSamples; i++)
-            output[i] = static_cast<int16_t>(Clip3(0, maxVal,
-                (predL0[i] + predL1[i] + offset2) >> shift2));
+    const bool bi = flagL0 && flagL1;
+    // eq 8-262 / 8-263: uni-pred from whichever list predicted
+    const int16_t* uni = flagL0 ? predL0 : predL1;
+    for (int y = 0; y < h; y++, output += stride) {
+        const int16_t* p0 = (bi ? predL0 : uni) + y * w;
+        const int16_t* p1 = predL1 + y * w;
+        int x = 0;
+        if (bi) {
+            // eq 8-264: bi-pred
+            for (; x + 4 <= w; x += 4)
+                store4(output + x, clip3(zero, vmax, (load4(p0 + x) + load4(p1 + x) + offset2) >> shift2));
+            for (; x < w; x++)
+                output[x] = static_cast<Out>(Clip3(0, maxVal, (p0[x] + p1[x] + offset2) >> shift2));
+        } else {
+            for (; x + 4 <= w; x += 4)
+                store4(output + x, clip3(zero, vmax, (load4(p0 + x) + offset1) >> shift1));
+            for (; x < w; x++)
+                output[x] = static_cast<Out>(Clip3(0, maxVal, (p0[x] + offset1) >> shift1));
+        }
     }
 }
 
@@ -259,12 +268,13 @@ static void weighted_pred_default(int16_t* predL0, int16_t* predL1,
 // §8.5.3.3.4.3 — Explicit weighted sample prediction
 // ============================================================
 
-static void weighted_pred_explicit(int16_t* predL0, int16_t* predL1,
+template <typename Out>
+static void weighted_pred_explicit(const int16_t* predL0, const int16_t* predL1,
                                     bool flagL0, bool flagL1,
                                     int refIdxL0, int refIdxL1,
-                                    int cIdx, int nSamples, int bitDepth,
+                                    int cIdx, int w, int h, int bitDepth,
                                     const PredWeightTable& pwt,
-                                    int16_t* output) {
+                                    Out* output, ptrdiff_t stride) {
     // §8.5.3.3.4.3
     int shift1 = std::max(2, 14 - bitDepth);
     int maxVal = (1 << bitDepth) - 1;
@@ -294,24 +304,26 @@ static void weighted_pred_explicit(int16_t* predL0, int16_t* predL1,
         o1 = pwt.l1[refIdxL1 >= 0 ? refIdxL1 : 0].chroma_offset[ci] << wpShiftC;
     }
 
-    if (flagL0 && !flagL1) {
-        // eq 8-275: uni-pred L0
-        int round = 1 << (log2Wd - 1);
-        for (int i = 0; i < nSamples; i++)
-            output[i] = static_cast<int16_t>(Clip3(0, maxVal,
-                ((predL0[i] * w0 + round) >> log2Wd) + o0));
-    } else if (!flagL0 && flagL1) {
-        // eq 8-276: uni-pred L1
-        int round = 1 << (log2Wd - 1);
-        for (int i = 0; i < nSamples; i++)
-            output[i] = static_cast<int16_t>(Clip3(0, maxVal,
-                ((predL1[i] * w1 + round) >> log2Wd) + o1));
-    } else {
-        // eq 8-277: bi-pred
-        for (int i = 0; i < nSamples; i++)
-            output[i] = static_cast<int16_t>(Clip3(0, maxVal,
-                (predL0[i] * w0 + predL1[i] * w1 +
-                 ((o0 + o1 + 1) << log2Wd)) >> (log2Wd + 1)));
+    for (int y = 0; y < h; y++, output += stride, predL0 += w, predL1 += w) {
+        if (flagL0 && !flagL1) {
+            // eq 8-275: uni-pred L0
+            int round = 1 << (log2Wd - 1);
+            for (int i = 0; i < w; i++)
+                output[i] = static_cast<Out>(Clip3(0, maxVal,
+                    ((predL0[i] * w0 + round) >> log2Wd) + o0));
+        } else if (!flagL0 && flagL1) {
+            // eq 8-276: uni-pred L1
+            int round = 1 << (log2Wd - 1);
+            for (int i = 0; i < w; i++)
+                output[i] = static_cast<Out>(Clip3(0, maxVal,
+                    ((predL1[i] * w1 + round) >> log2Wd) + o1));
+        } else {
+            // eq 8-277: bi-pred
+            for (int i = 0; i < w; i++)
+                output[i] = static_cast<Out>(Clip3(0, maxVal,
+                    (predL0[i] * w0 + predL1[i] * w1 +
+                     ((o0 + o1 + 1) << log2Wd)) >> (log2Wd + 1)));
+        }
     }
 }
 
@@ -319,13 +331,14 @@ static void weighted_pred_explicit(int16_t* predL0, int16_t* predL1,
 // §8.5.3.3 — Top-level inter prediction for one PU
 // ============================================================
 
-void perform_inter_prediction(DecodingContext& ctx,
-                               int xPb, int yPb, int nPbW, int nPbH,
-                               int cIdx,
-                               const MV& mvL0, const MV& mvL1,
-                               int refIdxL0, int refIdxL1,
-                               bool predFlagL0, bool predFlagL1,
-                               int16_t* pred_samples) {
+template <typename Out>
+static void inter_prediction(DecodingContext& ctx,
+                             int xPb, int yPb, int nPbW, int nPbH,
+                             int cIdx,
+                             const MV& mvL0, const MV& mvL1,
+                             int refIdxL0, int refIdxL1,
+                             bool predFlagL0, bool predFlagL1,
+                             Out* out, ptrdiff_t outStride) {
     auto& sps = *ctx.sps;
     int bitDepth = (cIdx == 0) ? sps.BitDepthY : sps.BitDepthC;
 
@@ -334,7 +347,6 @@ void perform_inter_prediction(DecodingContext& ctx,
     int subH = (cIdx > 0) ? sps.SubHeightC : 1;
     int compW = nPbW / subW;
     int compH = nPbH / subH;
-    int nSamples = compW * compH;
 
     int16_t predL0_buf[64 * 64];  // max PU 64x64
     int16_t predL1_buf[64 * 64];
@@ -417,7 +429,8 @@ void perform_inter_prediction(DecodingContext& ctx,
                  xPb, yPb, cIdx, refIdxL0, refIdxL1);
         // The SPS allows bitDepth 16, where 1 << 15 overflows the int16_t buffer.
         const int grey = std::min(1 << (bitDepth - 1), 32767);
-        std::fill_n(pred_samples, nSamples, static_cast<int16_t>(grey));
+        for (int y = 0; y < compH; y++)
+            std::fill_n(out + y * outStride, compW, static_cast<Out>(grey));
         return;
     }
 
@@ -433,14 +446,37 @@ void perform_inter_prediction(DecodingContext& ctx,
         weighted_pred_explicit(predL0, predL1,
                                predFlagL0, predFlagL1,
                                refIdxL0, refIdxL1,
-                               cIdx, nSamples, bitDepth,
-                               ctx.sh->pred_weight_table, pred_samples);
+                               cIdx, compW, compH, bitDepth,
+                               ctx.sh->pred_weight_table, out, outStride);
     } else {
         // §8.5.3.3.4.2: Default weighted sample prediction
         weighted_pred_default(predL0, predL1,
                                predFlagL0, predFlagL1,
-                               nSamples, bitDepth, pred_samples);
+                               compW, compH, bitDepth, out, outStride);
     }
+}
+
+void perform_inter_prediction(DecodingContext& ctx,
+                               int xPb, int yPb, int nPbW, int nPbH,
+                               int cIdx,
+                               const MV& mvL0, const MV& mvL1,
+                               int refIdxL0, int refIdxL1,
+                               bool predFlagL0, bool predFlagL1,
+                               int16_t* pred_samples) {
+    const int compW = (cIdx > 0) ? nPbW / ctx.sps->SubWidthC : nPbW;
+    inter_prediction(ctx, xPb, yPb, nPbW, nPbH, cIdx, mvL0, mvL1, refIdxL0, refIdxL1,
+                     predFlagL0, predFlagL1, pred_samples, compW);
+}
+
+void perform_inter_prediction(DecodingContext& ctx,
+                               int xPb, int yPb, int nPbW, int nPbH,
+                               int cIdx,
+                               const MV& mvL0, const MV& mvL1,
+                               int refIdxL0, int refIdxL1,
+                               bool predFlagL0, bool predFlagL1,
+                               uint16_t* dst, ptrdiff_t dstStride) {
+    inter_prediction(ctx, xPb, yPb, nPbW, nPbH, cIdx, mvL0, mvL1, refIdxL0, refIdxL1,
+                     predFlagL0, predFlagL1, dst, dstStride);
 }
 
 } // namespace hevc
