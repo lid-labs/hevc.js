@@ -16,7 +16,9 @@
 
 A from-scratch HEVC decoder written in C++17, compiled to WebAssembly, with drop-in plugins for dash.js, Shaka Player and hls.js. Transcodes HEVC to H.264 in real-time, client-side, via WebCodecs inside a Web Worker. Works on Chrome, Edge, and Firefox where WebCodecs H.264 encoding is available.
 
-1080p @ 60fps. 270 KB WASM, ~100 KB gzip-compressed. Zero dependencies. No special server headers required. Compute-aware quality control caps the player's ABR ceiling when the device can't transcode at real-time, so the buffer never starves — automatic with the dash.js plugin, one call away with hls.js and Shaka.
+**Decodes all 147 bitstreams of the official HEVC v1 conformance suite bit-exactly** — [details](#spec-conformance).
+
+1080p @ 60fps. 278 KB WASM, ~102 KB gzip-compressed. Zero dependencies. No special server headers required. Compute-aware quality control caps the player's ABR ceiling when the device can't transcode at real-time, so the buffer never starves — automatic with the dash.js plugin, one call away with hls.js and Shaka.
 
 Built in 8 days by one developer, assisted by AI — [read the story](https://www.developpement.ai/blog/hevcjs-decodeur-h265-navigateur-wasm).
 
@@ -68,7 +70,7 @@ The plugin relies on 3 static files from `@hevcjs/core` (installed as a transiti
 
 - `transcode-worker.js` — Web Worker (IIFE, standalone)
 - `wasm/hevc-decode.js` — Emscripten glue code
-- `wasm/hevc-decode.wasm` — WASM binary (270 KB, ~100 KB gzipped)
+- `wasm/hevc-decode.wasm` — WASM binary (278 KB, ~102 KB gzipped)
 
 Copy them from `node_modules/@hevcjs/core/dist/` to your public directory:
 
@@ -231,7 +233,7 @@ No `Cross-Origin-Embedder-Policy` or `Cross-Origin-Opener-Policy` headers needed
 
 This implementation targets a different niche on three axes:
 
-- **Size** — 270 KB WASM (~100 KB gzipped) vs ~2 MB for libde265 compiled to WASM. 8× smaller — which matters when shipping to a browser, a microVM, or a sandboxed runtime.
+- **Size** — 278 KB WASM (~102 KB gzipped) vs ~2 MB for libde265 compiled to WASM. 7× smaller — which matters when shipping to a browser, a microVM, or a sandboxed runtime.
 - **Modernity & license** — C++17 throughout (`std::optional`, `std::shared_ptr`, `std::array`, `constexpr`), zero dependencies, **MIT-licensed** (vs LGPL for libde265 — relevant for static linking in commercial products).
 - **Spec traceability** — function names mirror ITU-T H.265 section numbers, and [`docs/cross-reference.md`](docs/cross-reference.md) maps every spec section to its source file and test. Useful if you want to *understand* HEVC, not just decode it (universities, codec research, contributors).
 
@@ -308,7 +310,7 @@ cd build && ctest --output-on-failure    # 160 tests
 
 ```bash
 pnpm build:wasm
-# Output: build-wasm/hevc-decode.js + hevc-decode.wasm (270 KB, ~100 KB gzipped),
+# Output: build-wasm/hevc-decode.js + hevc-decode.wasm (278 KB, ~102 KB gzipped),
 # copied into packages/core/wasm/
 ```
 
@@ -341,7 +343,19 @@ How these were measured, to reproduce or re-run:
 
 ### Spec conformance
 
-Implemented per **ITU-T H.265 (v8, 08/2021)** — 716 pages, transcribed directly from the spec. Validated pixel-perfect against ffmpeg on 128 test bitstreams. Each spec section is mapped 1:1 to its source file and test in [`docs/cross-reference.md`](docs/cross-reference.md).
+Implemented per **ITU-T H.265 (v8, 08/2021)** — 716 pages, transcribed directly from the spec.
+
+**All 147 bitstreams of the JCT-VC HEVC v1 conformance suite decode bit-exactly.** For each stream, the MD5 of the decoded YUV equals the MD5 of the HM reference decoder's output, shipped with the stream by the JCT-VC. The suite covers the Main and Main 10 profiles: coding tools, slices and dependent slice segments, tiles, WPP, PCM, scaling lists, long-term references, picture output order. Measured on 2026-10-25, `main` at 8417151, Release build. For comparison, ffmpeg 9.0.2 run through the same script matches 143: it does not support `TSUNEQBD_A_MAIN10_Technicolor_2`, whose luma and chroma bit depths differ, and its output differs from the reference on `SAODBLK_A_MainConcept_4`, `SAODBLK_B_MainConcept_4` and `VPSSPSPPS_A_MainConcept_1`.
+
+Anyone can reproduce it — the script downloads the suite from the ITU site, about 140 MB:
+
+```bash
+tools/run_conformance.sh build/hevc-decode /tmp/hevc-conformance
+```
+
+25 of these streams are committed in `tests/conformance/fixtures/` and run as oracle tests by CI on every pull request; the WASM build is checked to decode them exactly like the native one.
+
+Each spec section is mapped 1:1 to its source file and test in [`docs/cross-reference.md`](docs/cross-reference.md).
 
 | Feature | Status |
 |---|---|
@@ -381,7 +395,7 @@ hevc.js/
 │   └── hlsjs-plugin/       @hevcjs/hlsjs-plugin — hls.js plugin
 │
 ├── demo/                   Browser demos (DASH + HLS)
-└── tests/                  Unit tests + 128 oracle tests (pixel-perfect vs ffmpeg)
+└── tests/                  Unit tests + oracle tests (MD5 of the decoded YUV)
 ```
 
 ## Demos
