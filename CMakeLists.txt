@@ -306,6 +306,14 @@ if(BUILD_TESTS AND NOT BUILD_WASM)
     set_tests_properties(oracle_tiles_b_cisco_1 PROPERTIES LABELS "oracle;phase10;conformance"
         SKIP_RETURN_CODE 2)
 
+    # Parallel merge level 3: 8x4/4x8 PUs of an 8x8 CU share one merge list, and
+    # the bi-to-uni restriction still reads their own size (#316).
+    add_test(NAME oracle_pmerge_b_ti_3
+        COMMAND ${ORACLE_SCRIPT} ${FIXTURES_DIR}/PMERGE_B_TI_3.265 416 240
+            7d0e57ebdbbc6633c972083a17d97550 $<TARGET_FILE:hevc-decode>)
+    set_tests_properties(oracle_pmerge_b_ti_3 PROPERTIES LABELS "oracle;phase5;conformance"
+        SKIP_RETURN_CODE 2)
+
     # Real-world bitstreams — Big Buck Bunny (Main profile, full pipeline)
     add_test(NAME oracle_bbb1080_50f
         COMMAND ${ORACLE_SCRIPT} ${FIXTURES_DIR}/bbb1080_50f.265 1920 1080
