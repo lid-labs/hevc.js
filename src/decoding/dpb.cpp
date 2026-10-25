@@ -165,10 +165,15 @@ void DPB::simulate_bumping_before_decode(const SPS& sps) {
 }
 
 void DPB::simulate_bumping_after_decode(const SPS& sps) {
-    // §C.5.2.3: the pictures already waiting age by one, the current one starts at 0
-    for (auto& sp : pictures_) {
-        Picture* p = sp.get();
-        if (p != current_pic_ && p->needed_for_output && !p->spec_output) p->pic_latency_count++;
+    // §C.5.2.3: when the current picture is output, the waiting pictures that
+    // follow it in output order age by one; the current one starts at 0
+    if (current_pic_ && current_pic_->needed_for_output) {
+        for (auto& sp : pictures_) {
+            Picture* p = sp.get();
+            if (p != current_pic_ && p->needed_for_output && !p->spec_output &&
+                p->cvs_id == current_pic_->cvs_id && p->poc > current_pic_->poc)
+                p->pic_latency_count++;
+        }
     }
     if (current_pic_) current_pic_->pic_latency_count = 0;
     bump_while(pictures_, nullptr, sps, /*check_fullness=*/false);
