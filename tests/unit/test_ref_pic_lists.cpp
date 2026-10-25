@@ -213,7 +213,7 @@ TEST(InterPrediction, MissingL0FallsBackToUniPredL1) {
     Picture* ref = dpb.alloc_picture(16, 16, ChromaFormat::YUV420, 8, 8);
     ref->poc = 2;
     ref->used_for_short_term_ref = true;
-    std::fill(ref->planes[0].begin(), ref->planes[0].end(), static_cast<uint16_t>(100));
+    std::fill(ref->planes8[0].begin(), ref->planes8[0].end(), static_cast<uint8_t>(100));
 
     // The picture being decoded is allocated last, as the decoder does: the DPB
     // excludes current_pic_ from reference lookups.

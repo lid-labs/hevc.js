@@ -16,9 +16,9 @@ typedef struct HEVCDecoder HEVCDecoder;
 
 // Decoded frame — planes point into decoder-owned memory (valid until next decode call)
 typedef struct {
-    const uint16_t* y;     // Luma plane
-    const uint16_t* cb;    // Chroma Cb plane
-    const uint16_t* cr;    // Chroma Cr plane
+    const void* y;         // Luma plane: uint8_t or uint16_t samples, see bytes_per_sample
+    const void* cb;        // Chroma Cb plane
+    const void* cr;        // Chroma Cr plane
     int width;             // Luma width (after conformance window crop)
     int height;            // Luma height (after conformance window crop)
     int stride_y;          // Luma stride (in samples)
@@ -32,6 +32,7 @@ typedef struct {
                            // or after an end-of-sequence NAL.
                            // POC restarts there, so display order is
                            // (cvs_id, poc), not poc alone.
+    int bytes_per_sample;  // 1 when luma and chroma are both 8-bit, else 2
 } HEVCFrame;
 
 // Stream info — available after first frame is decoded

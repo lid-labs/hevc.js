@@ -162,7 +162,7 @@ static void build_reference_samples(const DecodingContext& ctx, int x0, int y0,
         if (!is_reconstructed(refX, yC + 2 * nTbS - 1 - k)) continue;
         for (int j = k; j < k + unitY; j++) {
             int refY = yC + 2 * nTbS - 1 - j;
-            samples[j] = static_cast<int16_t>(pic.sample(cIdx, refX, refY));
+            samples[j] = static_cast<int16_t>(pic.get(cIdx, refX, refY));
             available[j] = true;
         }
     }
@@ -173,7 +173,7 @@ static void build_reference_samples(const DecodingContext& ctx, int x0, int y0,
         int refY = yC - 1;
         int idx = 2 * nTbS;
         if (is_reconstructed(refX, refY)) {
-            samples[idx] = static_cast<int16_t>(pic.sample(cIdx, refX, refY));
+            samples[idx] = static_cast<int16_t>(pic.get(cIdx, refX, refY));
             available[idx] = true;
         }
     }
@@ -184,7 +184,7 @@ static void build_reference_samples(const DecodingContext& ctx, int x0, int y0,
         if (!is_reconstructed(xC + k, refY)) continue;
         for (int j = k; j < k + unit; j++) {
             int idx = 2 * nTbS + 1 + j;
-            samples[idx] = static_cast<int16_t>(pic.sample(cIdx, xC + j, refY));
+            samples[idx] = static_cast<int16_t>(pic.get(cIdx, xC + j, refY));
             available[idx] = true;
         }
     }

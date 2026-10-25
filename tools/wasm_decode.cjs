@@ -24,7 +24,7 @@ if (typeof HEVCDecoderModule !== 'function') {
 }
 
 const HEVC_OK = 0;
-const FRAME_SIZE = 48; // sizeof(HEVCFrame) under wasm32, asserted in src/wasm/hevc_api.cpp
+const FRAME_SIZE = 52; // sizeof(HEVCFrame) under wasm32, asserted in src/wasm/hevc_api.cpp
 
 async function main() {
     const m = await HEVCDecoderModule({ locateFile: (p) => path.join(wasmPath, p) });
@@ -58,9 +58,13 @@ async function main() {
                 if (!ptr || w === 0 || h === 0) continue; // monochrome: no chroma plane
                 const bytesPerSample = bitDepth <= 8 ? 1 : 2;
                 const buf = Buffer.alloc(w * h * bytesPerSample);
+                // Storage: one byte per sample for an 8-bit picture
+                const stored = i32(48);
                 for (let y = 0; y < h; y++) {
-                    // HEAPU16 is re-read every row: memory growth replaces the buffer
-                    const row = m.HEAPU16.subarray(ptr / 2 + y * stride, ptr / 2 + y * stride + w);
+                    // The heap is re-read every row: memory growth replaces the buffer
+                    const row = stored === 1
+                        ? m.HEAPU8.subarray(ptr + y * stride, ptr + y * stride + w)
+                        : m.HEAPU16.subarray(ptr / 2 + y * stride, ptr / 2 + y * stride + w);
                     if (bytesPerSample === 1) {
                         for (let x = 0; x < w; x++) buf[y * w + x] = row[x];
                     } else {

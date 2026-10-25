@@ -64,7 +64,7 @@ export class HEVCDecoder {
   /** Extract a decoded frame as typed arrays (copies data out of WASM heap) */
   _extractFrame(index) {
     const m = this._m;
-    const framePtr = m._malloc(48);
+    const framePtr = m._malloc(52);
     try {
       const ret = this._api.getFrame(this._dec, index, framePtr);
       if (ret !== 0) return null;
@@ -82,9 +82,10 @@ export class HEVCDecoder {
       const poc     = m.getValue(framePtr + 40, 'i32');
 
       // Copy plane data out of WASM heap (contiguous rows)
-      const y  = this._copyPlane(m, yPtr, width, height, strideY);
-      const cb = this._copyPlane(m, cbPtr, cw, ch, strideC);
-      const cr = this._copyPlane(m, crPtr, cw, ch, strideC);
+      const bps     = m.getValue(framePtr + 48, 'i32');
+      const y  = this._copyPlane(m, yPtr, width, height, strideY, bps);
+      const cb = this._copyPlane(m, cbPtr, cw, ch, strideC, bps);
+      const cr = this._copyPlane(m, crPtr, cw, ch, strideC, bps);
 
       return { y, cb, cr, width, height, chromaWidth: cw, chromaHeight: ch, bitDepth: bd, poc };
     } finally {
@@ -92,12 +93,13 @@ export class HEVCDecoder {
     }
   }
 
-  /** Copy a plane from WASM HEAPU16, handling stride != width */
-  _copyPlane(m, ptr, width, height, stride) {
+  /** Copy a plane out of the WASM heap, handling stride != width; bytesPerSample 1 is an 8-bit picture */
+  _copyPlane(m, ptr, width, height, stride, bytesPerSample) {
     const out = new Uint16Array(width * height);
-    const base = ptr >> 1; // uint16 offset
+    const heap = bytesPerSample === 1 ? m.HEAPU8 : m.HEAPU16;
+    const base = bytesPerSample === 1 ? ptr : ptr >> 1;
     for (let y = 0; y < height; y++) {
-      const src = m.HEAPU16.subarray(base + y * stride, base + y * stride + width);
+      const src = heap.subarray(base + y * stride, base + y * stride + width);
       out.set(src, y * width);
     }
     return out;

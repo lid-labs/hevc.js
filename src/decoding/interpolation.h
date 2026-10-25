@@ -38,5 +38,12 @@ void perform_inter_prediction(DecodingContext& ctx,
                                int refIdxL0, int refIdxL1,
                                bool predFlagL0, bool predFlagL1,
                                uint16_t* dst, ptrdiff_t dstStride);
+void perform_inter_prediction(DecodingContext& ctx,
+                               int xPb, int yPb, int nPbW, int nPbH,
+                               int cIdx,
+                               const MV& mvL0, const MV& mvL1,
+                               int refIdxL0, int refIdxL1,
+                               bool predFlagL0, bool predFlagL1,
+                               uint8_t* dst, ptrdiff_t dstStride);
 
 } // namespace hevc

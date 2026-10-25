@@ -16,6 +16,8 @@ typedef int32_t i32x4 __attribute__((vector_size(16)));
 typedef uint16_t u16x4 __attribute__((vector_size(8)));
 typedef int16_t i16x4 __attribute__((vector_size(8)));
 typedef int16_t i16x8 __attribute__((vector_size(16)));
+typedef uint8_t u8x4 __attribute__((vector_size(4)));
+typedef uint8_t u8x8 __attribute__((vector_size(8)));
 
 // 4 consecutive samples, widened. memcpy keeps the unaligned loads well defined.
 inline i32x4 load4(const uint16_t* p) {
@@ -43,6 +45,19 @@ inline i32x4 splat(int32_t x) {
 // Narrowing store to samples: each lane must already lie in [0, 65535].
 inline void store4(uint16_t* p, i32x4 v) {
     u16x4 n = __builtin_convertvector(v, u16x4);
+    memcpy(p, &n, sizeof(n));
+}
+
+// 8-bit samples (Picture::planes8): widening loads, narrowing stores whose
+// lanes must already lie in [0, 255]
+inline i32x4 load4(const uint8_t* p) {
+    u8x4 v;
+    memcpy(&v, p, sizeof(v));
+    return __builtin_convertvector(v, i32x4);
+}
+
+inline void store4(uint8_t* p, i32x4 v) {
+    u8x4 n = __builtin_convertvector(v, u8x4);
     memcpy(p, &n, sizeof(n));
 }
 
@@ -84,6 +99,17 @@ inline i16x8 load8(const int16_t* p) {
 
 inline void store8(int16_t* p, i16x8 v) {
     memcpy(p, &v, sizeof(v));
+}
+
+inline i16x8 load8(const uint8_t* p) {
+    u8x8 v;
+    memcpy(&v, p, sizeof(v));
+    return __builtin_convertvector(v, i16x8);
+}
+
+inline void store8(uint8_t* p, i16x8 v) {
+    u8x8 n = __builtin_convertvector(v, u8x8);
+    memcpy(p, &n, sizeof(n));
 }
 
 inline i16x8 splat8(int16_t x) {

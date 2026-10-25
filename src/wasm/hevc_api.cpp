@@ -19,7 +19,7 @@ struct HEVCDecoder {
 // bytes for it (decoder.ts, worker.ts). Under wasm32 that is exactly its size,
 // so a field added here without updating those offsets would corrupt the read.
 #ifdef __EMSCRIPTEN__
-static_assert(sizeof(HEVCFrame) == 48, "HEVCFrame layout changed — update decoder.ts and worker.ts");
+static_assert(sizeof(HEVCFrame) == 52, "HEVCFrame layout changed — update decoder.ts and worker.ts");
 #endif
 
 extern "C" {
@@ -54,6 +54,21 @@ int hevc_decoder_get_frame_count(HEVCDecoder* dec) {
     return static_cast<int>(dec->output.size());
 }
 
+// Plane pointers at the given sample offsets, in the picture's storage type
+static void set_planes(const hevc::Picture& pic, int y_offset, int c_offset, HEVCFrame* frame) {
+    if (pic.eight_bit) {
+        frame->y  = pic.plane<uint8_t>(0) + y_offset;
+        frame->cb = pic.plane<uint8_t>(1) + c_offset;
+        frame->cr = pic.plane<uint8_t>(2) + c_offset;
+        frame->bytes_per_sample = 1;
+    } else {
+        frame->y  = pic.plane<uint16_t>(0) + y_offset;
+        frame->cb = pic.plane<uint16_t>(1) + c_offset;
+        frame->cr = pic.plane<uint16_t>(2) + c_offset;
+        frame->bytes_per_sample = 2;
+    }
+}
+
 int hevc_decoder_get_frame(HEVCDecoder* dec, int index, HEVCFrame* frame) {
     if (!dec || !frame || index < 0 || index >= static_cast<int>(dec->output.size()))
         return HEVC_ERROR;
@@ -71,9 +86,7 @@ int hevc_decoder_get_frame(HEVCDecoder* dec, int index, HEVCFrame* frame) {
     int c_offset = (pic->conf_win_top / sub_h) * pic->stride[1] +
                    (pic->conf_win_left / sub_w);
 
-    frame->y  = pic->planes[0].data() + y_offset;
-    frame->cb = pic->planes[1].data() + c_offset;
-    frame->cr = pic->planes[2].data() + c_offset;
+    set_planes(*pic, y_offset, c_offset, frame);
     frame->width = crop_w;
     frame->height = crop_h;
     frame->stride_y = pic->stride[0];
@@ -128,9 +141,7 @@ int hevc_decoder_get_drained_frame(HEVCDecoder* dec, int index, HEVCFrame* frame
     int c_offset = (pic->conf_win_top / sub_h) * pic->stride[1] +
                    (pic->conf_win_left / sub_w);
 
-    frame->y  = pic->planes[0].data() + y_offset;
-    frame->cb = pic->planes[1].data() + c_offset;
-    frame->cr = pic->planes[2].data() + c_offset;
+    set_planes(*pic, y_offset, c_offset, frame);
     frame->width = crop_w;
     frame->height = crop_h;
     frame->stride_y = pic->stride[0];

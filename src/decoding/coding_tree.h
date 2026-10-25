@@ -92,6 +92,7 @@ struct DecodingContext {
 
     // Phase 9: SAO backup planes (reused across frames, owned by Decoder)
     std::vector<uint16_t>* sao_backup = nullptr;  // array of 3 vectors
+    std::vector<uint8_t>* sao_backup8 = nullptr;  // same, for 8-bit pictures
 
     // Phase 10: slice index per CTU (for cross-slice boundary detection)
     uint16_t* slice_idx = nullptr;         // array [PicSizeInCtbsY], indexed by CtbAddrInRs

@@ -294,7 +294,9 @@ static void filter_chroma_sample(int p[2], int q[2], int tC, int bitDepth,
 // ============================================================
 // Main deblocking entry point — §8.7.2.1
 // ============================================================
-void apply_deblocking(DecodingContext& ctx) {
+// Pixel: the picture's sample type, uint8_t or uint16_t
+template <typename Pixel>
+static void deblock_picture(DecodingContext& ctx) {
     auto& sps = *ctx.sps;
     auto& pps = *ctx.pps;
     auto* pic = ctx.pic;
@@ -308,11 +310,11 @@ void apply_deblocking(DecodingContext& ctx) {
     int subH = sps.SubHeightC;
 
     // Pre-compute plane pointers and strides for direct access
-    uint16_t* lumaPlane = pic->planes[0].data();
+    Pixel* lumaPlane = pic->template plane<Pixel>(0);
     int lumaStride = pic->stride[0];
-    uint16_t* chromaPlane[3] = { nullptr,
-                                  pic->planes[1].data(),
-                                  pic->planes[2].data() };
+    Pixel* chromaPlane[3] = { nullptr,
+                           pic->template plane<Pixel>(1),
+                           pic->template plane<Pixel>(2) };
     int chromaStride[3] = { 0, pic->stride[1], pic->stride[2] };
 
 
@@ -397,10 +399,10 @@ void apply_deblocking(DecodingContext& ctx) {
                         // The transpose loads int16 lanes: samples below 2^15
                         const bool transpose = bitDepthY <= 15;
                         if (edgeType == EDGE_VER && !transpose) {
-                            const uint16_t* r0 = lumaPlane + yQ * lumaStride + xQ;
-                            const uint16_t* r1 = r0 + lumaStride;
-                            const uint16_t* r2 = r1 + lumaStride;
-                            const uint16_t* r3 = r2 + lumaStride;
+                            const Pixel* r0 = lumaPlane + yQ * lumaStride + xQ;
+                            const Pixel* r1 = r0 + lumaStride;
+                            const Pixel* r2 = r1 + lumaStride;
+                            const Pixel* r3 = r2 + lumaStride;
                             for (int i = 0; i < 4; i++) {
                                 Q[i] = i32x4{r0[i], r1[i], r2[i], r3[i]};
                                 P[i] = i32x4{r0[-i - 1], r1[-i - 1], r2[-i - 1], r3[-i - 1]};
@@ -408,7 +410,7 @@ void apply_deblocking(DecodingContext& ctx) {
                         } else if (edgeType == EDGE_VER) {
                             // Rows of p3..q3, transposed into columns: 16-bit then
                             // 32-bit interleaves
-                            const uint16_t* r0 = lumaPlane + yQ * lumaStride + xQ - 4;
+                            const Pixel* r0 = lumaPlane + yQ * lumaStride + xQ - 4;
                             const i16x8 a0 = load8(r0), a1 = load8(r0 + lumaStride);
                             const i16x8 a2 = load8(r0 + 2 * lumaStride);
                             const i16x8 a3 = load8(r0 + 3 * lumaStride);
@@ -426,7 +428,7 @@ void apply_deblocking(DecodingContext& ctx) {
                             Q[0] = widen_lo(c2); Q[1] = widen_hi(c2);
                             Q[2] = widen_lo(c3); Q[3] = widen_hi(c3);
                         } else {
-                            const uint16_t* c = lumaPlane + yQ * lumaStride + xQ;
+                            const Pixel* c = lumaPlane + yQ * lumaStride + xQ;
                             for (int i = 0; i < 4; i++) {
                                 Q[i] = load4(c + i * lumaStride);
                                 P[i] = load4(c - (i + 1) * lumaStride);
@@ -468,11 +470,11 @@ void apply_deblocking(DecodingContext& ctx) {
                             // Write back p0..p2, q0..q2: lanes left unfiltered still hold
                             // their own sample.
                             if (edgeType == EDGE_VER && !transpose) {
-                                uint16_t* row = lumaPlane + yQ * lumaStride + xQ;
+                                Pixel* row = lumaPlane + yQ * lumaStride + xQ;
                                 for (int k = 0; k < 4; k++, row += lumaStride)
                                     for (int i = 0; i < 3; i++) {
-                                        row[-i - 1] = static_cast<uint16_t>(P[i][k]);
-                                        row[i] = static_cast<uint16_t>(Q[i][k]);
+                                        row[-i - 1] = static_cast<Pixel>(P[i][k]);
+                                        row[i] = static_cast<Pixel>(Q[i][k]);
                                     }
                             } else if (edgeType == EDGE_VER) {
                                 // Columns back into rows, p3 and q3 unchanged
@@ -483,7 +485,7 @@ void apply_deblocking(DecodingContext& ctx) {
                                 const i16x8 gh01 = HEVC_SHUFFLE16(g, h, 0, 4, 8, 12, 1, 5, 9, 13);
                                 const i16x8 ef23 = HEVC_SHUFFLE16(e, f, 2, 6, 10, 14, 3, 7, 11, 15);
                                 const i16x8 gh23 = HEVC_SHUFFLE16(g, h, 2, 6, 10, 14, 3, 7, 11, 15);
-                                uint16_t* row = lumaPlane + yQ * lumaStride + xQ - 4;
+                                Pixel* row = lumaPlane + yQ * lumaStride + xQ - 4;
                                 store8(row, HEVC_SHUFFLE16(ef01, gh01, 0, 1, 2, 3, 8, 9, 10, 11));
                                 store8(row + lumaStride,
                                        HEVC_SHUFFLE16(ef01, gh01, 4, 5, 6, 7, 12, 13, 14, 15));
@@ -492,7 +494,7 @@ void apply_deblocking(DecodingContext& ctx) {
                                 store8(row + 3 * lumaStride,
                                        HEVC_SHUFFLE16(ef23, gh23, 4, 5, 6, 7, 12, 13, 14, 15));
                             } else {
-                                uint16_t* c = lumaPlane + yQ * lumaStride + xQ;
+                                Pixel* c = lumaPlane + yQ * lumaStride + xQ;
                                 for (int i = 0; i < 3; i++) {
                                     store4(c - (i + 1) * lumaStride, P[i]);
                                     store4(c + i * lumaStride, Q[i]);
@@ -536,7 +538,7 @@ void apply_deblocking(DecodingContext& ctx) {
 
                                 // Filter 4 chroma lines along the edge
                                 int chromaSegs = (edgeType == EDGE_VER) ? (4 / subH) : (4 / subW);
-                                uint16_t* cPlane = chromaPlane[cIdx];
+                                Pixel* cPlane = chromaPlane[cIdx];
                                 int cStride = chromaStride[cIdx];
                                 for (int k = 0; k < chromaSegs; k++) {
                                     int pC[2], qC[2];
@@ -544,7 +546,7 @@ void apply_deblocking(DecodingContext& ctx) {
                                     if (edgeType == EDGE_VER) {
                                         cx = x / subW;
                                         cy = y / subH + k;
-                                        uint16_t* crow = cPlane + cy * cStride;
+                                        Pixel* crow = cPlane + cy * cStride;
                                         qC[0] = crow[cx]; qC[1] = crow[cx + 1];
                                         pC[0] = crow[cx - 1]; pC[1] = crow[cx - 2];
                                     } else {
@@ -564,12 +566,12 @@ void apply_deblocking(DecodingContext& ctx) {
                                                          &p0Out, &q0Out);
 
                                     if (edgeType == EDGE_VER) {
-                                        uint16_t* crow = cPlane + cy * cStride;
-                                        crow[cx - 1] = static_cast<uint16_t>(p0Out);
-                                        crow[cx]     = static_cast<uint16_t>(q0Out);
+                                        Pixel* crow = cPlane + cy * cStride;
+                                        crow[cx - 1] = static_cast<Pixel>(p0Out);
+                                        crow[cx]     = static_cast<Pixel>(q0Out);
                                     } else {
-                                        cPlane[(cy - 1) * cStride + cx] = static_cast<uint16_t>(p0Out);
-                                        cPlane[cy * cStride + cx]       = static_cast<uint16_t>(q0Out);
+                                        cPlane[(cy - 1) * cStride + cx] = static_cast<Pixel>(p0Out);
+                                        cPlane[cy * cStride + cx]       = static_cast<Pixel>(q0Out);
                                     }
                                 }
                             }
@@ -579,6 +581,11 @@ void apply_deblocking(DecodingContext& ctx) {
             }
         }
     }
+}
+
+void apply_deblocking(DecodingContext& ctx) {
+    if (ctx.pic->eight_bit) deblock_picture<uint8_t>(ctx);
+    else deblock_picture<uint16_t>(ctx);
 }
 
 } // namespace hevc

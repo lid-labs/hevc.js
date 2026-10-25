@@ -85,9 +85,9 @@ static void filter_pass(const T* s, ptrdiff_t sstride, ptrdiff_t step, int w, in
 
 // A pass over 8-bit samples on 8 lanes of int16: its sums fit int16 (luma at
 // most 88 * 255, at least -24 * 255), so wrapping partial sums still end
-// exact. shift1 is 0 at that depth.
-template <int N>
-static void filter_pass_8bit(const uint16_t* s, ptrdiff_t sstride, ptrdiff_t step,
+// exact. shift1 is 0 at that depth. P: the sample storage.
+template <int N, typename P>
+static void filter_pass_8bit(const P* s, ptrdiff_t sstride, ptrdiff_t step,
                              int w, int h, const int16_t* f, int16_t* out) {
     using namespace simd;
     i16x8 c[N];
@@ -133,8 +133,9 @@ static void filter_pass_tmp(const int16_t* s, int w, int h, const int16_t* f,
 
 // Interpolates a w x h block whose top-left integer sample is src. Reads
 // N/2 - 1 samples before the block and N/2 after it on each filtered axis.
-template <int N>
-static void interpolate_block(const uint16_t* src, ptrdiff_t stride, int w, int h,
+// P: the sample storage, uint8_t or uint16_t.
+template <int N, typename P>
+static void interpolate_block(const P* src, ptrdiff_t stride, int w, int h,
                               const int16_t* fH, const int16_t* fV,
                               int bitDepth, int16_t* pred) {
     // §8.5.3.3.3: shift1 = Min(4, BitDepth - 8), shift2 = 6, shift3 = Max(2, 14 - BitDepth)
@@ -143,7 +144,7 @@ static void interpolate_block(const uint16_t* src, ptrdiff_t stride, int w, int 
     const int shift3 = std::max(2, 14 - bitDepth);
     constexpr int before = N / 2 - 1;
     // A pass over the samples themselves, h rows from s.
-    auto sample_pass = [&](const uint16_t* s, ptrdiff_t step, int rows,
+    auto sample_pass = [&](const P* s, ptrdiff_t step, int rows,
                            const int16_t* f, int16_t* out) {
         if (bitDepth == 8)
             filter_pass_8bit<N>(s, stride, step, w, rows, f, out);
@@ -153,7 +154,7 @@ static void interpolate_block(const uint16_t* src, ptrdiff_t stride, int w, int 
 
     if (!fH && !fV) {
         for (int y = 0; y < h; y++) {
-            const uint16_t* s = src + y * stride;
+            const P* s = src + y * stride;
             int16_t* out = pred + y * w;
             int x = 0;
             for (; x + 4 <= w; x += 4)
@@ -175,16 +176,16 @@ static void interpolate_block(const uint16_t* src, ptrdiff_t stride, int w, int 
 // Reference block at (xInt, yInt) in plane cIdx; frac 0 on an axis skips its pass.
 // A block whose filter taps would leave the picture is first copied with its
 // margins into a buffer, coordinates clamped to the picture (§8.5.3.3.3.1).
-template <int N>
-static void interpolate(const Picture& refPic, int cIdx,
-                        int xInt, int yInt, const int16_t* fH, const int16_t* fV,
-                        int w, int h, int bitDepth, int16_t* pred) {
+template <int N, typename P>
+static void interpolate_from(const Picture& refPic, int cIdx,
+                             int xInt, int yInt, const int16_t* fH, const int16_t* fV,
+                             int w, int h, int bitDepth, int16_t* pred) {
     constexpr int before = N / 2 - 1;
     constexpr int after = N / 2;
     const int picW = refPic.width[cIdx];
     const int picH = refPic.height[cIdx];
     const ptrdiff_t stride = refPic.stride[cIdx];
-    const uint16_t* plane = refPic.planes[cIdx].data();
+    const P* plane = refPic.plane<P>(cIdx);
 
     bool interior = (xInt - before >= 0) && (yInt - before >= 0) &&
                     (xInt + w + after <= picW) && (yInt + h + after <= picH);
@@ -194,15 +195,25 @@ static void interpolate(const Picture& refPic, int cIdx,
         return;
     }
 
-    uint16_t buf[kMaxPadded * kMaxPadded];
+    P buf[kMaxPadded * kMaxPadded];
     const int bw = w + N - 1;
     for (int y = 0; y < h + N - 1; y++) {
         int sy = std::max(0, std::min(yInt + y - before, picH - 1));
-        const uint16_t* row = plane + sy * stride;
+        const P* row = plane + sy * stride;
         for (int x = 0; x < bw; x++)
             buf[y * bw + x] = row[std::max(0, std::min(xInt + x - before, picW - 1))];
     }
     interpolate_block<N>(buf + before * bw + before, bw, w, h, fH, fV, bitDepth, pred);
+}
+
+template <int N>
+static void interpolate(const Picture& refPic, int cIdx,
+                        int xInt, int yInt, const int16_t* fH, const int16_t* fV,
+                        int w, int h, int bitDepth, int16_t* pred) {
+    if (refPic.eight_bit)
+        interpolate_from<N, uint8_t>(refPic, cIdx, xInt, yInt, fH, fV, w, h, bitDepth, pred);
+    else
+        interpolate_from<N, uint16_t>(refPic, cIdx, xInt, yInt, fH, fV, w, h, bitDepth, pred);
 }
 
 static void interpolate_luma(const Picture& refPic,
@@ -373,21 +384,24 @@ static void inter_prediction(DecodingContext& ctx,
             const int picW = refPic->width[cIdx];
             const int picH = refPic->height[cIdx];
             const ptrdiff_t stride = refPic->stride[cIdx];
-            const uint16_t* plane = refPic->planes[cIdx].data();
             const bool interior = xInt >= 0 && yInt >= 0 &&
                                   xInt + compW <= picW && yInt + compH <= picH;
-            for (int y = 0; y < compH; y++) {
-                Out* o = out + y * outStride;
-                if (interior) {
-                    const uint16_t* row = plane + (yInt + y) * stride + xInt;
-                    for (int x = 0; x < compW; x++) o[x] = static_cast<Out>(row[x]);
-                } else {
-                    const int sy = std::max(0, std::min(yInt + y, picH - 1));
-                    const uint16_t* row = plane + sy * stride;
-                    for (int x = 0; x < compW; x++)
-                        o[x] = static_cast<Out>(row[std::max(0, std::min(xInt + x, picW - 1))]);
+            auto copy = [&](const auto* plane) {
+                for (int y = 0; y < compH; y++) {
+                    Out* o = out + y * outStride;
+                    if (interior) {
+                        const auto* row = plane + (yInt + y) * stride + xInt;
+                        for (int x = 0; x < compW; x++) o[x] = static_cast<Out>(row[x]);
+                    } else {
+                        const int sy = std::max(0, std::min(yInt + y, picH - 1));
+                        const auto* row = plane + sy * stride;
+                        for (int x = 0; x < compW; x++)
+                            o[x] = static_cast<Out>(row[std::max(0, std::min(xInt + x, picW - 1))]);
+                    }
                 }
-            }
+            };
+            if (refPic->eight_bit) copy(refPic->plane<uint8_t>(cIdx));
+            else copy(refPic->plane<uint16_t>(cIdx));
             return;
         }
     }
@@ -512,6 +526,17 @@ void perform_inter_prediction(DecodingContext& ctx,
                                int refIdxL0, int refIdxL1,
                                bool predFlagL0, bool predFlagL1,
                                uint16_t* dst, ptrdiff_t dstStride) {
+    inter_prediction(ctx, xPb, yPb, nPbW, nPbH, cIdx, mvL0, mvL1, refIdxL0, refIdxL1,
+                     predFlagL0, predFlagL1, dst, dstStride);
+}
+
+void perform_inter_prediction(DecodingContext& ctx,
+                               int xPb, int yPb, int nPbW, int nPbH,
+                               int cIdx,
+                               const MV& mvL0, const MV& mvL1,
+                               int refIdxL0, int refIdxL1,
+                               bool predFlagL0, bool predFlagL1,
+                               uint8_t* dst, ptrdiff_t dstStride) {
     inter_prediction(ctx, xPb, yPb, nPbW, nPbH, cIdx, mvL0, mvL1, refIdxL0, refIdxL1,
                      predFlagL0, predFlagL1, dst, dstStride);
 }

@@ -10,8 +10,14 @@ namespace hevc {
 // Picture buffer — planar YUV layout (AD-002)
 // Spec ref: §6.1 (source, coded, decoded picture formats)
 struct Picture {
-    // Plane data
-    std::vector<uint16_t> planes[3];  // 0=Y, 1=Cb, 2=Cr
+    // Plane data, 0=Y, 1=Cb, 2=Cr. A picture whose luma and chroma are both
+    // 8-bit stores one byte per sample, in planes8; any other in planes16. The
+    // other array stays empty. Half the memory traffic of 16-bit storage for
+    // the common 8-bit streams, which is what motion compensation and the loop
+    // filters are bound by.
+    std::vector<uint8_t> planes8[3];
+    std::vector<uint16_t> planes16[3];
+    bool eight_bit = false;           // planes8 in use
     int width[3]  = {};               // width per plane (in samples)
     int height[3] = {};               // height per plane (in samples)
     int stride[3] = {};               // stride per plane (in samples)
@@ -68,12 +74,23 @@ struct Picture {
     // Allocate planes based on dimensions and chroma format
     void allocate(int width, int height, ChromaFormat fmt, int bd_luma, int bd_chroma);
 
-    // Get sample at position (x, y) in plane c
-    uint16_t& sample(int c, int x, int y) {
-        return planes[c][y * stride[c] + x];
+    // Plane c as P = uint8_t (eight_bit) or uint16_t (otherwise)
+    template <typename P> P* plane(int c);
+    template <typename P> const P* plane(int c) const;
+
+    // Sample at (x, y) in plane c, for code off the hot paths
+    int get(int c, int x, int y) const {
+        const size_t i = static_cast<size_t>(y) * stride[c] + x;
+        return eight_bit ? planes8[c][i] : planes16[c][i];
     }
-    uint16_t sample(int c, int x, int y) const {
-        return planes[c][y * stride[c] + x];
+    void set(int c, int x, int y, int v) {
+        const size_t i = static_cast<size_t>(y) * stride[c] + x;
+        if (eight_bit) planes8[c][i] = static_cast<uint8_t>(v);
+        else planes16[c][i] = static_cast<uint16_t>(v);
+    }
+    // Number of samples in plane c
+    size_t plane_size(int c) const {
+        return eight_bit ? planes8[c].size() : planes16[c].size();
     }
 
     // Write to raw YUV file (crops to conformance window if set)
@@ -84,5 +101,10 @@ struct Picture {
         return used_for_short_term_ref || used_for_long_term_ref;
     }
 };
+
+template <> inline uint8_t* Picture::plane<uint8_t>(int c) { return planes8[c].data(); }
+template <> inline uint16_t* Picture::plane<uint16_t>(int c) { return planes16[c].data(); }
+template <> inline const uint8_t* Picture::plane<uint8_t>(int c) const { return planes8[c].data(); }
+template <> inline const uint16_t* Picture::plane<uint16_t>(int c) const { return planes16[c].data(); }
 
 } // namespace hevc
