@@ -65,7 +65,7 @@ static void decode_sao(DecodingContext& ctx, int rx, int ry) {
     bool sao_merge_up_flag = false;
 
     if (rx > 0) {
-        bool leftInSlice = (CtbAddrInRs > static_cast<int>(sh.slice_segment_address));
+        bool leftInSlice = (CtbAddrInRs > static_cast<int>(sh.SliceAddrRs));
         bool leftInTile = (ctx.pps->TileId.empty() ||
             ctx.pps->TileId[ctx.pps->CtbAddrRsToTs[CtbAddrInRs]] ==
             ctx.pps->TileId[ctx.pps->CtbAddrRsToTs[CtbAddrInRs - 1]]);
@@ -75,7 +75,7 @@ static void decode_sao(DecodingContext& ctx, int rx, int ry) {
 
     if (ry > 0 && !sao_merge_left_flag) {
         int upAddr = CtbAddrInRs - ctx.sps->PicWidthInCtbsY;
-        bool upInSlice = (upAddr >= static_cast<int>(sh.slice_segment_address));
+        bool upInSlice = (upAddr >= static_cast<int>(sh.SliceAddrRs));
         bool upInTile = (ctx.pps->TileId.empty() ||
             ctx.pps->TileId[ctx.pps->CtbAddrRsToTs[CtbAddrInRs]] ==
             ctx.pps->TileId[ctx.pps->CtbAddrRsToTs[upAddr]]);
@@ -567,10 +567,15 @@ bool decode_slice_segment_data(DecodingContext& ctx, BitstreamReader& bs,
         }
     }
 
-    // WPP parallel path: when entropy_coding_sync is enabled, tiles disabled,
-    // and we have entry point offsets, decode rows in parallel via thread pool.
+    // WPP parallel path: rows decoded in parallel via the thread pool. It
+    // assumes one slice segment covering the whole picture, one substream per
+    // row, and a row above that saves contexts after its second CTB — so a
+    // picture with several segments, or one CTB wide, takes the serial path.
     if (pps.entropy_coding_sync_enabled_flag && !pps.tiles_enabled_flag &&
-        !substream_byte_pos.empty() && ctx.thread_pool && ctx.thread_pool->num_workers() > 1) {
+        ctx.num_slices == 1 && sh.slice_segment_address == 0 &&
+        sps.PicWidthInCtbsY >= 2 &&
+        sh.num_entry_point_offsets + 1 == static_cast<uint32_t>(sps.PicHeightInCtbsY) &&
+        ctx.thread_pool && ctx.thread_pool->num_workers() > 1) {
         return decode_wpp_parallel(ctx, bs, substream_byte_pos);
     }
 
@@ -580,20 +585,54 @@ bool decode_slice_segment_data(DecodingContext& ctx, BitstreamReader& bs,
     int CtbAddrInTs = pps.CtbAddrRsToTs[sh.slice_segment_address];
     int CtbAddrInRs = sh.slice_segment_address;
 
-    // Initialize CABAC. §9.3.1: a dependent slice segment carries the contexts
-    // over, unless it starts a tile.
+    const int picWCtbs = sps.PicWidthInCtbsY;
+    auto init_contexts = [&]() {
+        cabac.init_contexts(static_cast<int>(sh.slice_type), sh.SliceQpY, sh.cabac_init_flag);
+    };
+    // §9.3.1: a CTB row of WPP syncs from the contexts saved after the CTB above
+    // and to the right, when that CTB is available (§6.4.1): inside the picture,
+    // already decoded, in the same slice and the same tile. Otherwise the row
+    // starts from initialised contexts.
+    auto wpp_sync_available = [&](int rs) {
+        int col = rs % picWCtbs;
+        if (rs < picWCtbs || col + 1 >= picWCtbs) return false;
+        int tr = rs - picWCtbs + 1;
+        if (pps.CtbAddrRsToTs[tr] > pps.CtbAddrRsToTs[rs]) return false;
+        if (ctx.slice_idx && ctx.slice_idx[tr] != ctx.current_slice_idx) return false;
+        if (pps.tiles_enabled_flag &&
+            pps.TileId[pps.CtbAddrRsToTs[tr]] != pps.TileId[pps.CtbAddrRsToTs[rs]])
+            return false;
+        return ctx.wpp_contexts_available;
+    };
+
+    // Initialize CABAC (§9.3.1), in this order: a segment that starts a tile
+    // initialises; one that starts a WPP row syncs as any row does; a dependent
+    // segment carries the contexts over from the previous segment; anything
+    // else initialises.
     bool starts_tile = pps.tiles_enabled_flag &&
         (CtbAddrInTs == 0 || pps.TileId[CtbAddrInTs] != pps.TileId[CtbAddrInTs - 1]);
-    if (!sh.dependent_slice_segment_flag || starts_tile) {
-        int sliceType = static_cast<int>(sh.slice_type);
-        cabac.init_contexts(sliceType, sh.SliceQpY, sh.cabac_init_flag);
+    bool starts_wpp_row = pps.entropy_coding_sync_enabled_flag &&
+        (CtbAddrInRs % picWCtbs == 0 ||
+         (pps.tiles_enabled_flag &&
+          pps.TileId[CtbAddrInTs] != pps.TileId[pps.CtbAddrRsToTs[CtbAddrInRs - 1]]));
+    if (starts_tile) {
+        init_contexts();
+        ctx.wpp_contexts_available = false;
+    } else if (starts_wpp_row) {
+        if (wpp_sync_available(CtbAddrInRs)) cabac.load_contexts(ctx.wpp_saved_contexts);
+        else init_contexts();
+    } else if (!sh.dependent_slice_segment_flag) {
+        init_contexts();
     }
-    if (starts_tile) ctx.wpp_contexts_available = false;
     cabac.init_decoder(bs);
 
-    // Init QP
-    ctx.QpY_prev = sh.SliceQpY;
-    ctx.QpY_prev_qg = sh.SliceQpY;
+    // §8.6.1: qPY_PREV restarts at SliceQpY at the first quantization group of
+    // a slice, a tile, or a WPP row — not of a dependent slice segment, which
+    // continues from the previous segment.
+    if (!sh.dependent_slice_segment_flag || starts_tile || starts_wpp_row) {
+        ctx.QpY_prev = sh.SliceQpY;
+        ctx.QpY_prev_qg = sh.SliceQpY;
+    }
 
     HEVC_LOG(TREE, "slice_segment_data: addr=%d type=%d QP=%d entry_points=%u",
              sh.slice_segment_address, static_cast<int>(sh.slice_type),
@@ -658,8 +697,7 @@ bool decode_slice_segment_data(DecodingContext& ctx, BitstreamReader& bs,
                 }
                 // §9.3.1: a tile starts with freshly initialised contexts, and
                 // WPP rows in it never sync from another tile
-                cabac.init_contexts(static_cast<int>(sh.slice_type),
-                                    sh.SliceQpY, sh.cabac_init_flag);
+                init_contexts();
                 ctx.wpp_contexts_available = false;
                 cabac.init_decoder(bs);
                 // §8.6.1: Reset QpY_prev at first QG in a tile
@@ -684,12 +722,11 @@ bool decode_slice_segment_data(DecodingContext& ctx, BitstreamReader& bs,
                     // §8.6.1: Reset QpY_prev at first QG of each CTB row (WPP)
                     ctx.QpY_prev = sh.SliceQpY;
                     ctx.QpY_prev_qg = sh.SliceQpY;
-                    // §9.2.2: restore contexts from 2nd CTU of previous row
-                    if (ctx.wpp_contexts_available) {
+                    // §9.3.1: sync from the CTB above and to the right
+                    if (wpp_sync_available(CtbAddrInRs)) {
                         cabac.load_contexts(ctx.wpp_saved_contexts);
                     } else {
-                        cabac.init_contexts(static_cast<int>(sh.slice_type),
-                                            sh.SliceQpY, sh.cabac_init_flag);
+                        init_contexts();
                     }
                 }
             }

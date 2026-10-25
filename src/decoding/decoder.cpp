@@ -200,6 +200,10 @@ DecodeStatus Decoder::decode_picture(const std::vector<NalUnit>& nals,
     // Decode each slice segment — store headers for per-CTU filter parameter lookup
     std::vector<SliceHeader> slice_headers(vcl_count);
     std::vector<const SliceHeader*> slice_header_ptrs(vcl_count);
+    // Slice (not slice segment) of each segment: the index of the independent
+    // segment that opens it. §6.4.1 availability, WPP sync and the loop filters
+    // work per slice, so a dependent segment shares its slice's index.
+    std::vector<int> slice_of_segment(vcl_count, 0);
     int last_independent_idx = 0;
     for (size_t s = 0; s < vcl_count; s++) {
         const auto& slice_nal = nals[first_vcl_idx + s];
@@ -213,19 +217,21 @@ DecodeStatus Decoder::decode_picture(const std::vector<NalUnit>& nals,
                 return DecodeStatus::ERROR;
             }
             // §7.4.7.1: dependent slices inherit fields from the independent slice
+            // The entry points belong to the segment, not to the slice.
             if (slice_headers[s].dependent_slice_segment_flag) {
-                uint32_t saved_address = slice_headers[s].slice_segment_address;
-                bool saved_dependent = slice_headers[s].dependent_slice_segment_flag;
-                bool saved_first = slice_headers[s].first_slice_segment_in_pic_flag;
+                SliceHeader own = std::move(slice_headers[s]);
                 slice_headers[s] = slice_headers[last_independent_idx];
-                slice_headers[s].slice_segment_address = saved_address;
-                slice_headers[s].dependent_slice_segment_flag = saved_dependent;
-                slice_headers[s].first_slice_segment_in_pic_flag = saved_first;
+                slice_headers[s].slice_segment_address = own.slice_segment_address;
+                slice_headers[s].dependent_slice_segment_flag = own.dependent_slice_segment_flag;
+                slice_headers[s].first_slice_segment_in_pic_flag = own.first_slice_segment_in_pic_flag;
+                slice_headers[s].num_entry_point_offsets = own.num_entry_point_offsets;
+                slice_headers[s].entry_point_offset_minus1 = std::move(own.entry_point_offset_minus1);
             } else {
                 last_independent_idx = static_cast<int>(s);
             }
         }
         slice_header_ptrs[s] = &slice_headers[s];
+        slice_of_segment[s] = last_independent_idx;
     }
 
     ctx.slice_headers = slice_header_ptrs.data();
@@ -237,7 +243,7 @@ DecodeStatus Decoder::decode_picture(const std::vector<NalUnit>& nals,
         const auto& slice_nal = nals[first_vcl_idx + s];
 
         ctx.sh = &slice_headers[s];
-        ctx.current_slice_idx = static_cast<int>(s);
+        ctx.current_slice_idx = slice_of_segment[s];
 
         // §8.3.4, §8.3.5 — Reference picture lists and collocated picture, per
         // slice: each has its own num_ref_idx_active, list modification and

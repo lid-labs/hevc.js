@@ -306,6 +306,24 @@ if(BUILD_TESTS AND NOT BUILD_WASM)
     set_tests_properties(oracle_tiles_b_cisco_1 PROPERTIES LABELS "oracle;phase10;conformance"
         SKIP_RETURN_CODE 2)
 
+    # WPP with independent and dependent slice segments (WPP_A), one CTB wide
+    # (WPP_D), and dependent segments over tiles (DBLK_D) (#312, #314, #319).
+    add_test(NAME oracle_wpp_a_ericsson_main_2
+        COMMAND ${ORACLE_SCRIPT} ${FIXTURES_DIR}/WPP_A_ericsson_MAIN_2.265 416 240
+            cd7e815eb47e8138fec2185d4de84304 $<TARGET_FILE:hevc-decode>)
+    set_tests_properties(oracle_wpp_a_ericsson_main_2 PROPERTIES LABELS "oracle;phase10;conformance"
+        SKIP_RETURN_CODE 2)
+    add_test(NAME oracle_wpp_d_ericsson_main_2
+        COMMAND ${ORACLE_SCRIPT} ${FIXTURES_DIR}/WPP_D_ericsson_MAIN_2.265 64 240
+            f710612103f386c415be3e6300693451 $<TARGET_FILE:hevc-decode>)
+    set_tests_properties(oracle_wpp_d_ericsson_main_2 PROPERTIES LABELS "oracle;phase10;conformance"
+        SKIP_RETURN_CODE 2)
+    add_test(NAME oracle_dblk_d_vixs_2
+        COMMAND ${ORACLE_SCRIPT} ${FIXTURES_DIR}/DBLK_D_VIXS_2.265 1280 720
+            f6f3075edca573f5dfe4e352d26170f1 $<TARGET_FILE:hevc-decode>)
+    set_tests_properties(oracle_dblk_d_vixs_2 PROPERTIES LABELS "oracle;phase10;conformance"
+        SKIP_RETURN_CODE 2)
+
     # Parallel merge level 3: 8x4/4x8 PUs of an 8x8 CU share one merge list, and
     # the bi-to-uni restriction still reads their own size (#316).
     add_test(NAME oracle_pmerge_b_ti_3

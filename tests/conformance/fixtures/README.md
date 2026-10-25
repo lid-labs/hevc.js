@@ -126,6 +126,9 @@ and ffmpeg versions, so regenerating may give a stream that no longer does.
 | `SLIST_D_Sony_9.265` | 346K | 832x480 | 65 | as `SLIST_B`, 4 slices per picture, PPS switched per picture | `8d38ce43b17627ff1f86e526bfb7ffc4` |
 | `TILES_A_Cisco_2.265` | 473K | 1920x1080 | 100 | 5x5 tiles, spacing and loop filtering across tiles drawn per picture, one slice | `946f0771fa87d49f684f96871c9c3c88` |
 | `TILES_B_Cisco_1.265` | 521K | 1920x1080 | 100 | the same, several slices per picture, aligned on tiles | `3382291f2b19ee2d760647d4cc756e95` |
+| `WPP_A_ericsson_MAIN_2.265` | 66K | 416x240 | 48 | WPP with independent and dependent slice segments down to one CTB | `cd7e815eb47e8138fec2185d4de84304` |
+| `WPP_D_ericsson_MAIN_2.265` | 22K | 64x240 | 48 | the same, one CTB wide | `f710612103f386c415be3e6300693451` |
+| `DBLK_D_VIXS_2.265` | 17K | 1280x720 | 8 | slices and dependent slice segments over 4x3 tiles, no loop filtering across slices | `f6f3075edca573f5dfe4e352d26170f1` |
 | `PMERGE_B_TI_3.265` | 16K | 416x240 | 8 | `log2_parallel_merge_level_minus2` = 1 | `7d0e57ebdbbc6633c972083a17d97550` |
 
 Bitstreams of the HEVC v1 conformance suite, unmodified apart from the extension
@@ -142,6 +145,14 @@ byte boundary instead of at its entry point, and kept the CABAC contexts of the 
 tile. They also cover the deblocking filter's exclusion of tile boundaries when
 `loop_filter_across_tiles_enabled_flag` is 0. Neither enables SAO, so its tile boundary
 check stays unexercised.
+
+`WPP_A`, `WPP_D` and `DBLK_D` failed before #312's fix, which made dependent slice
+segments decode: their header was cut short before its entry points, they took the
+independent segment's entry points, SAO merging and §6.4.1 availability treated the
+previous segment of the same slice as another slice, WPP rows synced from another
+slice's contexts, and the QP predictor restarted at every segment. `WPP_D` also hung
+the parallel WPP path, which now only takes single-segment pictures at least two CTBs
+wide. Each of these causes, put back on its own, makes at least one of the three fail.
 
 `PMERGE_B` failed before #316's fix. Above parallel merge level 2, the prediction units
 of an 8x8 coding unit share the merge list of the whole coding unit (§8.5.3.2.2), and
