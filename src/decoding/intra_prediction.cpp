@@ -445,6 +445,8 @@ void perform_intra_prediction(DecodingContext& ctx, int x0, int y0,
                               int16_t* pred_samples) {
     int nTbS = 1 << log2PredSize;
     int bitDepth = (cIdx == 0) ? ctx.sps->BitDepthY : ctx.sps->BitDepthC;
+    // Modes 0..34 index the angle tables; a corrupt stream must not read past them
+    if (intra_mode < 0 || intra_mode > 34) intra_mode = 1;  // INTRA_DC
 
     // Build reference samples
     int16_t refTop[2 * 64 + 1];

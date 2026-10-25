@@ -394,7 +394,18 @@ void apply_deblocking(DecodingContext& ctx) {
                         // the 4 lines, lane k for line k.
                         using namespace simd;
                         i32x4 P[4], Q[4];
-                        if (edgeType == EDGE_VER) {
+                        // The transpose loads int16 lanes: samples below 2^15
+                        const bool transpose = bitDepthY <= 15;
+                        if (edgeType == EDGE_VER && !transpose) {
+                            const uint16_t* r0 = lumaPlane + yQ * lumaStride + xQ;
+                            const uint16_t* r1 = r0 + lumaStride;
+                            const uint16_t* r2 = r1 + lumaStride;
+                            const uint16_t* r3 = r2 + lumaStride;
+                            for (int i = 0; i < 4; i++) {
+                                Q[i] = i32x4{r0[i], r1[i], r2[i], r3[i]};
+                                P[i] = i32x4{r0[-i - 1], r1[-i - 1], r2[-i - 1], r3[-i - 1]};
+                            }
+                        } else if (edgeType == EDGE_VER) {
                             // Rows of p3..q3, transposed into columns: 16-bit then
                             // 32-bit interleaves
                             const uint16_t* r0 = lumaPlane + yQ * lumaStride + xQ - 4;
@@ -454,7 +465,14 @@ void apply_deblocking(DecodingContext& ctx) {
                                               keepP, keepQ);
                             // Write back p0..p2, q0..q2: lanes left unfiltered still hold
                             // their own sample.
-                            if (edgeType == EDGE_VER) {
+                            if (edgeType == EDGE_VER && !transpose) {
+                                uint16_t* row = lumaPlane + yQ * lumaStride + xQ;
+                                for (int k = 0; k < 4; k++, row += lumaStride)
+                                    for (int i = 0; i < 3; i++) {
+                                        row[-i - 1] = static_cast<uint16_t>(P[i][k]);
+                                        row[i] = static_cast<uint16_t>(Q[i][k]);
+                                    }
+                            } else if (edgeType == EDGE_VER) {
                                 // Columns back into rows, p3 and q3 unchanged
                                 const i16x8 e = pack(P[3], P[2]), f = pack(P[1], P[0]);
                                 const i16x8 g = pack(Q[0], Q[1]), h = pack(Q[2], Q[3]);

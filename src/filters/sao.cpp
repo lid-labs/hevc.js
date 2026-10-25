@@ -153,7 +153,8 @@ void apply_sao(DecodingContext& ctx) {
 
                 if (sao.sao_type_idx[cIdx] == 2) {
                     // Edge offset — §8.7.3.2
-                    int eoClass = sao.sao_eo_class[cIdx];
+                    // 2 bins, so 0..3; masked as eo_dx / eo_dy are indexed with it
+                    int eoClass = sao.sao_eo_class[cIdx] & 3;
                     int dx0 = eo_dx[eoClass][0], dy0 = eo_dy[eoClass][0];
                     int dx1 = eo_dx[eoClass][1], dy1 = eo_dy[eoClass][1];
 

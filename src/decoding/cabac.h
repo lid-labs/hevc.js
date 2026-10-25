@@ -159,7 +159,12 @@ private:
 #ifdef HEVC_DEBUG
         bin_count_ += n;
 #endif
-        return q;
+        // The quotient fits n bits only while ivlOffset < ivlCurrRange, which a
+        // non-conforming stream breaks from init_decoder on (an offset of 510 or
+        // 511, §9.3.2.5). The callers index tables with these bins: keep them to
+        // n bits, as the bin-by-bin loop did. The full-quotient subtraction
+        // above has put ivlOffset back below ivlCurrRange.
+        return q & ((1u << n) - 1);
     }
 
     // Look-ahead kept at or above kMinBits, enough for one renormalisation
