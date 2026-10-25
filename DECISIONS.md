@@ -199,3 +199,32 @@ Callers that assign timestamps positionally must poll
 `takeSuppressedPictures()` after every `feed()`; one that ignores it keeps the
 pre-fix behaviour, off by one slot per suppressed picture — and leaves the
 decoder's list growing, since reading it is what empties it.
+
+## AD-010 : SIMD — GCC/clang vector extensions, not per-architecture intrinsics
+
+**Context**: The speed campaign against ffmpeg's decoder (#232) needs SIMD in
+the hot loops. The shipped decoder is the WASM build (emscripten, SIMD128);
+the native build runs on arm64 (NEON) and on x86-64 (SSE2) in CI. ffmpeg
+writes assembly per architecture; intrinsics would mean one implementation per
+target, and WASM SIMD128 intrinsics share nothing with NEON or SSE ones.
+
+**Decision**: SIMD code is written once with `__attribute__((vector_size))`
+types and plain operators (`src/common/simd.h`), which GCC, clang and
+emscripten lower to each target's instructions. A kernel keeps the exact
+integer semantics of the scalar code it replaces: int32 lanes by default,
+int16 lanes only where the sums are bounded to fit (8-bit samples).
+
+**Rationale**:
+- One source for the three targets, and the WASM build stays bit-exact with
+  the native one (`scripts/wasm-native-diff.sh`)
+- No `#ifdef` per architecture to keep in sync, and no dependency
+- The compilers handle the widening multiplies well: on arm64 the 2D
+  interpolation's vertical pass comes out as `smull`/`smlal`, the 8-bit
+  horizontal pass as `mla.8h`
+
+**Consequence**: Lane shuffles (`__builtin_shufflevector` in clang,
+`__builtin_shuffle` in GCC) are spelled differently by the two compilers, so a
+kernel that needs them, such as a transpose, has to wrap both. Where the
+generated code falls short of hand-written assembly, the gap stays: closing it
+would mean per-architecture code, which this decision rules out until a
+measurement justifies it.

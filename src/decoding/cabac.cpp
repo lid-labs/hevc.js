@@ -24,13 +24,15 @@ static FILE* trace_file() {
 void CabacEngine::init_decoder(BitstreamReader& bs) {
     bs_ = &bs;
     ivlCurrRange_ = 510;
-    ivlOffset_ = static_cast<uint16_t>(bs.read_bits(9));
-    HEVC_LOG(CABAC, "init_decoder: ivlCurrRange=%d ivlOffset=%d", ivlCurrRange_, ivlOffset_);
+    value_ = bs.read_bits(9);
+    bits_ = 0;
+    refill();
+    HEVC_LOG(CABAC, "init_decoder: ivlCurrRange=%d ivlOffset=%d", dbg_range(), dbg_offset());
 
 #ifdef HEVC_TRACE_CABAC
     if (FILE* f = trace_file())
         std::fprintf(f, "=== INIT_DECODER R=%d O=%d binCount=%d ===\n",
-                     ivlCurrRange_, ivlOffset_, bin_count());
+                     dbg_range(), dbg_offset(), bin_count());
 #endif
 }
 
@@ -81,20 +83,28 @@ int CabacEngine::decode_terminate() {
     bin_count_++;
 #endif
 
-    if (ivlOffset_ >= ivlCurrRange_) {
+    if (value_ >= (static_cast<uint64_t>(ivlCurrRange_) << bits_)) {
 #ifdef HEVC_TRACE_CABAC
         if (FILE* f = trace_file())
             std::fprintf(f, "T %d R=%d O=%d val=1\n",
-                         bin_count(), ivlCurrRange_, ivlOffset_);
+                         bin_count(), dbg_range(), dbg_offset());
 #endif
+        // end_of_slice_segment_flag, end_of_subset_one_bit or pcm_flag: what
+        // follows is read from the bitstream directly, or by a new init_decoder
+        sync_reader();
         return 1;
     }
-    renormalize();
+    // §9.3.4.3.3: ivlCurrRange was at least 256, so one shift at most
+    if (ivlCurrRange_ < 256) {
+        ivlCurrRange_ <<= 1;
+        bits_--;
+        if (bits_ < kMinBits) refill();
+    }
 
 #ifdef HEVC_TRACE_CABAC
     if (FILE* f = trace_file())
         std::fprintf(f, "T %d R=%d O=%d val=0\n",
-                     bin_count(), ivlCurrRange_, ivlOffset_);
+                     bin_count(), dbg_range(), dbg_offset());
 #endif
 
     return 0;

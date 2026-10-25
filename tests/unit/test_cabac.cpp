@@ -253,3 +253,20 @@ TEST(CabacDecode, SaveRestoreContexts) {
     engine.load_contexts(saved);
     EXPECT_NE(engine.context(0).pStateIdx, 42);
 }
+
+// A non-conforming stream can start the arithmetic decoder with ivlOffset 511,
+// above ivlCurrRange (§9.3.2.5). Bypass bins decoded in one batch must still
+// fit the number of bins asked for: callers index tables with them.
+TEST(CabacEngine, BypassBinsStayWithinTheirWidthOnACorruptStream) {
+    std::vector<uint8_t> data(64, 0xFF);
+    data[1] = 0x80;  // first 9 bits: 1 1111 1111
+    BitstreamReader bs(data.data(), data.size());
+    CabacEngine engine;
+    engine.init_decoder(bs);
+    for (int i = 0; i < 40; i++) {
+        int n = 1 + i % 16;
+        int v = engine.decode_bypass_bins(n);
+        EXPECT_GE(v, 0);
+        EXPECT_LT(v, 1 << n) << "batch " << i << " of " << n << " bins";
+    }
+}

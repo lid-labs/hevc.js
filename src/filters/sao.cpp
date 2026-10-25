@@ -3,6 +3,7 @@
 
 #include "filters/sao.h"
 #include "common/types.h"
+#include "common/simd.h"
 
 #include <cstring>
 #include <vector>
@@ -152,7 +153,8 @@ void apply_sao(DecodingContext& ctx) {
 
                 if (sao.sao_type_idx[cIdx] == 2) {
                     // Edge offset — §8.7.3.2
-                    int eoClass = sao.sao_eo_class[cIdx];
+                    // 2 bins, so 0..3; masked as eo_dx / eo_dy are indexed with it
+                    int eoClass = sao.sao_eo_class[cIdx] & 3;
                     int dx0 = eo_dx[eoClass][0], dy0 = eo_dy[eoClass][0];
                     int dx1 = eo_dx[eoClass][1], dy1 = eo_dy[eoClass][1];
 
@@ -171,10 +173,32 @@ void apply_sao(DecodingContext& ctx) {
                         const int nOff1 = dy0 * stride + dx0;
                         const int nOff2 = dy1 * stride + dx1;
 
+                        // 8 samples per vector. int16 lanes hold c + offset exactly up
+                        // to 14-bit depth: at most 2^14 - 1 + 31 (§7.4.9.3.2).
+                        using namespace simd;
+                        const bool vec = bitDepth <= 14;
+                        const i16x8 o0 = splat8(static_cast<int16_t>(offs[0]));
+                        const i16x8 o1 = splat8(static_cast<int16_t>(offs[1]));
+                        const i16x8 o3 = splat8(static_cast<int16_t>(offs[3]));
+                        const i16x8 o4 = splat8(static_cast<int16_t>(offs[4]));
+                        const i16x8 zero = splat8(0), vmax = splat8(static_cast<int16_t>(maxVal));
+                        const i16x8 m2 = splat8(-2), m1 = splat8(-1), p1 = splat8(1), p2 = splat8(2);
                         for (int y = yLo; y < yHi; y++) {
                             const uint16_t* srcRow = origData + (ptrdiff_t)y * stride;
                             uint16_t* dstRow = destData + (ptrdiff_t)y * stride;
-                            for (int x = xLo; x < xHi; x++) {
+                            int x = xLo;
+                            for (; vec && x + 8 <= xHi; x += 8) {
+                                i16x8 c = load8(srcRow + x);
+                                i16x8 a = load8(srcRow + x + nOff1);
+                                i16x8 b = load8(srcRow + x + nOff2);
+                                // A true comparison lane is -1, so (a > c) - (c > a) is
+                                // sign(c - a), and e = edgeIdx - 2.
+                                i16x8 e = ((a > c) - (c > a)) + ((b > c) - (c > b));
+                                i16x8 off = select(e == m2, o0, select(e == m1, o1,
+                                            select(e == p1, o3, select(e == p2, o4, zero))));
+                                store8(dstRow + x, max(zero, min(vmax, c + off)));
+                            }
+                            for (; x < xHi; x++) {
                                 int c_val = srcRow[x];
                                 int a = srcRow[x + nOff1];
                                 int b = srcRow[x + nOff2];
@@ -299,10 +323,30 @@ void apply_sao(DecodingContext& ctx) {
                         const int xHi = std::min(xCtb + nCtbSw, compW);
                         const int yHi = std::min(yCtb + nCtbSh, compH);
 
+                        // Vector form of the table: band k of the 4 is bandPos + k.
+                        // Same int16 bound on c + offset as the edge offset above.
+                        using namespace simd;
+                        const bool vec = bitDepth <= 14;
+                        const int* bo = sao.sao_offset_val[cIdx];
+                        const i16x8 b0 = splat8(static_cast<int16_t>(bandPos));
+                        const i16x8 v0 = splat8(static_cast<int16_t>(bo[0]));
+                        const i16x8 v1 = splat8(static_cast<int16_t>(bo[1]));
+                        const i16x8 v2 = splat8(static_cast<int16_t>(bo[2]));
+                        const i16x8 v3 = splat8(static_cast<int16_t>(bo[3]));
+                        const i16x8 zero = splat8(0), vmax = splat8(static_cast<int16_t>(maxVal));
+                        const i16x8 k1 = splat8(1), k2 = splat8(2), k3 = splat8(3);
                         for (int y = yCtb; y < yHi; y++) {
                             const uint16_t* srcRow = origData + (ptrdiff_t)y * stride;
                             uint16_t* dstRow = destData + (ptrdiff_t)y * stride;
-                            for (int x = xCtb; x < xHi; x++) {
+                            int x = xCtb;
+                            for (; vec && x + 8 <= xHi; x += 8) {
+                                i16x8 c = load8(srcRow + x);
+                                i16x8 k = (c >> bandShift) - b0;
+                                i16x8 off = select(k == zero, v0, select(k == k1, v1,
+                                            select(k == k2, v2, select(k == k3, v3, zero))));
+                                store8(dstRow + x, max(zero, min(vmax, c + off)));
+                            }
+                            for (; x < xHi; x++) {
                                 int sample = srcRow[x];
                                 // & 31 is a no-op while sample <= maxVal, which the
                                 // decoder guarantees; it keeps a corrupt plane or an

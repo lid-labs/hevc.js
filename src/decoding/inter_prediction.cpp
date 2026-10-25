@@ -191,8 +191,8 @@ static bool derive_collocated_mv_at(const DecodingContext& ctx,
     const bool colRefIsLongTerm = colSliceRefs.is_long_term[colList][colMi.ref_idx[colList]] != 0;
 
     MV colMV;
-    colMV.x = colMi.mv_x[colList];
-    colMV.y = colMi.mv_y[colList];
+    colMV.x = colMi.mv[colList].x;
+    colMV.y = colMi.mv[colList].y;
     int colRefPOC = colRefPocs[colMi.ref_idx[colList]];
     if (colRefPOC == Picture::kNoRefPoc) return false;
 

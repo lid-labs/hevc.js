@@ -30,9 +30,11 @@ constexpr int kGridSize = 1 << kGridLog2;
 struct CUInfo {
     PredMode pred_mode = PredMode::MODE_INTRA;
     PartMode part_mode = PartMode::PART_2Nx2N;
-    int log2CbSize = 0;
-    int intra_mode_luma = 1; // DC default
-    int qp_y = 26;
+    // 8 bits each: the grid is filled once per picture, and its size is that
+    // fill's cost. QpY lies in [-QpBdOffsetY, 51].
+    int8_t log2CbSize = 0;
+    int8_t intra_mode_luma = 1; // DC default
+    int8_t qp_y = 26;
     bool is_pcm = false;
     bool cu_transquant_bypass = false;
     bool merge_flag = false;  // Phase 5: for rqt_root_cbf condition
@@ -63,8 +65,8 @@ struct DecodingContext {
 
     // Intra mode storage per PU (for neighbour MPM derivation)
     // Indexed like cu_info but at PU granularity
-    int* intra_pred_mode_y = nullptr;
-    int* intra_pred_mode_c = nullptr;
+    uint8_t* intra_pred_mode_y = nullptr;  // modes 0..34
+    uint8_t* intra_pred_mode_c = nullptr;
     int intra_pred_mode_stride = 0;
 
     // Inter: per-PU motion info at min-PU (4x4) granularity

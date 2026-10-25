@@ -84,8 +84,8 @@ private:
 
     // Decoding context allocations (per-picture)
     std::vector<CUInfo> cu_info_buf_;
-    std::vector<int> intra_mode_buf_;
-    std::vector<int> chroma_mode_buf_;
+    std::vector<uint8_t> intra_mode_buf_;
+    std::vector<uint8_t> chroma_mode_buf_;
     std::vector<PUMotionInfo> motion_info_buf_;
 
     // Phase 6: filter data (per-picture)

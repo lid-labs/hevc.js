@@ -150,14 +150,20 @@ static void build_reference_samples(const DecodingContext& ctx, int x0, int y0,
     // ...
     // Index 4*nTbS: p[2*nTbS-1][-1]
 
+    // Availability only changes from one 4x4 luma block to the next (the
+    // Z-scan granularity above; CUs, CTBs and the picture size are multiples of
+    // it), and TUs are aligned on it: one test per group of `unit` samples.
+    const int unit = (cIdx > 0) ? minBlkSize / sps.SubWidthC : minBlkSize;
+    const int unitY = (cIdx > 0) ? minBlkSize / sps.SubHeightC : minBlkSize;
+
     // Bottom-left to top along left edge
-    for (int k = 0; k < 2 * nTbS; k++) {
-        int refY = yC + 2 * nTbS - 1 - k;
+    for (int k = 0; k < 2 * nTbS; k += unitY) {
         int refX = xC - 1;
-        int idx = k;
-        if (is_reconstructed(refX, refY)) {
-            samples[idx] = static_cast<int16_t>(pic.sample(cIdx, refX, refY));
-            available[idx] = true;
+        if (!is_reconstructed(refX, yC + 2 * nTbS - 1 - k)) continue;
+        for (int j = k; j < k + unitY; j++) {
+            int refY = yC + 2 * nTbS - 1 - j;
+            samples[j] = static_cast<int16_t>(pic.sample(cIdx, refX, refY));
+            available[j] = true;
         }
     }
 
@@ -173,12 +179,12 @@ static void build_reference_samples(const DecodingContext& ctx, int x0, int y0,
     }
 
     // Top edge, left to right, then top-right extension
-    for (int k = 0; k < 2 * nTbS; k++) {
-        int refX = xC + k;
+    for (int k = 0; k < 2 * nTbS; k += unit) {
         int refY = yC - 1;
-        int idx = 2 * nTbS + 1 + k;
-        if (is_reconstructed(refX, refY)) {
-            samples[idx] = static_cast<int16_t>(pic.sample(cIdx, refX, refY));
+        if (!is_reconstructed(xC + k, refY)) continue;
+        for (int j = k; j < k + unit; j++) {
+            int idx = 2 * nTbS + 1 + j;
+            samples[idx] = static_cast<int16_t>(pic.sample(cIdx, xC + j, refY));
             available[idx] = true;
         }
     }
@@ -439,6 +445,8 @@ void perform_intra_prediction(DecodingContext& ctx, int x0, int y0,
                               int16_t* pred_samples) {
     int nTbS = 1 << log2PredSize;
     int bitDepth = (cIdx == 0) ? ctx.sps->BitDepthY : ctx.sps->BitDepthC;
+    // Modes 0..34 index the angle tables; a corrupt stream must not read past them
+    if (intra_mode < 0 || intra_mode > 34) intra_mode = 1;  // INTRA_DC
 
     // Build reference samples
     int16_t refTop[2 * 64 + 1];

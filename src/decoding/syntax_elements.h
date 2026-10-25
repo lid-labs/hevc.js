@@ -118,30 +118,119 @@ int decode_cu_qp_delta(CabacEngine& cabac);
 int decode_transform_skip_flag(CabacEngine& cabac, int cIdx);
 
 // §7.3.8.12 — last_sig_coeff_x_prefix, last_sig_coeff_y_prefix
-int decode_last_sig_coeff_prefix(CabacEngine& cabac, int ctxOffset, int cIdx,
-                                  int log2TrafoSize);
+// Defined below, inline: called once per bin from the coefficient loop.
 
 // §7.3.8.12 — last_sig_coeff_x_suffix, last_sig_coeff_y_suffix
 int decode_last_sig_coeff_suffix(CabacEngine& cabac, int prefix);
 
 // §7.3.8.12 — coded_sub_block_flag
-int decode_coded_sub_block_flag(CabacEngine& cabac, int ctxInc);
+// Defined below, inline: called once per bin from the coefficient loop.
 
 // §7.3.8.12 — sig_coeff_flag
-int decode_sig_coeff_flag(CabacEngine& cabac, int ctxInc);
+// Defined below, inline: called once per bin from the coefficient loop.
 
 // §7.3.8.12 — coeff_abs_level_greater1_flag
-int decode_coeff_abs_level_greater1_flag(CabacEngine& cabac, int ctxSet, int greater1Ctx, int cIdx);
+// Defined below, inline: called once per bin from the coefficient loop.
 
 // §7.3.8.12 — coeff_abs_level_greater2_flag
-int decode_coeff_abs_level_greater2_flag(CabacEngine& cabac, int ctxSet, int cIdx);
+// Defined below, inline: called once per bin from the coefficient loop.
 
 // §7.3.8.12 — coeff_abs_level_remaining (Golomb-Rice + EGk bypass)
-int decode_coeff_abs_level_remaining(CabacEngine& cabac, int cRiceParam);
+// Defined below, inline: called once per bin from the coefficient loop.
 
 // §7.3.8.12 — coeff_sign_flag (bypass)
 inline int decode_coeff_sign_flag(CabacEngine& cabac) {
     return cabac.decode_bypass();
+}
+
+// ============================================================
+// Residual coding syntax elements (§7.3.8.11), inline so that the coefficient
+// loop of residual_coding.cpp does not pay a call per bin
+// ============================================================
+
+inline int decode_last_sig_coeff_prefix(CabacEngine& cabac, int ctxOffset, int cIdx,
+                                  int log2TrafoSize) {
+    // Context index offset and shift depend on component and size
+    int ctxShift, ctxOff;
+    if (cIdx == 0) {
+        // Luma
+        ctxOff = 3 * (log2TrafoSize - 2) + ((log2TrafoSize - 1) >> 2);
+        ctxShift = (log2TrafoSize + 1) >> 2;
+    } else {
+        // Chroma
+        ctxOff = 15;
+        ctxShift = log2TrafoSize - 2;
+    }
+
+    int maxBins = (log2TrafoSize << 1) - 1;
+    int prefix = 0;
+    for (int i = 0; i < maxBins; i++) {
+        int ctxIdx = ctxOffset + ctxOff + (i >> ctxShift);
+        int bin = cabac.decode_decision(ctxIdx);
+        if (bin == 0) break;
+        prefix++;
+    }
+    return prefix;
+}
+
+inline int decode_coded_sub_block_flag(CabacEngine& cabac, int ctxInc) {
+    return cabac.decode_decision(CTX_CODED_SUB_BLOCK_FLAG + ctxInc);
+}
+
+inline int decode_sig_coeff_flag(CabacEngine& cabac, int ctxInc) {
+    return cabac.decode_decision(CTX_SIG_COEFF_FLAG + ctxInc);
+}
+
+inline int decode_coeff_abs_level_greater1_flag(CabacEngine& cabac, int ctxSet,
+                                          int greater1Ctx, int cIdx) {
+    int ctxIdx;
+    if (cIdx == 0) {
+        ctxIdx = CTX_COEFF_ABS_LEVEL_GREATER1 + ctxSet * 4 + greater1Ctx;
+    } else {
+        ctxIdx = CTX_COEFF_ABS_LEVEL_GREATER1 + 16 + ctxSet * 4 + greater1Ctx;
+    }
+    return cabac.decode_decision(ctxIdx);
+}
+
+inline int decode_coeff_abs_level_greater2_flag(CabacEngine& cabac, int ctxSet, int cIdx) {
+    int ctxIdx;
+    if (cIdx == 0) {
+        ctxIdx = CTX_COEFF_ABS_LEVEL_GREATER2 + ctxSet;
+    } else {
+        ctxIdx = CTX_COEFF_ABS_LEVEL_GREATER2 + 4 + (ctxSet & 1);
+    }
+    return cabac.decode_decision(ctxIdx);
+}
+
+inline int decode_coeff_abs_level_remaining(CabacEngine& cabac, int cRiceParam) {
+    // Prefix: unary in bypass
+    int prefix = 0;
+    while (prefix < 4 && cabac.decode_bypass()) {
+        prefix++;
+    }
+
+    if (prefix < 4) {
+        // Suffix: FL with cRiceParam bins
+        int suffix = 0;
+        if (cRiceParam > 0) {
+            suffix = cabac.decode_bypass_bins(cRiceParam);
+        }
+        return (prefix << cRiceParam) + suffix;
+    } else {
+        // EGk suffix with k = cRiceParam + 1
+        // §9.3.3.3: read 1's incrementing k, then 0, then k bits
+        int kStart = cRiceParam + 1;
+        int k = kStart;
+        // Bounded: a conforming level fits in 16 bits (§7.4.9.11), which k
+        // never needs to pass 16 for. Unbounded, a corrupt or desynchronised
+        // stream that keeps decoding 1s here never returns.
+        while (k < 20 && cabac.decode_bypass()) k++;
+        int suffix = cabac.decode_bypass_bins(k);
+        // Reconstruct: sum of (1<<k_j) for each '1' read + final k bits
+        // = (1 << k) - (1 << kStart) + suffix
+        suffix += (1 << k) - (1 << kStart);
+        return (4 << cRiceParam) + suffix;
+    }
 }
 
 } // namespace hevc

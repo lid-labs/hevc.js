@@ -74,6 +74,8 @@ public:
     // Seek to absolute byte position (resets cache).
     // Used by WPP to jump to the start of each substream.
     void seek_to_byte(size_t pos);
+    // Moves to any bit position, as if exactly pos bits had been read
+    void seek_to_bit(size_t pos);
 
     // State
     bool eof() const;

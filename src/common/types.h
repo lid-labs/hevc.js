@@ -23,6 +23,14 @@ struct MV {
     bool operator!=(const MV& other) const { return !(*this == other); }
 };
 
+// Per-PU motion information, stored at min-PU (4x4) granularity
+// Spec: MvLX[x][y], RefIdxLX[x][y], PredFlagLX[x][y] — §8.5.3
+struct PUMotionInfo {
+    MV mv[2] = {};          // mvL0, mvL1 (1/4 pel)
+    int8_t ref_idx[2] = {-1, -1};  // refIdxL0, refIdxL1
+    bool pred_flag[2] = {};  // predFlagL0, predFlagL1
+};
+
 // Chroma format
 enum class ChromaFormat : uint8_t {
     MONOCHROME = 0,
