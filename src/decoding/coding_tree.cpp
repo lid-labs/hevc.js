@@ -29,7 +29,7 @@ void DecodingContext::set_intra_mode(int x, int y, int size, int mode) {
     int n = std::max(1, size / minTbSize);
     for (int j = 0; j < n; j++)
         for (int i = 0; i < n; i++)
-            intra_pred_mode_y[(y0 + j) * intra_pred_mode_stride + (x0 + i)] = mode;
+            intra_pred_mode_y[(y0 + j) * intra_pred_mode_stride + (x0 + i)] = static_cast<uint8_t>(mode);
 }
 
 void DecodingContext::set_chroma_mode(int x, int y, int size, int mode) {
@@ -39,7 +39,7 @@ void DecodingContext::set_chroma_mode(int x, int y, int size, int mode) {
     int n = std::max(1, size / minTbSize);
     for (int j = 0; j < n; j++)
         for (int i = 0; i < n; i++)
-            intra_pred_mode_c[(y0 + j) * intra_pred_mode_stride + (x0 + i)] = mode;
+            intra_pred_mode_c[(y0 + j) * intra_pred_mode_stride + (x0 + i)] = static_cast<uint8_t>(mode);
 }
 
 // ============================================================
