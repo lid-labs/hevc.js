@@ -364,8 +364,10 @@ CoeffExtent decode_residual_coding(DecodingContext& ctx, int x0, int y0,
         // the first in scan order, so the last in sigPos
         int coeff_sign_flag[16];
         const int nSigns = signHidden ? nSig - 1 : nSig;
+        // One batch of bypass bins, first sign in the most significant bit
+        const uint32_t signs = static_cast<uint32_t>(cabac.decode_bypass_bins(nSigns));
         for (int k = 0; k < nSigns; k++)
-            coeff_sign_flag[k] = decode_coeff_sign_flag(cabac);
+            coeff_sign_flag[k] = (signs >> (nSigns - 1 - k)) & 1;
 
         // coeff_abs_level_remaining + reconstruction (spec §7.3.8.11 final loop)
         int sumAbsLevel = 0;

@@ -101,12 +101,18 @@ public:
         return val;
     }
 
-    // Decode multiple bypass bins, MSB first
+    // Decode multiple bypass bins, MSB first. §9.3.4.3.4 repeated n times is
+    // restoring division: as ivlOffset < ivlCurrRange, the n bins are the
+    // quotient of ivlOffset followed by the next n bits, divided by
+    // ivlCurrRange, and the remainder is the new ivlOffset. One division per
+    // 16 bins instead of a loop iteration per bin.
     inline int decode_bypass_bins(int numBins) {
-        int value = 0;
-        for (int i = 0; i < numBins; i++)
-            value = (value << 1) | decode_bypass();
-        return value;
+        uint32_t value = 0;
+        while (numBins > 16) {
+            value = (value << 16) | bypass_chunk(16);
+            numBins -= 16;
+        }
+        return static_cast<int>((value << numBins) | bypass_chunk(numBins));
     }
 
     // §9.3.4.3.5 — Terminate decoding (cold path, stays out-of-line)
@@ -142,6 +148,20 @@ public:
     uint16_t dbg_offset() const { return static_cast<uint16_t>(value_ >> bits_); }
 
 private:
+    // n <= 16 bypass bins at once, see decode_bypass_bins
+    inline uint32_t bypass_chunk(int n) {
+        bits_ -= n;  // kMinBits >= 16 look-ahead bits were available
+        // Below ivlCurrRange << n, so at most 9 + 16 bits
+        const uint32_t v = static_cast<uint32_t>(value_ >> bits_);
+        const uint32_t q = v / ivlCurrRange_;
+        value_ -= static_cast<uint64_t>(q * ivlCurrRange_) << bits_;
+        if (bits_ < kMinBits) refill();
+#ifdef HEVC_DEBUG
+        bin_count_ += n;
+#endif
+        return q;
+    }
+
     // Look-ahead kept at or above kMinBits, enough for one renormalisation
     // (at most 6 bits) or one bypass bin; a refill adds 32, so value_ never
     // holds more than 9 + kMinBits + 31 bits.
