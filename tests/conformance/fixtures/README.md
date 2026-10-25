@@ -124,6 +124,8 @@ and ffmpeg versions, so regenerating may give a stream that no longer does.
 | `SLIST_B_Sony_9.265` | 336K | 832x480 | 65 | scaling lists off, default, or sent in the SPS or PPS | `312b4ebb3e885587d5e12b78aa95977a` |
 | `SLIST_C_Sony_4.265` | 359K | 832x480 | 65 | default scaling lists, or sent in one of two PPS, switched per picture | `61024c25cbd60e9bf86dbe3bc5b9b48b` |
 | `SLIST_D_Sony_9.265` | 346K | 832x480 | 65 | as `SLIST_B`, 4 slices per picture, PPS switched per picture | `8d38ce43b17627ff1f86e526bfb7ffc4` |
+| `TILES_A_Cisco_2.265` | 473K | 1920x1080 | 100 | 5x5 tiles, spacing and loop filtering across tiles drawn per picture, one slice | `946f0771fa87d49f684f96871c9c3c88` |
+| `TILES_B_Cisco_1.265` | 521K | 1920x1080 | 100 | the same, several slices per picture, aligned on tiles | `3382291f2b19ee2d760647d4cc756e95` |
 
 Bitstreams of the HEVC v1 conformance suite, unmodified apart from the extension
 (`.bit` upstream), from
@@ -133,6 +135,12 @@ The MD5 is the one shipped with each stream, computed on the HM reference decode
 All four `SLIST` streams also enable transform skip. None matched its reference MD5
 before #301 (transform skip shift, scaling list coefficient order); with #301 and #306
 (merge candidate pruning) all four do, #300. `SLIST_D_Sony_9.265` is `str.bin` upstream.
+
+The `TILES` streams failed before #233's fix: the decoder started each tile at the next
+byte boundary instead of at its entry point, and kept the CABAC contexts of the previous
+tile. They also cover the deblocking filter's exclusion of tile boundaries when
+`loop_filter_across_tiles_enabled_flag` is 0. Neither enables SAO, so its tile boundary
+check stays unexercised.
 
 The slices of an `RPLM_B` picture have different reference picture lists, which §8.3.4
 builds per slice. It fails on a decoder that builds them once per picture, from the

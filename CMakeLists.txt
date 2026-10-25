@@ -293,6 +293,19 @@ if(BUILD_TESTS AND NOT BUILD_WASM)
     set_tests_properties(oracle_slist_d_sony_9 PROPERTIES LABELS "oracle;phase6;conformance"
         SKIP_RETURN_CODE 2)
 
+    # TILES: 5x5 tiles with spacing and loop_filter_across_tiles_enabled_flag drawn
+    # per picture, one slice (A) or several (B) per picture (#233).
+    add_test(NAME oracle_tiles_a_cisco_2
+        COMMAND ${ORACLE_SCRIPT} ${FIXTURES_DIR}/TILES_A_Cisco_2.265 1920 1080
+            946f0771fa87d49f684f96871c9c3c88 $<TARGET_FILE:hevc-decode>)
+    set_tests_properties(oracle_tiles_a_cisco_2 PROPERTIES LABELS "oracle;phase10;conformance"
+        SKIP_RETURN_CODE 2)
+    add_test(NAME oracle_tiles_b_cisco_1
+        COMMAND ${ORACLE_SCRIPT} ${FIXTURES_DIR}/TILES_B_Cisco_1.265 1920 1080
+            3382291f2b19ee2d760647d4cc756e95 $<TARGET_FILE:hevc-decode>)
+    set_tests_properties(oracle_tiles_b_cisco_1 PROPERTIES LABELS "oracle;phase10;conformance"
+        SKIP_RETURN_CODE 2)
+
     # Real-world bitstreams — Big Buck Bunny (Main profile, full pipeline)
     add_test(NAME oracle_bbb1080_50f
         COMMAND ${ORACLE_SCRIPT} ${FIXTURES_DIR}/bbb1080_50f.265 1920 1080
