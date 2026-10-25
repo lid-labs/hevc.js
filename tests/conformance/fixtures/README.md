@@ -120,11 +120,19 @@ and ffmpeg versions, so regenerating may give a stream that no longer does.
 |------|------|------------|--------|-----------|------------------|
 | `RPLM_A_qualcomm_4.265` | 201K | 416x240 | 300 | reference picture list modification | `011794872709c341880ee42ade036ed3` |
 | `RPLM_B_qualcomm_4.265` | 218K | 416x240 | 300 | the same, several slices per picture | `653ac7c46fa7b9d7d966e3db317eb938` |
+| `SLIST_A_Sony_5.265` | 364K | 832x480 | 65 | scaling lists in the SPS and in one of two PPS, switched per picture | `b00bc5362e6fad1a0e704aad8e69b863` |
+| `SLIST_B_Sony_9.265` | 336K | 832x480 | 65 | scaling lists off, default, or sent in the SPS or PPS | `312b4ebb3e885587d5e12b78aa95977a` |
+| `SLIST_C_Sony_4.265` | 359K | 832x480 | 65 | default scaling lists, or sent in one of two PPS, switched per picture | `61024c25cbd60e9bf86dbe3bc5b9b48b` |
+| `SLIST_D_Sony_9.265` | 346K | 832x480 | 65 | as `SLIST_B`, 4 slices per picture, PPS switched per picture | `8d38ce43b17627ff1f86e526bfb7ffc4` |
 
 Bitstreams of the HEVC v1 conformance suite, unmodified apart from the extension
 (`.bit` upstream), from
 https://www.itu.int/wftp3/av-arch/jctvc-site/bitstream_exchange/draft_conformance/HEVC_v1/.
 The MD5 is the one shipped with each stream, computed on the HM reference decoder output.
+
+All four `SLIST` streams also enable transform skip. None matched its reference MD5
+before #301 (transform skip shift, scaling list coefficient order); with #301 and #306
+(merge candidate pruning) all four do, #300. `SLIST_D_Sony_9.265` is `str.bin` upstream.
 
 The slices of an `RPLM_B` picture have different reference picture lists, which §8.3.4
 builds per slice. It fails on a decoder that builds them once per picture, from the
