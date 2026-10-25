@@ -393,6 +393,19 @@ if(BUILD_TESTS AND NOT BUILD_WASM)
     set_tests_properties(oracle_tusize_a_samsung_1 PROPERTIES LABELS "oracle;phase6;conformance"
         SKIP_RETURN_CODE 2)
 
+    # Long-term references in TMVP, and PPSs that arrive before their SPS (#321).
+    # VPSSPSPPS_A changes resolution every picture; the size only labels a failure.
+    add_test(NAME oracle_rps_e_qualcomm_5
+        COMMAND ${ORACLE_SCRIPT} ${FIXTURES_DIR}/RPS_E_qualcomm_5.265 416 240
+            c30d38bbd7ea483dc7ffe81325118e16 $<TARGET_FILE:hevc-decode>)
+    set_tests_properties(oracle_rps_e_qualcomm_5 PROPERTIES LABELS "oracle;phase6;conformance"
+        SKIP_RETURN_CODE 2)
+    add_test(NAME oracle_vpsspspps_a_mainconcept_1
+        COMMAND ${ORACLE_SCRIPT} ${FIXTURES_DIR}/VPSSPSPPS_A_MainConcept_1.265 176 144
+            1ddf74263cb4953cfdfcf99c563d88ea $<TARGET_FILE:hevc-decode>)
+    set_tests_properties(oracle_vpsspspps_a_mainconcept_1 PROPERTIES LABELS "oracle;phase6;conformance"
+        SKIP_RETURN_CODE 2)
+
     # Real-world bitstreams — Big Buck Bunny (Main profile, full pipeline)
     add_test(NAME oracle_bbb1080_50f
         COMMAND ${ORACLE_SCRIPT} ${FIXTURES_DIR}/bbb1080_50f.265 1920 1080

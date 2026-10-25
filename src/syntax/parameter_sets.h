@@ -48,6 +48,15 @@ private:
     std::array<std::optional<SPS>, 16> sps_;
     std::array<std::optional<PPS>, 64> pps_;
 
+    // §7.4.3.3: a PPS may arrive before the SPS it refers to, and that SPS may be
+    // replaced before the PPS is used — only its activation needs the SPS. The
+    // RBSP is kept, and parsed again at activation when the SPS it was parsed
+    // against has changed since, or was missing.
+    std::array<std::vector<uint8_t>, 64> pps_rbsp_;
+    std::array<uint32_t, 64> pps_sps_generation_{};
+    std::array<uint32_t, 16> sps_generation_{};
+    bool parse_pps_rbsp(int pps_id);
+
     int active_sps_id_ = -1;
     int active_pps_id_ = -1;
 };

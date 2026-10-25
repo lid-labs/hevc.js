@@ -64,6 +64,9 @@ struct Picture {
     static constexpr int32_t kNoRefPoc = -999999;
     struct SliceRefPocs {
         std::vector<int32_t> list[2];
+        // Whether each entry was a long-term reference when this picture was
+        // decoded: TMVP reads it as LongTermRefPic(colPic, ...) (§8.5.3.2.8)
+        std::vector<uint8_t> is_long_term[2];
     };
     std::vector<SliceRefPocs> slice_ref_poc;
     std::vector<uint16_t> ctb_slice_idx;  // slice segment index of each CTB, raster order

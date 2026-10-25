@@ -185,8 +185,10 @@ static bool derive_collocated_mv_at(const DecodingContext& ctx,
     if (colCtb >= colPic->ctb_slice_idx.size()) return false;
     size_t colSlice = colPic->ctb_slice_idx[colCtb];
     if (colSlice >= colPic->slice_ref_poc.size()) return false;
-    const auto& colRefPocs = colPic->slice_ref_poc[colSlice].list[colList];
+    const auto& colSliceRefs = colPic->slice_ref_poc[colSlice];
+    const auto& colRefPocs = colSliceRefs.list[colList];
     if (colMi.ref_idx[colList] >= static_cast<int>(colRefPocs.size())) return false;
+    const bool colRefIsLongTerm = colSliceRefs.is_long_term[colList][colMi.ref_idx[colList]] != 0;
 
     MV colMV;
     colMV.x = colMi.mv_x[colList];
@@ -201,7 +203,14 @@ static bool derive_collocated_mv_at(const DecodingContext& ctx,
     if (!currRef) return false;
     int currRefPOC = currRef->poc;
 
-    mvLXCol = scale_mv(colMV, currPOC, currRefPOC, colPic->poc, colRefPOC);
+    // §8.5.3.2.8: unavailable when exactly one of the two references is
+    // long-term; a long-term reference is never scaled
+    if (currRef->used_for_long_term_ref != colRefIsLongTerm) return false;
+    if (currRef->used_for_long_term_ref) {
+        mvLXCol = colMV;
+    } else {
+        mvLXCol = scale_mv(colMV, currPOC, currRefPOC, colPic->poc, colRefPOC);
+    }
     HEVC_LOG(INTER, "TMVP colQ=(%d,%d) colMV=(%d,%d) scaled=(%d,%d) colRefPOC=%d currPOC=%d currRefPOC=%d colPOC=%d",
              xColQ, yColQ, colMV.x, colMV.y, mvLXCol.x, mvLXCol.y, colRefPOC, ctx.pic->poc, currRefPOC, colPic->poc);
     return true;
