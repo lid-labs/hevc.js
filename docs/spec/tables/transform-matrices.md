@@ -1,8 +1,8 @@
 # Transform Matrices
 
-Matrices de transform inverse pour DCT-II et DST-VII (spec ITU-T H.265, Tables 8-11 a 8-15).
+Inverse transform matrices for DCT-II and DST-VII (spec ITU-T H.265, Tables 8-11 to 8-15).
 
-Les matrices 4x4 (DST et DCT) sont dans `08-06-transform-quant.md`. Ci-dessous les matrices plus grandes.
+The 4x4 matrices (DST and DCT) are in `08-06-transform-quant.md`. The larger matrices follow below.
 
 ## DCT 8x8 (Table 8-13)
 

@@ -1,10 +1,10 @@
 # CABAC Arithmetic Decoder Tables
 
-Tables extraites de la spec ITU-T H.265, section 9.3.4.3.
+Tables extracted from the spec ITU-T H.265, section 9.3.4.3.
 
 ## rangeTabLps[64][4]
 
-Index : `[pStateIdx][qRangeIdx]` ou `qRangeIdx = (ivlCurrRange >> 6) & 3`
+Index: `[pStateIdx][qRangeIdx]` where `qRangeIdx = (ivlCurrRange >> 6) & 3`
 
 ```cpp
 const uint8_t rangeTabLps[64][4] = {
@@ -103,7 +103,7 @@ const uint8_t transIdxLps[64] = {
 };
 ```
 
-## Algorithme decode_decision (§9.3.4.3.2)
+## decode_decision algorithm (§9.3.4.3.2)
 
 ```cpp
 int CabacDecoder::decode_decision(int ctxIdx) {
@@ -137,7 +137,7 @@ int CabacDecoder::decode_decision(int ctxIdx) {
 }
 ```
 
-## Algorithme decode_bypass (§9.3.4.3.4)
+## decode_bypass algorithm (§9.3.4.3.4)
 
 ```cpp
 int CabacDecoder::decode_bypass() {
@@ -151,7 +151,7 @@ int CabacDecoder::decode_bypass() {
 }
 ```
 
-## Algorithme decode_terminate (§9.3.4.3.5)
+## decode_terminate algorithm (§9.3.4.3.5)
 
 ```cpp
 int CabacDecoder::decode_terminate() {
@@ -178,7 +178,7 @@ void CabacDecoder::renormalize() {
 }
 ```
 
-## Initialisation (§9.3.4.3.1)
+## Initialization (§9.3.4.3.1)
 
 ```cpp
 void CabacDecoder::init_decoder(BitstreamReader& bs) {

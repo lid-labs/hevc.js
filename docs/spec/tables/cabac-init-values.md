@@ -1,9 +1,9 @@
 # CABAC Context Initialization Values
 
-Tables d'initialisation des contextes CABAC (spec ITU-T H.265, Tables 9-5 a 9-42).
+CABAC context initialization tables (spec ITU-T H.265, Tables 9-5 to 9-42).
 
-Chaque contexte est initialise avec : `initValue = (slope << 4) | offset`
-La formule d'init : `preCtxState = Clip3(1, 126, ((slope * (SliceQpY - 16)) >> 4) + offset)`
+Each context is initialized with: `initValue = (slope << 4) | offset`
+The init formula: `preCtxState = Clip3(1, 126, ((slope * (SliceQpY - 16)) >> 4) + offset)`
 
 ```cpp
 void init_context(CabacContext& ctx, int initValue, int SliceQpY) {
@@ -23,10 +23,10 @@ void init_context(CabacContext& ctx, int initValue, int SliceQpY) {
 
 ## Convention
 
-Pour chaque table ci-dessous :
-- 3 colonnes : `[I slice][P slice][B slice]`
-- Chaque valeur est un `initValue` (uint8_t)
-- Les tables sont indexees par `ctxIdx` (relatif au debut de la table du syntax element)
+For each table below:
+- 3 columns: `[I slice][P slice][B slice]`
+- Each value is an `initValue` (uint8_t)
+- The tables are indexed by `ctxIdx` (relative to the start of the syntax element's table)
 
 ## Table 9-5 — sao_merge_flag (ctxIdx 0)
 
@@ -270,7 +270,7 @@ const uint8_t initValue_coded_sub_block_flag[3][4] = {
 
 ## Table 9-29 — sig_coeff_flag (ctxIdx 0-43 luma + 0-15 chroma)
 
-Le contexte le plus complexe du CABAC. 44 contextes luma + 16 contextes chroma = 60 total.
+The most complex CABAC context. 44 luma contexts + 16 chroma contexts = 60 total.
 
 ```cpp
 // Luma (44 contexts)
@@ -323,11 +323,11 @@ const uint8_t initValue_coeff_abs_level_greater2[3][6] = {
 };
 ```
 
-## Notes d'implementation
+## Implementation notes
 
-### Nombre total de contextes
+### Total number of contexts
 
-Pour le Main profile :
+For the Main profile:
 - sao_merge_flag : 1
 - sao_type_idx : 1
 - split_cu_flag : 3
@@ -356,11 +356,11 @@ Pour le Main profile :
 - coeff_abs_level_greater1 : 24
 - coeff_abs_level_greater2 : 6
 
-**Total : ~167 contextes** (Main profile)
+**Total: ~167 contexts** (Main profile)
 
 ### cabac_init_flag permutation
 
-Quand `cabac_init_flag == 1` :
-- P slice utilise les init values de B slice
-- B slice utilise les init values de P slice
-- I slice n'est pas affecte
+When `cabac_init_flag == 1`:
+- P slice uses the init values of B slice
+- B slice uses the init values of P slice
+- I slice is not affected

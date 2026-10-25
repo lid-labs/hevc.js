@@ -1,6 +1,6 @@
 # §7.3.1 — NAL Unit Syntax
 
-Spec ref : §7.3.1 (syntax), §7.4.2 (semantics)
+Spec ref: §7.3.1 (syntax), §7.4.2 (semantics)
 
 ## Pseudo-code spec
 
@@ -28,7 +28,7 @@ nal_unit_header() {
 }
 ```
 
-## Traduction C++
+## C++ translation
 
 ```cpp
 struct NalUnitHeader {
@@ -36,13 +36,13 @@ struct NalUnitHeader {
     uint8_t nuh_layer_id;           // 0-63
     uint8_t nuh_temporal_id_plus1;  // 1-7
 
-    // Dérivé (§7.4.2.2)
+    // Derived (§7.4.2.2)
     uint8_t TemporalId() const { return nuh_temporal_id_plus1 - 1; }
 };
 
 struct NalUnit {
     NalUnitHeader header;
-    std::vector<uint8_t> rbsp_data;  // après removal des emulation prevention bytes
+    std::vector<uint8_t> rbsp_data;  // after removal of the emulation prevention bytes
 };
 
 // Parsing
@@ -72,7 +72,7 @@ std::vector<uint8_t> extract_rbsp(const uint8_t* data, size_t size) {
 }
 ```
 
-## Annexe B — Byte Stream Format
+## Annex B — Byte Stream Format
 
 ```
 byte_stream_nal_unit() {
@@ -88,25 +88,25 @@ byte_stream_nal_unit() {
 }
 ```
 
-### Traduction C++ — Start code detection
+### C++ translation — Start code detection
 
 ```cpp
-// Trouver les NAL units dans un byte stream (Annexe B)
+// Find the NAL units in a byte stream (Annex B)
 std::vector<NalUnit> parse_byte_stream(const uint8_t* data, size_t size) {
     std::vector<NalUnit> nalus;
     size_t i = 0;
 
     while (i < size) {
-        // Chercher start code (0x000001 ou 0x00000001)
+        // Look for a start code (0x000001 or 0x00000001)
         size_t start = find_start_code(data, size, i);
         if (start == size) break;
 
-        // Trouver la fin (prochain start code ou fin de données)
+        // Find the end (next start code or end of data)
         size_t end = find_start_code(data, size, start + 3);
-        // Retirer trailing zeros
+        // Remove trailing zeros
         while (end > start + 3 && data[end - 1] == 0x00) end--;
 
-        // Parser le NAL unit
+        // Parse the NAL unit
         NalUnit nalu;
         BitstreamReader bs(data + start, end - start);
         nalu.header = parse_nal_unit_header(bs);
@@ -119,14 +119,14 @@ std::vector<NalUnit> parse_byte_stream(const uint8_t* data, size_t size) {
 }
 ```
 
-## Sémantique clé (§7.4.2)
+## Key semantics (§7.4.2)
 
-- `forbidden_zero_bit` : DOIT être 0, sinon le NAL unit est invalide
-- `nal_unit_type` : détermine le type de RBSP (VPS, SPS, PPS, slice, SEI, etc.)
-- `nuh_layer_id` : 0 pour single-layer (on ne supporte que 0 pour l'instant)
-- `TemporalId = nuh_temporal_id_plus1 - 1` : 0 pour la couche de base
+- `forbidden_zero_bit`: MUST be 0, otherwise the NAL unit is invalid
+- `nal_unit_type`: determines the RBSP type (VPS, SPS, PPS, slice, SEI, etc.)
+- `nuh_layer_id`: 0 for single-layer (only 0 is supported for now)
+- `TemporalId = nuh_temporal_id_plus1 - 1`: 0 for the base layer
 
-### Classification des NAL units
+### NAL unit classification
 
 ```cpp
 bool is_vcl_nal(uint8_t type) { return type <= 31; }
@@ -138,25 +138,25 @@ bool is_rasl_nal(uint8_t type) { return type == 8 || type == 9; }
 bool is_radl_nal(uint8_t type) { return type == 6 || type == 7; }
 ```
 
-## Delimitation des Access Units (§7.4.2.4.4)
+## Access Unit delimitation (§7.4.2.4.4)
 
-Un Access Unit (AU) correspond a une frame decodee. La detection des frontieres d'AU est necessaire pour le decodage frame-by-frame.
+An Access Unit (AU) corresponds to one decoded frame. Detecting AU boundaries is necessary for frame-by-frame decoding.
 
-### Regles de detection
+### Detection rules
 
-Un nouveau AU commence quand l'une de ces conditions est remplie :
+A new AU starts when one of these conditions is met:
 
-1. **AUD** : Un `AUD_NUT` (type 35) marque toujours le debut d'un AU
-2. **Premier VCL** : Un VCL NAL avec `first_slice_segment_in_pic_flag == 1`
-3. **Transition non-VCL -> VCL** : Certains NAL types non-VCL (VPS, SPS, PPS, PREFIX_SEI) apres un VCL NAL indiquent un nouveau AU
+1. **AUD**: An `AUD_NUT` (type 35) always marks the start of an AU
+2. **First VCL**: A VCL NAL with `first_slice_segment_in_pic_flag == 1`
+3. **Non-VCL -> VCL transition**: Certain non-VCL NAL types (VPS, SPS, PPS, PREFIX_SEI) after a VCL NAL indicate a new AU
 
 ```cpp
 bool is_new_access_unit(const NalUnit& prev_vcl, const NalUnit& current) {
-    // AUD est toujours un delimiteur
+    // AUD is always a delimiter
     if (current.header.nal_unit_type == AUD_NUT)
         return true;
 
-    // Les non-VCL NAL types suivants, apres un VCL, indiquent un nouveau AU
+    // The following non-VCL NAL types, after a VCL, indicate a new AU
     if (prev_vcl.valid && !is_vcl_nal(current.header.nal_unit_type)) {
         uint8_t t = current.header.nal_unit_type;
         if (t == VPS_NUT || t == SPS_NUT || t == PPS_NUT ||
@@ -165,10 +165,10 @@ bool is_new_access_unit(const NalUnit& prev_vcl, const NalUnit& current) {
             return true;
     }
 
-    // VCL NAL avec first_slice_segment_in_pic_flag
+    // VCL NAL with first_slice_segment_in_pic_flag
     if (is_vcl_nal(current.header.nal_unit_type)) {
-        // Lire le premier bit du RBSP = first_slice_segment_in_pic_flag
-        return current.rbsp_data[0] & 0x80;  // premier bit du premier byte
+        // Read the first bit of the RBSP = first_slice_segment_in_pic_flag
+        return current.rbsp_data[0] & 0x80;  // first bit of the first byte
     }
 
     return false;
@@ -177,10 +177,10 @@ bool is_new_access_unit(const NalUnit& prev_vcl, const NalUnit& current) {
 
 ## Checklist
 
-- [ ] BitstreamReader avec read_bits, read_u, read_i, byte_aligned, more_rbsp_data
-- [ ] Start code detection (3-byte et 4-byte)
+- [ ] BitstreamReader with read_bits, read_u, read_i, byte_aligned, more_rbsp_data
+- [ ] Start code detection (3-byte and 4-byte)
 - [ ] Emulation prevention byte removal
 - [ ] NAL unit header parsing
 - [ ] Classification helpers (is_vcl, is_irap, etc.)
-- [ ] Tests : parser un bitstream brut et lister les NAL units
-- [ ] Validation : comparer le listing NAL avec libde265 --dump-headers
+- [ ] Tests: parse a raw bitstream and list the NAL units
+- [ ] Validation: compare the NAL listing with libde265 --dump-headers
