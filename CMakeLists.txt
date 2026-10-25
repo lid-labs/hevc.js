@@ -270,6 +270,29 @@ if(BUILD_TESTS AND NOT BUILD_WASM)
     set_tests_properties(oracle_rplm_b_qualcomm_4 PROPERTIES LABELS "oracle;phase5;conformance"
         SKIP_RETURN_CODE 2)
 
+    # SLIST: scaling lists sent in the SPS and the PPS, switched between pictures,
+    # with transform skip on. None matched before #301; all four do with #301 and #306.
+    add_test(NAME oracle_slist_a_sony_5
+        COMMAND ${ORACLE_SCRIPT} ${FIXTURES_DIR}/SLIST_A_Sony_5.265 832 480
+            b00bc5362e6fad1a0e704aad8e69b863 $<TARGET_FILE:hevc-decode>)
+    set_tests_properties(oracle_slist_a_sony_5 PROPERTIES LABELS "oracle;phase6;conformance"
+        SKIP_RETURN_CODE 2)
+    add_test(NAME oracle_slist_b_sony_9
+        COMMAND ${ORACLE_SCRIPT} ${FIXTURES_DIR}/SLIST_B_Sony_9.265 832 480
+            312b4ebb3e885587d5e12b78aa95977a $<TARGET_FILE:hevc-decode>)
+    set_tests_properties(oracle_slist_b_sony_9 PROPERTIES LABELS "oracle;phase6;conformance"
+        SKIP_RETURN_CODE 2)
+    add_test(NAME oracle_slist_c_sony_4
+        COMMAND ${ORACLE_SCRIPT} ${FIXTURES_DIR}/SLIST_C_Sony_4.265 832 480
+            61024c25cbd60e9bf86dbe3bc5b9b48b $<TARGET_FILE:hevc-decode>)
+    set_tests_properties(oracle_slist_c_sony_4 PROPERTIES LABELS "oracle;phase6;conformance"
+        SKIP_RETURN_CODE 2)
+    add_test(NAME oracle_slist_d_sony_9
+        COMMAND ${ORACLE_SCRIPT} ${FIXTURES_DIR}/SLIST_D_Sony_9.265 832 480
+            8d38ce43b17627ff1f86e526bfb7ffc4 $<TARGET_FILE:hevc-decode>)
+    set_tests_properties(oracle_slist_d_sony_9 PROPERTIES LABELS "oracle;phase6;conformance"
+        SKIP_RETURN_CODE 2)
+
     # Real-world bitstreams — Big Buck Bunny (Main profile, full pipeline)
     add_test(NAME oracle_bbb1080_50f
         COMMAND ${ORACLE_SCRIPT} ${FIXTURES_DIR}/bbb1080_50f.265 1920 1080
