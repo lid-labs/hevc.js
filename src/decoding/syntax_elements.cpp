@@ -136,7 +136,8 @@ int decode_cu_qp_delta(CabacEngine& cabac) {
         // Suffix: EG0 bypass
         int k = 0;
         int suffix = 0;
-        while (cabac.decode_bypass()) k++;
+        // Bounded like the EGk loops below: CuQpDeltaVal is a few dozen at most
+        while (k < 20 && cabac.decode_bypass()) k++;
         suffix = (1 << k) - 1 + cabac.decode_bypass_bins(k);
         val = prefix + suffix;
     }
@@ -240,7 +241,10 @@ int decode_coeff_abs_level_remaining(CabacEngine& cabac, int cRiceParam) {
         // §9.3.3.3: read 1's incrementing k, then 0, then k bits
         int kStart = cRiceParam + 1;
         int k = kStart;
-        while (cabac.decode_bypass()) k++;
+        // Bounded: a conforming level fits in 16 bits (§7.4.9.11), which k
+        // never needs to pass 16 for. Unbounded, a corrupt or desynchronised
+        // stream that keeps decoding 1s here never returns.
+        while (k < 20 && cabac.decode_bypass()) k++;
         int suffix = cabac.decode_bypass_bins(k);
         // Reconstruct: sum of (1<<k_j) for each '1' read + final k bits
         // = (1 << k) - (1 << kStart) + suffix
@@ -296,7 +300,9 @@ MV decode_mvd(CabacEngine& cabac) {
     auto decode_eg1 = [&cabac]() -> int {
         int k = 1;
         int absV = 0;
-        while (cabac.decode_bypass()) {
+        // Bounded: an MVD component fits in 16 bits (§7.4.9.9), so k never
+        // needs to pass 16; unbounded, a desynchronised stream never returns
+        while (k < 20 && cabac.decode_bypass()) {
             absV += (1 << k);
             k++;
         }

@@ -351,6 +351,7 @@ struct SpsFields {
     uint32_t num_st_rps = 0;
     bool long_term_present = false;
     uint32_t num_lt_sps = 0;
+    bool vui_with_hrd = false;
 };
 
 // Mirrors the exact read order of SPS::parse for a Main-profile SPS
@@ -404,7 +405,29 @@ static std::vector<uint8_t> build_sps_rbsp(const SpsFields& f) {
     }
     w.put_bit(0);                           // sps_temporal_mvp_enabled_flag
     w.put_bit(0);                           // strong_intra_smoothing_enabled_flag
-    w.put_bit(0);                           // vui_parameters_present_flag
+    w.put_bit(f.vui_with_hrd ? 1 : 0);      // vui_parameters_present_flag
+    if (f.vui_with_hrd) {
+        w.put_bits(0, 8);                   // aspect_ratio .. default_display_window flags
+        w.put_bit(1);                       // vui_timing_info_present_flag
+        w.put_bits(1001, 32);               // vui_num_units_in_tick
+        w.put_bits(30000, 32);              // vui_time_scale
+        w.put_bit(0);                       // vui_poc_proportional_to_timing_flag
+        w.put_bit(1);                       // vui_hrd_parameters_present_flag
+        // hrd_parameters(1, 0): NAL and VCL HRD, one CPB. The all-ones fields
+        // are what a parser that stops here would read as range extension flags.
+        w.put_bit(1); w.put_bit(1);         // nal/vcl_hrd_parameters_present_flag
+        w.put_bit(0);                       // sub_pic_hrd_params_present_flag
+        w.put_bits(15, 4); w.put_bits(15, 4);  // bit_rate_scale, cpb_size_scale
+        w.put_bits(31, 5); w.put_bits(31, 5); w.put_bits(31, 5);  // delay lengths
+        w.put_bit(0);                       // fixed_pic_rate_general_flag
+        w.put_bit(0);                       // fixed_pic_rate_within_cvs_flag
+        w.put_bit(0);                       // low_delay_hrd_flag
+        w.put_ue(0);                        // cpb_cnt_minus1
+        for (int l = 0; l < 2; l++) {       // NAL then VCL sub_layer_hrd_parameters
+            w.put_ue(9999); w.put_ue(9999); w.put_bit(1);
+        }
+        w.put_bit(0);                       // bitstream_restriction_flag
+    }
     w.put_bit(0);                           // sps_extension_present_flag
     return w.finish();
 }
@@ -432,6 +455,19 @@ TEST(SPSValidation, AcceptsValidSpsWithRpsAndLongTerm) {
     ASSERT_TRUE(parse_sps_bytes(build_sps_rbsp(f), sps));
     EXPECT_EQ(sps.num_short_term_ref_pic_sets, 2u);
     EXPECT_EQ(sps.num_long_term_ref_pics_sps, 2u);
+}
+
+// hrd_parameters() sits in the middle of the VUI and the SPS goes on after it:
+// a parser that stopped there read sps_extension_present_flag and the range
+// extension flags out of the HRD fields.
+TEST(SPSValidation, ReadsThroughHrdParametersInVui) {
+    SpsFields f;
+    f.vui_with_hrd = true;
+    SPS sps;
+    ASSERT_TRUE(parse_sps_bytes(build_sps_rbsp(f), sps));
+    EXPECT_TRUE(sps.vui_parameters_present_flag);
+    EXPECT_FALSE(sps.intra_smoothing_disabled_flag);
+    EXPECT_FALSE(sps.cabac_bypass_alignment_enabled_flag);
 }
 
 TEST(SPSValidation, RejectsOversizedWidth) {

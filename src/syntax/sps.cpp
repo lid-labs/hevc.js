@@ -341,9 +341,66 @@ bool ShortTermRefPicSet::parse(BitstreamReader& bs, int stRpsIdx,
 
 // ---- SPS Parsing ----
 
-// Skip VUI parameters — complex, not needed for basic decoding
-// We just skip to the end of the RBSP
-static void skip_vui_parameters(BitstreamReader& bs) {
+// §E.2.3 — sub_layer_hrd_parameters(): read and discarded
+static void skip_sub_layer_hrd_parameters(BitstreamReader& bs, uint32_t cpb_cnt_minus1,
+                                          bool sub_pic_hrd_params_present) {
+    for (uint32_t j = 0; j <= cpb_cnt_minus1; j++) {
+        bs.read_ue();  // bit_rate_value_minus1
+        bs.read_ue();  // cpb_size_value_minus1
+        if (sub_pic_hrd_params_present) {
+            bs.read_ue();  // cpb_size_du_value_minus1
+            bs.read_ue();  // bit_rate_du_value_minus1
+        }
+        bs.read_flag();  // cbr_flag
+    }
+}
+
+// §E.2.2 — hrd_parameters(): not needed for decoding, but it sits in the
+// middle of the VUI, and the SPS goes on after it (sps_extension_present_flag
+// and the range extension flags), so it has to be read through, not skipped.
+static void skip_hrd_parameters(BitstreamReader& bs, bool common_inf_present,
+                                uint32_t max_sub_layers_minus1) {
+    bool nal_hrd = false, vcl_hrd = false, sub_pic_hrd = false;
+    if (common_inf_present) {
+        nal_hrd = bs.read_flag();
+        vcl_hrd = bs.read_flag();
+        if (nal_hrd || vcl_hrd) {
+            sub_pic_hrd = bs.read_flag();
+            if (sub_pic_hrd) {
+                bs.read_bits(8);  // tick_divisor_minus2
+                bs.read_bits(5);  // du_cpb_removal_delay_increment_length_minus1
+                bs.read_flag();   // sub_pic_cpb_params_in_pic_timing_sei_flag
+                bs.read_bits(5);  // dpb_output_delay_du_length_minus1
+            }
+            bs.read_bits(4);  // bit_rate_scale
+            bs.read_bits(4);  // cpb_size_scale
+            if (sub_pic_hrd) bs.read_bits(4);  // cpb_size_du_scale
+            bs.read_bits(5);  // initial_cpb_removal_delay_length_minus1
+            bs.read_bits(5);  // au_cpb_removal_delay_length_minus1
+            bs.read_bits(5);  // dpb_output_delay_length_minus1
+        }
+    }
+    for (uint32_t i = 0; i <= max_sub_layers_minus1; i++) {
+        bool fixed_pic_rate_general = bs.read_flag();
+        bool fixed_pic_rate_within_cvs = true;  // inferred when general is 1
+        if (!fixed_pic_rate_general) fixed_pic_rate_within_cvs = bs.read_flag();
+        bool low_delay_hrd = false;
+        if (fixed_pic_rate_within_cvs) {
+            bs.read_ue();  // elemental_duration_in_tc_minus1
+        } else {
+            low_delay_hrd = bs.read_flag();
+        }
+        uint32_t cpb_cnt_minus1 = 0;
+        if (!low_delay_hrd) cpb_cnt_minus1 = bs.read_ue();
+        // §E.3.2: cpb_cnt_minus1 is 0..31; past that the stream is corrupt
+        if (cpb_cnt_minus1 > 31) return;
+        if (nal_hrd) skip_sub_layer_hrd_parameters(bs, cpb_cnt_minus1, sub_pic_hrd);
+        if (vcl_hrd) skip_sub_layer_hrd_parameters(bs, cpb_cnt_minus1, sub_pic_hrd);
+    }
+}
+
+// §E.2.1 — vui_parameters(): read and discarded, nothing in it affects decoding
+static void skip_vui_parameters(BitstreamReader& bs, uint32_t max_sub_layers_minus1) {
     // aspect_ratio_info_present_flag
     bool aspect_ratio_info_present = bs.read_flag();
     if (aspect_ratio_info_present) {
@@ -399,10 +456,7 @@ static void skip_vui_parameters(BitstreamReader& bs) {
         }
         bool vui_hrd_parameters_present = bs.read_flag();
         if (vui_hrd_parameters_present) {
-            // HRD parameters are very complex — skip the rest
-            // This is safe because HRD is not needed for decoding
-            HEVC_LOG(PARSE, "SPS VUI: HRD parameters present, skipping rest of VUI%s", "");
-            return;
+            skip_hrd_parameters(bs, true, max_sub_layers_minus1);
         }
     }
     // bitstream_restriction_flag
@@ -620,7 +674,7 @@ bool SPS::parse(BitstreamReader& bs) {
 
     vui_parameters_present_flag = bs.read_flag();
     if (vui_parameters_present_flag) {
-        skip_vui_parameters(bs);
+        skip_vui_parameters(bs, sps_max_sub_layers_minus1);
     }
 
     bool sps_extension_present_flag = bs.read_flag();
