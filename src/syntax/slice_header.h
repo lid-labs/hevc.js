@@ -42,6 +42,9 @@ struct SliceHeader {
 
     bool dependent_slice_segment_flag = false;
     uint32_t slice_segment_address = 0;
+    // SliceAddrRs (§7.4.7.1): address of the slice's first CTB, i.e. of its
+    // independent segment; a dependent segment keeps the one it inherits
+    uint32_t SliceAddrRs = 0;
 
     SliceType slice_type = SliceType::I;
 
