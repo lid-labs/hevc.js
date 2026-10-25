@@ -574,7 +574,7 @@ bool decode_slice_segment_data(DecodingContext& ctx, BitstreamReader& bs,
         return decode_wpp_parallel(ctx, bs, substream_byte_pos);
     }
 
-    uint32_t wpp_substream_idx = 0;
+    uint32_t substream_idx = 0;
 
     // Initialize CABAC
     if (!sh.dependent_slice_segment_flag) {
@@ -627,11 +627,22 @@ bool decode_slice_segment_data(DecodingContext& ctx, BitstreamReader& bs,
             if (CtbAddrInTs >= sps.PicSizeInCtbsY) break;
             CtbAddrInRs = pps.CtbAddrTsToRs[CtbAddrInTs];
 
-            // Tile boundary: subset end + byte alignment + CABAC reinit
-            if (pps.tiles_enabled_flag &&
-                pps.TileId[CtbAddrInTs] != pps.TileId[CtbAddrInTs - 1]) {
+            // Tile boundary (§7.3.8.1): each tile is a substream. Seek to its
+            // entry point rather than byte-aligning the reader, which the CABAC
+            // engine has already read past.
+            bool new_tile = pps.tiles_enabled_flag &&
+                pps.TileId[CtbAddrInTs] != pps.TileId[CtbAddrInTs - 1];
+            if (new_tile) {
                 cabac.decode_terminate(); // end_of_subset_one_bit
-                bs.byte_alignment();
+                substream_idx++;
+                if (substream_idx < substream_byte_pos.size()) {
+                    bs.seek_to_byte(substream_byte_pos[substream_idx]);
+                } else {
+                    bs.byte_alignment();
+                }
+                // §9.3.1: a tile starts with freshly initialised contexts
+                cabac.init_contexts(static_cast<int>(sh.slice_type),
+                                    sh.SliceQpY, sh.cabac_init_flag);
                 cabac.init_decoder(bs);
                 // §8.6.1: Reset QpY_prev at first QG in a tile
                 ctx.QpY_prev = sh.SliceQpY;
@@ -645,11 +656,11 @@ bool decode_slice_segment_data(DecodingContext& ctx, BitstreamReader& bs,
                 int prevRs = pps.CtbAddrTsToRs[CtbAddrInTs - 1];
                 int prevRow = prevRs / sps.PicWidthInCtbsY;
                 int curRow  = CtbAddrInRs / sps.PicWidthInCtbsY;
-                if (curRow != prevRow) {
-                    wpp_substream_idx++;
+                if (curRow != prevRow && !new_tile) {
+                    substream_idx++;
                     // Seek to the exact byte position of this substream
-                    if (wpp_substream_idx < substream_byte_pos.size()) {
-                        bs.seek_to_byte(substream_byte_pos[wpp_substream_idx]);
+                    if (substream_idx < substream_byte_pos.size()) {
+                        bs.seek_to_byte(substream_byte_pos[substream_idx]);
                     }
                     cabac.init_decoder(bs);
                     // §8.6.1: Reset QpY_prev at first QG of each CTB row (WPP)
