@@ -144,11 +144,46 @@ bool SliceHeader::parse(BitstreamReader& bs, const SPS& sps, const PPS& pps,
         }
     }
 
-    // The rest is only present for independent slice segments
-    if (dependent_slice_segment_flag) {
-        // Dependent slices inherit most fields from the independent slice
+    // §7.3.6.1: entry points, header extension and alignment end every slice
+    // segment header, dependent ones included
+    auto parse_segment_tail = [&]() -> bool {
+        // Entry point offsets
+        if (pps.tiles_enabled_flag || pps.entropy_coding_sync_enabled_flag) {
+            num_entry_point_offsets = bs.read_ue();
+            // §7.4.7.1: bounded by the CTB count — caps the resize below
+            if (num_entry_point_offsets >= static_cast<uint32_t>(sps.PicSizeInCtbsY)) {
+                HEVC_LOG(PARSE, "Slice rejected: num_entry_point_offsets=%u",
+                         num_entry_point_offsets);
+                return false;
+            }
+            if (num_entry_point_offsets > 0) {
+                uint32_t offset_len_minus1 = bs.read_ue();
+                entry_point_offset_minus1.resize(num_entry_point_offsets);
+                for (uint32_t i = 0; i < num_entry_point_offsets; i++) {
+                    entry_point_offset_minus1[i] = bs.read_bits(static_cast<int>(offset_len_minus1) + 1);
+                }
+            }
+        }
+
+        // Slice segment header extension
+        if (pps.slice_segment_header_extension_present_flag) {
+            uint32_t ext_length = bs.read_ue();
+            for (uint32_t i = 0; i < ext_length; i++) {
+                bs.read_bits(8);  // slice_segment_header_extension_data_byte
+            }
+        }
+
+        // byte_alignment()
+        bs.byte_alignment();
         return true;
+    };
+
+    // The fields up to the entry points are only present for independent
+    // slice segments: dependent ones inherit them from theirs
+    if (dependent_slice_segment_flag) {
+        return parse_segment_tail();
     }
+    SliceAddrRs = slice_segment_address;
 
     // Extra slice header bits (reserved)
     for (int i = 0; i < pps.num_extra_slice_header_bits; i++) {
@@ -417,34 +452,7 @@ bool SliceHeader::parse(BitstreamReader& bs, const SPS& sps, const PPS& pps,
         slice_loop_filter_across_slices_enabled_flag = bs.read_flag();
     }
 
-    // Entry point offsets
-    if (pps.tiles_enabled_flag || pps.entropy_coding_sync_enabled_flag) {
-        num_entry_point_offsets = bs.read_ue();
-        // §7.4.7.1: bounded by the CTB count — caps the resize below
-        if (num_entry_point_offsets >= static_cast<uint32_t>(sps.PicSizeInCtbsY)) {
-            HEVC_LOG(PARSE, "Slice rejected: num_entry_point_offsets=%u",
-                     num_entry_point_offsets);
-            return false;
-        }
-        if (num_entry_point_offsets > 0) {
-            uint32_t offset_len_minus1 = bs.read_ue();
-            entry_point_offset_minus1.resize(num_entry_point_offsets);
-            for (uint32_t i = 0; i < num_entry_point_offsets; i++) {
-                entry_point_offset_minus1[i] = bs.read_bits(static_cast<int>(offset_len_minus1) + 1);
-            }
-        }
-    }
-
-    // Slice segment header extension
-    if (pps.slice_segment_header_extension_present_flag) {
-        uint32_t ext_length = bs.read_ue();
-        for (uint32_t i = 0; i < ext_length; i++) {
-            bs.read_bits(8);  // slice_segment_header_extension_data_byte
-        }
-    }
-
-    // byte_alignment()
-    bs.byte_alignment();
+    if (!parse_segment_tail()) return false;
 
     HEVC_LOG(PARSE, "Slice: type=%d poc_lsb=%d qp=%d addr=%d first=%d dep=%d",
              static_cast<int>(slice_type), slice_pic_order_cnt_lsb, SliceQpY,
