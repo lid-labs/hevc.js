@@ -1335,9 +1335,12 @@ void decode_transform_unit(DecodingContext& ctx, int x0, int y0,
 
     // Luma residual
     if (cbf_luma) {
-        int16_t coefficients[64 * 64] = {};
-        int16_t scaled[64 * 64] = {};
-        int16_t residual[64 * 64] = {};
+        // Left uninitialised: each stage writes the trSize x trSize block it
+        // passes on, and zeroing 64x64 buffers for every TU, 4x4 ones included,
+        // was the largest memset of a profile.
+        int16_t coefficients[64 * 64];
+        int16_t scaled[64 * 64];
+        int16_t residual[64 * 64];
 
         bool transform_skip = false;
         if (pps.transform_skip_enabled_flag && !cu.cu_transquant_bypass &&
@@ -1362,7 +1365,7 @@ void decode_transform_unit(DecodingContext& ctx, int x0, int y0,
         }
 
         // Prediction for luma
-        int16_t pred_samples[64 * 64] = {};
+        int16_t pred_samples[64 * 64];
         if (cu.pred_mode == PredMode::MODE_INTRA) {
             int intra_mode = ctx.intra_mode_at(x0, y0);
             perform_intra_prediction(ctx, x0, y0, log2TrafoSize, 0, intra_mode,
@@ -1381,12 +1384,13 @@ void decode_transform_unit(DecodingContext& ctx, int x0, int y0,
     } else if (cu.pred_mode == PredMode::MODE_INTRA) {
         // No residual but still need intra prediction
         int intra_mode = ctx.intra_mode_at(x0, y0);
-        int16_t pred_samples[64 * 64] = {};
+        int16_t pred_samples[64 * 64];
         perform_intra_prediction(ctx, x0, y0, log2TrafoSize, 0, intra_mode,
                                  pred_samples);
 
         // Reconstruct with zero residual
-        int16_t zero[64 * 64] = {};
+        int16_t zero[64 * 64];
+        std::memset(zero, 0, sizeof(int16_t) * trSize * trSize);
         reconstruct_block(ctx, x0, y0, log2TrafoSize, 0, pred_samples, zero);
 
     }
@@ -1407,9 +1411,9 @@ void decode_transform_unit(DecodingContext& ctx, int x0, int y0,
             for (int cIdx = 1; cIdx <= 2; cIdx++) {
                 bool cbf_c = (cIdx == 1) ? cbf_cb : cbf_cr;
                 if (cbf_c) {
-                    int16_t coefficients[32 * 32] = {};
-                    int16_t scaled[32 * 32] = {};
-                    int16_t residual[32 * 32] = {};
+                    int16_t coefficients[32 * 32];
+                    int16_t scaled[32 * 32];
+                    int16_t residual[32 * 32];
 
                     bool transform_skip = false;
                     if (pps.transform_skip_enabled_flag &&
@@ -1445,7 +1449,7 @@ void decode_transform_unit(DecodingContext& ctx, int x0, int y0,
                     }
 
                     // Chroma prediction
-                    int16_t pred_samples[32 * 32] = {};
+                    int16_t pred_samples[32 * 32];
                     if (cu.pred_mode == PredMode::MODE_INTRA) {
                         int chroma_mode = ctx.chroma_mode_at(xC, yC);
                         perform_intra_prediction(ctx, xC, yC, log2TrafoSizeC, cIdx,
@@ -1464,10 +1468,11 @@ void decode_transform_unit(DecodingContext& ctx, int x0, int y0,
                                      pred_samples, residual);
                 } else if (cu.pred_mode == PredMode::MODE_INTRA) {
                     int chroma_mode = ctx.chroma_mode_at(xC, yC);
-                    int16_t pred_samples[32 * 32] = {};
+                    int16_t pred_samples[32 * 32];
                     perform_intra_prediction(ctx, xC, yC, log2TrafoSizeC, cIdx,
                                             chroma_mode, pred_samples);
-                    int16_t zero[32 * 32] = {};
+                    int16_t zero[32 * 32];
+                    std::memset(zero, 0, sizeof(int16_t) * trSizeC * trSizeC);
                     reconstruct_block(ctx, xC, yC, log2TrafoSizeC, cIdx,
                                      pred_samples, zero);
                 }
