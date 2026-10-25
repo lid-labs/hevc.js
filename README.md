@@ -337,7 +337,7 @@ The WASM build has no threads, so the single-threaded native column is the one t
 How these were measured, to reproduce or re-run:
 
 - Streams: `tests/conformance/fixtures/` and `demo/`, all with SAO enabled — check with `hevc-decode <file> --dump-headers`.
-- Native: Release build, Apple clang 17.0.0, `hevc-decode <file> -o /dev/null`, median of 5 runs of the decode time it prints. There is no runtime switch for the thread count: the 1-thread column comes from a build with `ThreadPool thread_pool_{1};` in `src/decoding/decoder.h`.
+- Native: Release build, Apple clang 17.0.0, `hevc-decode <file> -o /dev/null`, median of 5 runs of the decode time it prints. The 1-thread column comes from a build with `ThreadPool thread_pool_{1};` in `src/decoding/decoder.h`; `HEVC_THREADS=1` now does the same without rebuilding.
 - WASM: the shipped `packages/core/wasm/hevc-decode.wasm` (emsdk 6.0.8), `node tools/bench_wasm.cjs <file> packages/core/wasm` on Node 24.4.1, median of 5 runs of its best-of-3. V8 is Chrome's engine, but this is not a measurement inside Chrome.
 - Transcode: `speedX` (segment duration over transcode time) printed by the unthrottled case of `tests/e2e/compute-cap.spec.ts`, three runs, six segments of 2s.
 
