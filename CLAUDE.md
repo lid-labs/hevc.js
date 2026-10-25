@@ -14,6 +14,8 @@ npm packages under the `@hevcjs` scope:
 - `packages/shaka-plugin/` → `@hevcjs/shaka-plugin` — Shaka Player plugin
   (registers a `Transmuxer` for `hev1`/`hvc1`)
 - `packages/hlsjs-plugin/` → `@hevcjs/hlsjs-plugin` — hls.js plugin
+- `packages/mediabunny-plugin/` → `@hevcjs/mediabunny-plugin` — Mediabunny
+  plugin (registers a custom video decoder; no transcoding)
 
 Each plugin consumes `@hevcjs/core` to play HEVC streams in browsers without
 native HEVC support. The HEVC decoder lives in `src/` (C++ compiled to WASM
