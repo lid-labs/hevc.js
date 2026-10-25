@@ -173,10 +173,10 @@ void apply_sao(DecodingContext& ctx) {
                         const int nOff1 = dy0 * stride + dx0;
                         const int nOff2 = dy1 * stride + dx1;
 
-                        // 8 samples per vector. Samples stay below 2^15 up to 15-bit
-                        // depth, so int16 lanes hold c + offset exactly.
+                        // 8 samples per vector. int16 lanes hold c + offset exactly up
+                        // to 14-bit depth: at most 2^14 - 1 + 31 (§7.4.9.3.2).
                         using namespace simd;
-                        const bool vec = bitDepth <= 15;
+                        const bool vec = bitDepth <= 14;
                         const i16x8 o0 = splat8(static_cast<int16_t>(offs[0]));
                         const i16x8 o1 = splat8(static_cast<int16_t>(offs[1]));
                         const i16x8 o3 = splat8(static_cast<int16_t>(offs[3]));
@@ -324,8 +324,9 @@ void apply_sao(DecodingContext& ctx) {
                         const int yHi = std::min(yCtb + nCtbSh, compH);
 
                         // Vector form of the table: band k of the 4 is bandPos + k.
+                        // Same int16 bound on c + offset as the edge offset above.
                         using namespace simd;
-                        const bool vec = bitDepth <= 15;
+                        const bool vec = bitDepth <= 14;
                         const int* bo = sao.sao_offset_val[cIdx];
                         const i16x8 b0 = splat8(static_cast<int16_t>(bandPos));
                         const i16x8 v0 = splat8(static_cast<int16_t>(bo[0]));
