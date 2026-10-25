@@ -129,6 +129,10 @@ and ffmpeg versions, so regenerating may give a stream that no longer does.
 | `WPP_A_ericsson_MAIN_2.265` | 66K | 416x240 | 48 | WPP with independent and dependent slice segments down to one CTB | `cd7e815eb47e8138fec2185d4de84304` |
 | `WPP_D_ericsson_MAIN_2.265` | 22K | 64x240 | 48 | the same, one CTB wide | `f710612103f386c415be3e6300693451` |
 | `DBLK_D_VIXS_2.265` | 17K | 1280x720 | 8 | slices and dependent slice segments over 4x3 tiles, no loop filtering across slices | `f6f3075edca573f5dfe4e352d26170f1` |
+| `ipcm_B_NEC_3.265` | 6K | 416x240 | 1 | PCM samples on 6 bits | `23a3b7024fd9bc64b946b9961ab0f51e` |
+| `ipcm_C_NEC_3.265` | 6K | 416x240 | 1 | `pcm_loop_filter_disabled_flag` = 1 | `c3e74c399b73a5ab2dbd20523f583464` |
+| `ipcm_D_NEC_3.265` | 6K | 416x240 | 1 | PCM with `cu_transquant_bypass_flag` | `aa64a16240064bc2a90fadf979a62a7b` |
+| `ipcm_E_NEC_2.265` | 5K | 416x240 | 1 | PCM luma on 6 bits, chroma on 8 | `e1cd7a16d3f6a342855044ccba3e41f5` |
 
 Bitstreams of the HEVC v1 conformance suite, unmodified apart from the extension
 (`.bit` upstream), from
@@ -152,6 +156,15 @@ previous segment of the same slice as another slice, WPP rows synced from anothe
 slice's contexts, and the QP predictor restarted at every segment. `WPP_D` also hung
 the parallel WPP path, which now only takes single-segment pictures at least two CTBs
 wide. Each of these causes, put back on its own, makes at least one of the three fail.
+
+The `ipcm` streams failed before #315's fix. Four causes, each failing at least one of
+them when put back on its own: PCM samples coded on fewer bits than the bit depth were
+not shifted up (§8.4.4.1); the CABAC contexts were reset after the samples, where only
+the arithmetic decoder restarts (§9.3.2.5); the reader skipped a whole byte when the
+PCM samples started on a byte boundary, reading `byte_alignment()` (§7.2) instead of
+`pcm_alignment_zero_bit` (§7.3.8.7); and a PCM coding unit skipped the end of the coding
+unit — its QP derivation (§8.6.1), PCM and transquant bypass flags, which the loop
+filters read.
 
 The slices of an `RPLM_B` picture have different reference picture lists, which §8.3.4
 builds per slice. It fails on a decoder that builds them once per picture, from the

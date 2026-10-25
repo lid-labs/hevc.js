@@ -324,6 +324,28 @@ if(BUILD_TESTS AND NOT BUILD_WASM)
     set_tests_properties(oracle_dblk_d_vixs_2 PROPERTIES LABELS "oracle;phase10;conformance"
         SKIP_RETURN_CODE 2)
 
+    # PCM coding units: sample bit depths, alignment, contexts, loop filtering (#315).
+    add_test(NAME oracle_ipcm_b_nec_3
+        COMMAND ${ORACLE_SCRIPT} ${FIXTURES_DIR}/ipcm_B_NEC_3.265 416 240
+            23a3b7024fd9bc64b946b9961ab0f51e $<TARGET_FILE:hevc-decode>)
+    set_tests_properties(oracle_ipcm_b_nec_3 PROPERTIES LABELS "oracle;phase6;conformance"
+        SKIP_RETURN_CODE 2)
+    add_test(NAME oracle_ipcm_c_nec_3
+        COMMAND ${ORACLE_SCRIPT} ${FIXTURES_DIR}/ipcm_C_NEC_3.265 416 240
+            c3e74c399b73a5ab2dbd20523f583464 $<TARGET_FILE:hevc-decode>)
+    set_tests_properties(oracle_ipcm_c_nec_3 PROPERTIES LABELS "oracle;phase6;conformance"
+        SKIP_RETURN_CODE 2)
+    add_test(NAME oracle_ipcm_d_nec_3
+        COMMAND ${ORACLE_SCRIPT} ${FIXTURES_DIR}/ipcm_D_NEC_3.265 416 240
+            aa64a16240064bc2a90fadf979a62a7b $<TARGET_FILE:hevc-decode>)
+    set_tests_properties(oracle_ipcm_d_nec_3 PROPERTIES LABELS "oracle;phase6;conformance"
+        SKIP_RETURN_CODE 2)
+    add_test(NAME oracle_ipcm_e_nec_2
+        COMMAND ${ORACLE_SCRIPT} ${FIXTURES_DIR}/ipcm_E_NEC_2.265 416 240
+            e1cd7a16d3f6a342855044ccba3e41f5 $<TARGET_FILE:hevc-decode>)
+    set_tests_properties(oracle_ipcm_e_nec_2 PROPERTIES LABELS "oracle;phase6;conformance"
+        SKIP_RETURN_CODE 2)
+
     # Real-world bitstreams — Big Buck Bunny (Main profile, full pipeline)
     add_test(NAME oracle_bbb1080_50f
         COMMAND ${ORACLE_SCRIPT} ${FIXTURES_DIR}/bbb1080_50f.265 1920 1080
