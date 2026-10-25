@@ -1,76 +1,76 @@
-# Phase 4E — Transform Inverse + Dequantization
+# Phase 4E — Inverse Transform + Dequantization
 
-## Statut : FAIT (a valider isolement)
+## Status: DONE (to be validated in isolation)
 
-## Objectif
+## Goal
 
-Valider que la chaine dequant → transform inverse → residual est bit-exact.
-Test sur des vecteurs de coefficients connus, sans dependre de CABAC ou du parsing.
+Validate that the dequant → inverse transform → residual chain is bit-exact.
+Test on known coefficient vectors, without depending on CABAC or parsing.
 
 ## Spec refs
 
-- §8.6.1 : Scaling process (dequantization)
-- §8.6.2 : Scaling list derivation
-- §8.6.3 : Transform coefficient scaling (level scale, QP, bit shift)
-- §8.6.4 : Transform inverse (DCT/DST)
-- Table 8-10 : QP chroma mapping (non-linear)
+- §8.6.1: Scaling process (dequantization)
+- §8.6.2: Scaling list derivation
+- §8.6.3: Transform coefficient scaling (level scale, QP, bit shift)
+- §8.6.4: Inverse transform (DCT/DST)
+- Table 8-10: Chroma QP mapping (non-linear)
 
-## Ce qui est implemente (`transform.h`, `transform.cpp`)
+## What is implemented (`transform.h`, `transform.cpp`)
 
-- `perform_dequant()` : scaling matrices 4x4/8x8, level scale table [40,45,51,57,64,72]
-- `perform_transform_inverse()` : DST 4x4 (luma intra only), DCT 4x4/8x8/16x16/32x32
+- `perform_dequant()`: 4x4/8x8 scaling matrices, level scale table [40,45,51,57,64,72]
+- `perform_transform_inverse()`: 4x4 DST (luma intra only), 4x4/8x8/16x16/32x32 DCT
 - Partial butterfly implementation
-- Inter-pass clipping (§8.6.4.2) : clip [-32768, 32767] entre passe V et H
-- Transform skip (bypass transform, shift specifique)
+- Inter-pass clipping (§8.6.4.2): clip [-32768, 32767] between the V and H passes
+- Transform skip (bypass transform, specific shift)
 
-## Points critiques verifies
+## Critical points verified
 
-| Point | Spec | Statut |
+| Point | Spec | Status |
 |-------|------|--------|
-| Clipping inter-passe | §8.6.4.2 | Implemente |
-| Shift1 = 7 (apres V), Shift2 = 20 - BitDepth (apres H) | §8.6.4.2 | Implemente |
-| DST 4x4 pour luma intra seulement | §8.6.4.2 | Implemente |
-| Transform skip shift (15 - BitDepth) | §8.6.4.2 | Implemente |
-| QP chroma mapping table non-lineaire | Table 8-10 | Implemente |
-| Scaling list defaults (non-flat pour 8x8+) | §7.4.5 | Implemente |
+| Inter-pass clipping | §8.6.4.2 | Implemented |
+| Shift1 = 7 (after V), Shift2 = 20 - BitDepth (after H) | §8.6.4.2 | Implemented |
+| 4x4 DST for luma intra only | §8.6.4.2 | Implemented |
+| Transform skip shift (15 - BitDepth) | §8.6.4.2 | Implemented |
+| Non-linear chroma QP mapping table | Table 8-10 | Implemented |
+| Scaling list defaults (non-flat for 8x8+) | §7.4.5 | Implemented |
 
-## Tests existants
+## Existing tests
 
-Valides indirectement par les 3 toy tests pixel-perfect.
-Pas de test unitaire isole.
+Validated indirectly by the 3 pixel-perfect toy tests.
+No isolated unit test.
 
-## Tests a ajouter
+## Tests to add
 
-### 1. DCT inverse round-trip
-Generer des coefficients connus → dequant → transform inverse → verifier le residual.
+### 1. Inverse DCT round-trip
+Generate known coefficients → dequant → inverse transform → check the residual.
 ```cpp
-// Coefficients : seul le DC est non-zero (cas simple)
+// Coefficients: only the DC is non-zero (simple case)
 int16_t coeffs[16] = {100, 0, 0, ..., 0};
 perform_dequant(..., qp, coeffs, scaled);
 perform_transform_inverse(2, 0, true, false, 8, scaled, residual);
-// Verifier que residual[i] == valeur attendue (calculee a la main)
+// Check that residual[i] == expected value (computed by hand)
 ```
 
-### 2. Clipping inter-passe
-Coefficients qui produisent des valeurs intermediaires > 32767 ou < -32768.
-Verifier que le clipping est applique correctement.
+### 2. Inter-pass clipping
+Coefficients that produce intermediate values > 32767 or < -32768.
+Check that the clipping is applied correctly.
 
-### 3. QP chroma mapping
-Verifier la table non-lineaire pour qPi dans [30, 43].
+### 3. Chroma QP mapping
+Check the non-linear table for qPi in [30, 43].
 
 ### 4. Transform skip
-Coefficients avec transform_skip=1 → residual = (coeffs + round) >> shift.
+Coefficients with transform_skip=1 → residual = (coeffs + round) >> shift.
 
-## Taches
+## Tasks
 
-- [ ] Creer `tests/unit/test_transform.cpp`
-- [ ] Test DCT inverse 4x4 (DST) avec coefficients connus
-- [ ] Test DCT inverse 8x8 avec coefficients connus
-- [ ] Test clipping inter-passe
-- [ ] Test QP chroma mapping table
-- [ ] Test transform skip
+- [ ] Create `tests/unit/test_transform.cpp`
+- [ ] Inverse DCT 4x4 (DST) test with known coefficients
+- [ ] Inverse DCT 8x8 test with known coefficients
+- [ ] Inter-pass clipping test
+- [ ] Chroma QP mapping table test
+- [ ] Transform skip test
 
-## Critere de sortie
+## Exit criterion
 
-- [ ] 6+ tests passent dans test_transform.cpp
-- [ ] Le residual pour un jeu de coefficients connus est bit-exact
+- [ ] 6+ tests pass in test_transform.cpp
+- [ ] The residual for a set of known coefficients is bit-exact

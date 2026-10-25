@@ -1,80 +1,80 @@
-# Phase 7 — Profils Supérieurs (Main 10, 4:2:2, 4:4:4)
+# Phase 7 — Higher Profiles (Main 10, 4:2:2, 4:4:4)
 
-## Objectif
-Étendre le décodeur au-delà de Main profile pour supporter 4K@60fps.
+## Goal
+Extend the decoder beyond the Main profile to support 4K@60fps.
 
-## Prérequis
-Phase 6 complétée (Main profile pixel-perfect).
+## Prerequisites
+Phase 6 completed (Main profile pixel-perfect).
 
 ## Spec refs
-- Annexe A : Profiles, tiers, levels (Tables A.1-A.8)
+- Annex A : Profiles, tiers, levels (Tables A.1-A.8)
 - §7.3.3.1 : SPS range extension flags
-- Modifications bit depth dans §8.5, §8.6, §8.7
+- Bit depth changes in §8.5, §8.6, §8.7
 
-## Tâches
+## Tasks
 
 ### 7.1 — Main 10 (10-bit 4:2:0)
-- [ ] Étendre tous les buffers de 8-bit à 16-bit (template ou runtime)
-- [ ] Adapter `BitDepthY`, `BitDepthC` = 10
-- [ ] Adapter `QpBdOffsetY`, `QpBdOffsetC` = 12
-- [ ] Vérifier tous les shifts/rounding dans :
+- [ ] Extend all buffers from 8-bit to 16-bit (template or runtime)
+- [ ] Adapt `BitDepthY`, `BitDepthC` = 10
+- [ ] Adapt `QpBdOffsetY`, `QpBdOffsetC` = 12
+- [ ] Check all shifts/rounding in:
   - Intra prediction
   - Inter prediction (interpolation filters)
-  - Transform inverse
+  - Inverse transform
   - Dequantization
-  - Deblocking (beta, tC tables avec offset)
+  - Deblocking (beta, tC tables with offset)
   - SAO
-- [ ] Output YUV 10-bit (2 bytes par sample, little-endian)
-- [ ] Tests pixel-perfect sur bitstreams Main 10
+- [ ] 10-bit YUV output (2 bytes per sample, little-endian)
+- [ ] Pixel-perfect tests on Main 10 bitstreams
 
 ### 7.2 — Main 4:2:2 10
 - [ ] Support `chroma_format_idc == 2`
 - [ ] `SubWidthC = 2`, `SubHeightC = 1`
-- [ ] Adapter l'interpolation chroma (MV derivation change)
-- [ ] Adapter le deblocking chroma (edges horizontales changent)
-- [ ] Adapter SAO chroma (taille des CTU chroma change)
-- [ ] Adapter les dimensions des buffers chroma
-- [ ] Tests pixel-perfect sur bitstreams 4:2:2
+- [ ] Adapt chroma interpolation (MV derivation changes)
+- [ ] Adapt chroma deblocking (horizontal edges change)
+- [ ] Adapt chroma SAO (chroma CTU size changes)
+- [ ] Adapt the chroma buffer dimensions
+- [ ] Pixel-perfect tests on 4:2:2 bitstreams
 
 ### 7.3 — Main 4:4:4
 - [ ] Support `chroma_format_idc == 3`
 - [ ] `SubWidthC = 1`, `SubHeightC = 1`
-- [ ] Chroma traitée comme luma (mêmes filtres d'interpolation 8-tap)
-- [ ] Intra prediction chroma identique à luma (35 modes)
-- [ ] separate_colour_plane_flag (si supporté)
-- [ ] Tests pixel-perfect
+- [ ] Chroma treated as luma (same 8-tap interpolation filters)
+- [ ] Chroma intra prediction identical to luma (35 modes)
+- [ ] separate_colour_plane_flag (if supported)
+- [ ] Pixel-perfect tests
 
-### 7.4 — Niveaux élevés
+### 7.4 — High levels
 - [ ] Level 5.0 : MaxLumaPs = 8,912,896 (4K@30)
 - [ ] Level 5.1 : MaxLumaPs = 8,912,896 (4K@60)
-- [ ] DPB sizing correct pour ces niveaux
-- [ ] Bitrate max : 25-40 Mbps Main tier
-- [ ] Vérifier que les buffers ne dépassent pas les limites mémoire raisonnables
+- [ ] Correct DPB sizing for these levels
+- [ ] Max bitrate : 25-40 Mbps Main tier
+- [ ] Check that the buffers do not exceed reasonable memory limits
 
 ### 7.5 — Tiles
-- [ ] Multi-tile support (déjà parsé en Phase 3)
-- [ ] Scan order CtbAddrRs -> CtbAddrTs correct
-- [ ] Indépendance CABAC entre tiles
+- [ ] Multi-tile support (already parsed in Phase 3)
+- [ ] Correct CtbAddrRs -> CtbAddrTs scan order
+- [ ] CABAC independence between tiles
 - [ ] Entry point offsets
 - [ ] loop_filter_across_tiles_enabled_flag
 
 ### 7.6 — WPP (Wavefront Parallel Processing)
 - [ ] entropy_coding_sync_enabled_flag
-- [ ] Sauvegarde/restauration des contextes CABAC en début de ligne CTU
+- [ ] Save/restore of the CABAC contexts at the start of a CTU row
 - [ ] Entry point offsets
-- [ ] Préparation pour le parallélisme WASM (Phase 9)
+- [ ] Preparation for WASM parallelism (Phase 9)
 
-### 7.7 — Scaling Lists (si non fait en Phase 4)
-- [ ] Parsing complet des scaling lists (§7.3.4)
-- [ ] Application dans le processus de scaling (§8.6.2)
-- [ ] Matrices par défaut pour chaque taille
+### 7.7 — Scaling Lists (if not done in Phase 4)
+- [ ] Complete parsing of the scaling lists (§7.3.4)
+- [ ] Application in the scaling process (§8.6.2)
+- [ ] Default matrices for each size
 
-## Critère de sortie
+## Exit criterion
 
-- Pixel-perfect sur bitstreams de conformité Main 10
-- Pixel-perfect sur bitstreams 4:2:2 (si bitstreams disponibles)
-- Pixel-perfect sur bitstreams 4:4:4 (si bitstreams disponibles)
-- Décodage fonctionnel de contenu 4K (Level 5.0/5.1)
+- Pixel-perfect on Main 10 conformance bitstreams
+- Pixel-perfect on 4:2:2 bitstreams (if bitstreams are available)
+- Pixel-perfect on 4:4:4 bitstreams (if bitstreams are available)
+- Working decoding of 4K content (Level 5.0/5.1)
 
-## Estimation de complexité
-Modérée. La plupart du code existe déjà (Main profile). Les modifications sont principalement des adaptations de bit depth et chroma format.
+## Complexity estimate
+Moderate. Most of the code already exists (Main profile). The changes are mainly bit depth and chroma format adaptations.

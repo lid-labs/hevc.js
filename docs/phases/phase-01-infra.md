@@ -1,63 +1,63 @@
 # Phase 1 — Infrastructure
 
-## Objectif
-Mettre en place le projet, la toolchain, le CI, et l'oracle de test.
+## Goal
+Set up the project, the toolchain, the CI, and the test oracle.
 
-## Prérequis
-Aucun (première phase).
+## Prerequisites
+None (first phase).
 
-## Tâches
+## Tasks
 
-### 1.1 — Initialisation du projet
-- [ ] Structure de dossiers (src/, tests/, tools/, docs/)
-- [ ] CMakeLists.txt principal avec options :
-  - `BUILD_TESTS` (ON par défaut)
-  - `BUILD_WASM` (OFF par défaut)
-  - `HEVC_DEBUG` (ON en Debug)
+### 1.1 — Project initialization
+- [ ] Folder structure (src/, tests/, tools/, docs/)
+- [ ] Main CMakeLists.txt with options:
+  - `BUILD_TESTS` (ON by default)
+  - `BUILD_WASM` (OFF by default)
+  - `HEVC_DEBUG` (ON in Debug)
 - [ ] `.gitignore` (build/, *.o, *.wasm, *.yuv)
-- [ ] README.md minimal
+- [ ] Minimal README.md
 
-### 1.2 — Toolchain C++
+### 1.2 — C++ toolchain
 - [ ] C++17 standard
-- [ ] Clang ou GCC comme compilateur natif
-- [ ] Warnings stricts : `-Wall -Wextra -Wpedantic -Werror`
-- [ ] AddressSanitizer en mode Debug
-- [ ] Emscripten toolchain file pour WASM
+- [ ] Clang or GCC as the native compiler
+- [ ] Strict warnings: `-Wall -Wextra -Wpedantic -Werror`
+- [ ] AddressSanitizer in Debug mode
+- [ ] Emscripten toolchain file for WASM
 
 ### 1.3 — Google Test
-- [ ] FetchContent ou submodule pour Google Test
+- [ ] FetchContent or submodule for Google Test
 - [ ] CMake `add_test` setup
-- [ ] Premier test trivial qui passe
+- [ ] First trivial test that passes
 
-### 1.4 — Oracle ffmpeg
-- [ ] Vérifier que `ffmpeg` est installé (decode la référence YUV)
-- [ ] Script `tools/oracle_test.sh` — decode avec hevc-decode, compare MD5 avec référence ffmpeg
-- [ ] Script `tools/oracle_compare.py` — comparaison YUV pixel-perfect
-- [ ] Script `tools/fetch_conformance.sh` — téléchargement bitstreams de test
+### 1.4 — ffmpeg oracle
+- [ ] Check that `ffmpeg` is installed (decodes the reference YUV)
+- [ ] `tools/oracle_test.sh` script — decodes with hevc-decode, compares the MD5 against the ffmpeg reference
+- [ ] `tools/oracle_compare.py` script — pixel-perfect YUV comparison
+- [ ] `tools/fetch_conformance.sh` script — downloads test bitstreams
 
-### 1.5 — CI GitHub Actions
-- [ ] Workflow `build.yml` : build natif (Linux, macOS)
-- [ ] Workflow `build-wasm.yml` : build Emscripten
-- [ ] Workflow `test.yml` : exécution des tests unitaires
-- [ ] Cache des dépendances (Google Test, Emscripten)
+### 1.5 — GitHub Actions CI
+- [ ] `build.yml` workflow: native build (Linux, macOS)
+- [ ] `build-wasm.yml` workflow: Emscripten build
+- [ ] `test.yml` workflow: unit test execution
+- [ ] Dependency cache (Google Test, Emscripten)
 
-### 1.6 — Structures de données fondamentales
-- [ ] `BitstreamReader` : lecture de bits depuis un buffer
+### 1.6 — Fundamental data structures
+- [ ] `BitstreamReader`: bit reading from a buffer
   - `read_bits(n)`, `read_u(n)`, `read_ue()`, `read_se()`, `read_flag()`
   - `byte_aligned()`, `more_rbsp_data()`
-  - Tests unitaires complets
-- [ ] Types de base : `Pixel` (template 8/16 bit), dimensions, coordonnées
-- [ ] `Picture` : buffer YUV avec stride, bit depth, chroma format
+  - Complete unit tests
+- [ ] Base types: `Pixel` (8/16-bit template), dimensions, coordinates
+- [ ] `Picture`: YUV buffer with stride, bit depth, chroma format
 
-## Critère de sortie
+## Exit criterion
 
-- Le projet compile en natif et WASM sans erreurs
-- Les tests passent (y compris le test BitstreamReader)
-- L'oracle fonctionne avec un fichier YUV de test
-- Le CI est vert
+- The project compiles natively and to WASM without errors
+- The tests pass (including the BitstreamReader test)
+- The oracle works with a test YUV file
+- The CI is green
 
-## Validation oracle
-Pas de comparaison pixel à ce stade. Validation par tests unitaires seulement.
+## Oracle validation
+No pixel comparison at this stage. Validation by unit tests only.
 
-## Estimation de complexité
-Modérée. Principalement du setup, mais le BitstreamReader et Picture sont fondamentaux.
+## Complexity estimate
+Moderate. Mostly setup, but BitstreamReader and Picture are fundamental.

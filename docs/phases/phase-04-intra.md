@@ -1,37 +1,37 @@
 # Phase 4 — Intra Prediction (I-frames)
 
-## Objectif
+## Goal
 
-Decoder des frames I-only completes : CABAC + quad-tree + intra prediction + transform + reconstruction.
-Pixel-perfect vs ffmpeg sur `i_64x64_qp22.265`.
+Decode complete I-only frames: CABAC + quad-tree + intra prediction + transform + reconstruction.
+Pixel-perfect vs ffmpeg on `i_64x64_qp22.265`.
 
-## Prerequis
+## Prerequisites
 
-Phase 3 completee (parameter sets et slice headers parses).
-HM reference decoder compile dans `/tmp/HM` avec tracing per-bin.
+Phase 3 completed (parameter sets and slice headers parsed).
+HM reference decoder compiled in `/tmp/HM` with per-bin tracing.
 
 ## Spec refs
 
-- §9 : CABAC (tout le chapitre)
-- §7.3.8-13 : Slice data syntax (CTU, CU, PU, TU, residual_coding)
-- §8.4 : Intra prediction (35 modes)
-- §8.6 : Transform inverse + scaling (dequant)
+- §9: CABAC (the whole chapter)
+- §7.3.8-13: Slice data syntax (CTU, CU, PU, TU, residual_coding)
+- §8.4: Intra prediction (35 modes)
+- §8.6: Inverse transform + scaling (dequant)
 
-## Decoupe en sous-phases
+## Split into sub-phases
 
-La phase 4 est decoupee en **6 sous-phases independamment verifiables**.
-Chaque sous-phase a ses propres tests unitaires qui valident SANS dependre de l'oracle full-frame.
+Phase 4 is split into **6 independently verifiable sub-phases**.
+Each sub-phase has its own unit tests that validate WITHOUT depending on the full-frame oracle.
 
-| Sous-phase | Fichier | Statut | Critere de sortie |
+| Sub-phase | File | Status | Exit criterion |
 |------------|---------|--------|-------------------|
-| 4A — CABAC Engine | `phase-04a-cabac.md` | **Fait** | 7 tests unitaires passent |
-| 4B — Coding Tree | `phase-04b-coding-tree.md` | **A valider** | Sequence de syntax elements identique a HM |
-| 4C — Residual Contexts | `phase-04c-residual-contexts.md` | **A valider** | Tous les `derive_*_ctx()` matchent HM |
-| 4D — Coefficient Parsing | `phase-04d-coefficient-parsing.md` | **A valider** | Coefficients TU identiques a HM |
-| 4E — Transform + Dequant | `phase-04e-transform-dequant.md` | **Fait** | Tests sur matrices connues |
-| 4F — Prediction + Recon | `phase-04f-prediction-recon.md` | **Fait** | 3 toy tests pixel-perfect |
+| 4A — CABAC Engine | `phase-04a-cabac.md` | **Done** | 7 unit tests pass |
+| 4B — Coding Tree | `phase-04b-coding-tree.md` | **To validate** | Syntax element sequence identical to HM |
+| 4C — Residual Contexts | `phase-04c-residual-contexts.md` | **To validate** | All `derive_*_ctx()` match HM |
+| 4D — Coefficient Parsing | `phase-04d-coefficient-parsing.md` | **To validate** | TU coefficients identical to HM |
+| 4E — Transform + Dequant | `phase-04e-transform-dequant.md` | **Done** | Tests on known matrices |
+| 4F — Prediction + Recon | `phase-04f-prediction-recon.md` | **Done** | 3 pixel-perfect toy tests |
 
-## Ordre d'execution
+## Execution order
 
 ```
 4A (CABAC)  ──→  4B (Coding Tree)  ──→  4C (Residual Contexts)
@@ -48,14 +48,14 @@ Chaque sous-phase a ses propres tests unitaires qui valident SANS dependre de l'
                  Oracle: i_64x64_qp22 pixel-perfect
 ```
 
-## Principe : valider chaque couche AVANT d'integrer
+## Principle: validate each layer BEFORE integrating
 
-Le piege de la Phase 4 est le couplage : une erreur de contexte CABAC corrompt l'etat arithmetique, ce qui fait diverger TOUS les bins suivants. Debugger au niveau oracle (YUV pixel-perfect) est alors extremement lent.
+The pitfall of Phase 4 is coupling: a CABAC context error corrupts the arithmetic state, which makes ALL the following bins diverge. Debugging at the oracle level (pixel-perfect YUV) is then extremely slow.
 
-La solution : valider chaque couche en isolation avec des tests unitaires qui comparent directement avec HM, AVANT de lancer le decode complet.
+The solution: validate each layer in isolation with unit tests that compare directly with HM, BEFORE running the full decode.
 
-## Critere de sortie final
+## Final exit criterion
 
-- `oracle_i_64x64_qp22` passe (MD5 match)
-- Tous les tests unitaires des sous-phases passent
-- `ctest -L phase4 --output-on-failure` : 0 failures
+- `oracle_i_64x64_qp22` passes (MD5 match)
+- All the sub-phase unit tests pass
+- `ctest -L phase4 --output-on-failure`: 0 failures

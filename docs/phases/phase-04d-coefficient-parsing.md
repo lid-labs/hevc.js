@@ -1,83 +1,83 @@
 # Phase 4D — Coefficient Parsing
 
-## Statut : A VALIDER
+## Status: TO VALIDATE
 
-## Objectif
+## Goal
 
-Valider que les coefficients decodes (avant dequant) sont IDENTIQUES a HM, TU par TU.
-Ceci integre 4A (CABAC), 4B (coding tree), 4C (contexts) et la logique de parsing
+Validate that the decoded coefficients (before dequant) are IDENTICAL to HM, TU by TU.
+This integrates 4A (CABAC), 4B (coding tree), 4C (contexts) and the parsing logic
 (scan order, coded_sub_block_flag, sig_coeff_flag, levels, sign).
 
-## Prerequis
+## Prerequisites
 
-- 4B (coding tree) valide : la sequence de syntax elements est correcte
-- 4C (residual contexts) valide : chaque derive_*_ctx produit le bon index
+- 4B (coding tree) validated: the syntax element sequence is correct
+- 4C (residual contexts) validated: each derive_*_ctx produces the right index
 
 ## Spec refs
 
-- §7.3.8.11 : residual_coding (spec)
-- §9.3.3.5 : last_sig_coeff prefix binarization
-- §9.3.3.11 : coeff_abs_level_remaining (Golomb-Rice + EGk)
-- §7.4.9.11 : Sign data hiding
+- §7.3.8.11: residual_coding (spec)
+- §9.3.3.5: last_sig_coeff prefix binarization
+- §9.3.3.11: coeff_abs_level_remaining (Golomb-Rice + EGk)
+- §7.4.9.11: Sign data hiding
 
-## Ce qui est implemente
+## What is implemented
 
-`residual_coding.cpp` : decode complet avec scan orders (diag/horiz/vert),
+`residual_coding.cpp`: complete decode with scan orders (diag/horiz/vert),
 sub-block scanning, sig_coeff_flag, greater1/2, sign, remaining, sign hiding.
 
-## Elements a valider
+## Elements to validate
 
 ### 1. Scan order derivation
-- `derive_scan_idx()` : luma 4x4 et chroma 4x4 utilisent le mode intra pour choisir diag/horiz/vert
-- Tous les autres : diagonal
-- Verifier contre HM `TComTrQuant::getCodingParameters()`
+- `derive_scan_idx()`: luma 4x4 and chroma 4x4 use the intra mode to choose diag/horiz/vert
+- All others: diagonal
+- Check against HM `TComTrQuant::getCodingParameters()`
 
 ### 2. Last significant coefficient position
-- Prefix binarization avec truncated unary
-- Suffix avec fixed-length bypass bins
-- `maxBins = (log2TrafoSize << 1) - 1` pour X et Y separement
-- Verifier que le bon log2TrafoSize est utilise (luma vs chroma)
+- Prefix binarization with truncated unary
+- Suffix with fixed-length bypass bins
+- `maxBins = (log2TrafoSize << 1) - 1` for X and Y separately
+- Check that the right log2TrafoSize is used (luma vs chroma)
 
 ### 3. Coefficient levels
-- `coeff_abs_level_greater1_flag` : max 8 par sub-block, ctxSet rotation
-- `coeff_abs_level_greater2_flag` : 1 seul par sub-block (au lastGreater1ScanPos)
-- `coeff_abs_level_remaining` : Golomb-Rice avec cRiceParam adaptatif
-- `prevGreater1Ctx` : carry entre sub-blocks (§9.3.4.2.6)
+- `coeff_abs_level_greater1_flag`: max 8 per sub-block, ctxSet rotation
+- `coeff_abs_level_greater2_flag`: only 1 per sub-block (at lastGreater1ScanPos)
+- `coeff_abs_level_remaining`: Golomb-Rice with adaptive cRiceParam
+- `prevGreater1Ctx`: carry between sub-blocks (§9.3.4.2.6)
 
 ### 4. Sign data hiding
-- Condition : `sign_data_hiding_enabled_flag && (lastSigScanPos - firstSigScanPos > 3)`
-- Le signe du premier coeff significatif est derive de la parite de la somme
+- Condition: `sign_data_hiding_enabled_flag && (lastSigScanPos - firstSigScanPos > 3)`
+- The sign of the first significant coeff is derived from the parity of the sum
 
-## Methode de validation
+## Validation method
 
-### Test : extraire les coefficients de HM et comparer
+### Test: extract the coefficients from HM and compare
 
-1. Ajouter dans HM (TDecSbac.cpp, apres parseCoeffNxN) :
+1. Add in HM (TDecSbac.cpp, after parseCoeffNxN):
 ```cpp
 fprintf(stderr, "[HM_COEFF] (%d,%d) log2=%d cIdx=%d", x0, y0, log2, cIdx);
 for (int i = 0; i < trSize*trSize; i++) fprintf(stderr, " %d", coefficients[i]);
 fprintf(stderr, "\n");
 ```
 
-2. Ajouter la meme trace dans notre `decode_residual_coding()` apres le remplissage de `coefficients[]`
+2. Add the same trace in our `decode_residual_coding()` after the `coefficients[]` array is filled
 
-3. Comparer les deux traces : la premiere TU differente pointe au bug
+3. Compare the two traces: the first differing TU points at the bug
 
-### Test unitaire : coefficients connus
+### Unit test: known coefficients
 
-Creer des bitstreams minimalistes (1 CU, 1 TU) et verifier les coefficients extraits
-contre les valeurs attendues (calculees a la main ou extraites de HM).
+Create minimal bitstreams (1 CU, 1 TU) and check the extracted coefficients
+against the expected values (computed by hand or extracted from HM).
 
-## Taches
+## Tasks
 
-- [ ] Ajouter trace coefficients dans notre decodeur
-- [ ] Ajouter trace equivalente dans HM
-- [ ] Comparer pour i_64x64_qp22 : trouver la premiere TU differente
-- [ ] Si divergence : identifier si c'est le scan, les levels, le sign, ou le cRiceParam
-- [ ] Fixer le(s) bug(s)
-- [ ] Test unitaire : au moins 5 TU avec coefficients verifies
+- [ ] Add a coefficient trace in our decoder
+- [ ] Add the equivalent trace in HM
+- [ ] Compare for i_64x64_qp22: find the first differing TU
+- [ ] If divergence: identify whether it is the scan, the levels, the sign, or the cRiceParam
+- [ ] Fix the bug(s)
+- [ ] Unit test: at least 5 TUs with verified coefficients
 
-## Critere de sortie
+## Exit criterion
 
-- [ ] Coefficients de toutes les TU de la frame i_64x64_qp22 sont identiques a HM
-- [ ] Inclut luma 4x4, 8x8, 16x16 et chroma 4x4, 8x8
+- [ ] Coefficients of all the TUs of the i_64x64_qp22 frame are identical to HM
+- [ ] Includes luma 4x4, 8x8, 16x16 and chroma 4x4, 8x8

@@ -1,60 +1,60 @@
 # Phase 4B — Coding Tree Structure
 
-## Statut : A VALIDER
+## Status: TO VALIDATE
 
-## Objectif
+## Goal
 
-Valider que l'arbre de syntax elements (split/cbf/residual) est IDENTIQUE a HM.
-Pas besoin de valider les valeurs decodees — juste la SEQUENCE et le TYPE de chaque bin.
+Validate that the syntax element tree (split/cbf/residual) is IDENTICAL to HM.
+No need to validate the decoded values — just the SEQUENCE and the TYPE of each bin.
 
-## Pourquoi c'est critique
+## Why it is critical
 
-Un bin manquant ou en trop dans l'arbre decale TOUT le reste du bitstream.
-C'est le **bug actuel** : 3 bins manquants pour CU (16,0) 8x8 entre notre decodeur et HM.
-Le probleme est probablement dans `decode_transform_tree()` : split_transform_flag
-ou cbf a la mauvaise profondeur.
+A missing or extra bin in the tree shifts the WHOLE rest of the bitstream.
+This is the **current bug**: 3 missing bins for CU (16,0) 8x8 between our decoder and HM.
+The problem is probably in `decode_transform_tree()`: split_transform_flag
+or cbf at the wrong depth.
 
 ## Spec refs
 
-- §7.3.8.1 : slice_segment_data (boucle CTU + end_of_slice_segment_flag)
-- §7.3.8.2 : coding_tree_unit
-- §7.3.8.3-5 : coding_quadtree, coding_unit, prediction_unit
-- §7.3.8.6 : transform_tree (split recursif, cbf chroma, cbf luma)
-- §7.3.8.7 : transform_unit
+- §7.3.8.1: slice_segment_data (CTU loop + end_of_slice_segment_flag)
+- §7.3.8.2: coding_tree_unit
+- §7.3.8.3-5: coding_quadtree, coding_unit, prediction_unit
+- §7.3.8.6: transform_tree (recursive split, chroma cbf, luma cbf)
+- §7.3.8.7: transform_unit
 
-## Cas a tester
+## Cases to test
 
-### Cas 1 : CU 16x16, PART_2Nx2N, pas de split TU
+### Case 1: CU 16x16, PART_2Nx2N, no TU split
 - log2CbSize=4, log2TrafoSize=4
 - Chroma TU = 8x8 (log2TrafoSizeC=3)
-- Sequence : cbf_cb, cbf_cr, [split_transform_flag?], cbf_luma, residual_coding
+- Sequence: cbf_cb, cbf_cr, [split_transform_flag?], cbf_luma, residual_coding
 
-### Cas 2 : CU 8x8, PART_2Nx2N, pas de split TU
+### Case 2: CU 8x8, PART_2Nx2N, no TU split
 - log2CbSize=3, log2TrafoSize=3
-- Chroma TU = 4x4 (log2TrafoSizeC=2, deferred si blkIdx!=3)
-- **C'est le cas qui pose probleme actuellement**
-- Verifier : est-ce qu'un split_transform_flag est decode ? A quelle profondeur ?
+- Chroma TU = 4x4 (log2TrafoSizeC=2, deferred if blkIdx!=3)
+- **This is the case that currently causes problems**
+- Check: is a split_transform_flag decoded? At what depth?
 
-### Cas 3 : CU 8x8, PART_NxN (IntraSplitFlag=1)
-- 4 PUs de 4x4, TU split force a trafoDepth=0
-- 4 sous-TU de 4x4 (log2TrafoSize=2)
-- Chroma deferred : processChroma seulement a blkIdx=3
-- Sequence : cbf_cb(depth0), cbf_cr(depth0), puis 4x [cbf_luma(depth1), residual]
+### Case 3: CU 8x8, PART_NxN (IntraSplitFlag=1)
+- 4 PUs of 4x4, TU split forced at trafoDepth=0
+- 4 sub-TUs of 4x4 (log2TrafoSize=2)
+- Chroma deferred: processChroma only at blkIdx=3
+- Sequence: cbf_cb(depth0), cbf_cr(depth0), then 4x [cbf_luma(depth1), residual]
 
-### Cas 4 : CU 32x32 avec split TU
+### Case 4: CU 32x32 with TU split
 - log2CbSize=5, split_transform_flag=1
-- 4 sous-TU de 16x16, chacun avec ses cbf
+- 4 sub-TUs of 16x16, each with its own cbf
 
-## Methode de validation
+## Validation method
 
-### Approche 1 : Test unitaire avec sequence de syntax elements
+### Approach 1: Unit test with syntax element sequence
 
-Creer un test qui :
-1. Decode un bitstream avec notre decodeur
-2. Log chaque syntax element decode : type, position, profondeur
-3. Compare avec la meme liste extraite de HM
+Create a test that:
+1. Decodes a bitstream with our decoder
+2. Logs each decoded syntax element: type, position, depth
+3. Compares with the same list extracted from HM
 
-Format du log :
+Log format:
 ```
 [SYN] split_cu_flag (0,0) depth=0 val=1 bin=0
 [SYN] split_cu_flag (0,0) depth=1 val=1 bin=1
@@ -63,33 +63,33 @@ Format du log :
 ...
 ```
 
-### Approche 2 : Trace comparative (plus rapide a implementer)
+### Approach 2: Comparative trace (faster to implement)
 
-1. Ajouter un fprintf dans chaque `decode_*` de `syntax_elements.cpp` avec le nom du SE
-2. Ajouter la meme chose dans HM (`TDecSbac.cpp`)
-3. Comparer les deux traces avec diff
-4. Le premier SE different pointe exactement au bug
+1. Add an fprintf in each `decode_*` of `syntax_elements.cpp` with the SE name
+2. Add the same in HM (`TDecSbac.cpp`)
+3. Compare the two traces with diff
+4. The first differing SE points exactly at the bug
 
-### Variables SPS critiques a verifier
+### Critical SPS variables to check
 
 ```
-max_transform_hierarchy_depth_intra  → maxTrafoDepth pour intra
-max_transform_hierarchy_depth_inter  → maxTrafoDepth pour inter
-MinTbLog2SizeY                       → condition split_transform_flag
-MaxTbLog2SizeY                       → condition split_transform_flag
-MinCbLog2SizeY                       → condition split_cu_flag / part_mode
+max_transform_hierarchy_depth_intra  → maxTrafoDepth for intra
+max_transform_hierarchy_depth_inter  → maxTrafoDepth for inter
+MinTbLog2SizeY                       → split_transform_flag condition
+MaxTbLog2SizeY                       → split_transform_flag condition
+MinCbLog2SizeY                       → split_cu_flag / part_mode condition
 ```
 
-## Taches
+## Tasks
 
-- [ ] Ajouter fprintf trace dans chaque `decode_*` de `syntax_elements.cpp`
-- [ ] Ajouter la meme trace dans HM
-- [ ] Comparer les traces pour i_64x64_qp22 sur les 400 premiers bins
-- [ ] Identifier les SE manquants ou en trop
-- [ ] Fixer le(s) bug(s) dans `decode_transform_tree()`
-- [ ] Creer un test unitaire qui valide la sequence de SE pour au moins 2 CU
+- [ ] Add an fprintf trace in each `decode_*` of `syntax_elements.cpp`
+- [ ] Add the same trace in HM
+- [ ] Compare the traces for i_64x64_qp22 over the first 400 bins
+- [ ] Identify the missing or extra SEs
+- [ ] Fix the bug(s) in `decode_transform_tree()`
+- [ ] Create a unit test that validates the SE sequence for at least 2 CUs
 
-## Critere de sortie
+## Exit criterion
 
-- [ ] La trace de syntax elements (type + bin_number) est IDENTIQUE entre HM et notre decodeur pour les 500 premiers bins de i_64x64_qp22
-- [ ] Les cas 1-4 ci-dessus sont couverts par le bitstream de test
+- [ ] The syntax element trace (type + bin_number) is IDENTICAL between HM and our decoder for the first 500 bins of i_64x64_qp22
+- [ ] Cases 1-4 above are covered by the test bitstream

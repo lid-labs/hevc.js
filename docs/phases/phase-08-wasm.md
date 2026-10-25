@@ -1,15 +1,15 @@
-# Phase 8 — Intégration WebAssembly
+# Phase 8 — WebAssembly Integration
 
-## Objectif
-Faire tourner le décodeur dans un navigateur via WebAssembly, avec une API JS propre et un Web Worker.
+## Goal
+Run the decoder in a browser via WebAssembly, with a clean JS API and a Web Worker.
 
-## Prérequis
-Phase 6 minimum (Main profile). Peut démarrer en parallèle de Phase 7.
+## Prerequisites
+Phase 6 at minimum (Main profile). Can start in parallel with Phase 7.
 
-## Tâches
+## Tasks
 
-### 8.1 — API C d'embedding
-- [ ] Interface C propre (pas de C++ dans l'API publique) :
+### 8.1 — Embedding C API
+- [ ] Clean C interface (no C++ in the public API):
   ```c
   HEVCDecoder* hevc_decoder_create(void);
   void hevc_decoder_destroy(HEVCDecoder* dec);
@@ -18,26 +18,26 @@ Phase 6 minimum (Main profile). Peut démarrer en parallèle de Phase 7.
   void hevc_decoder_flush(HEVCDecoder* dec);
   int hevc_decoder_get_info(HEVCDecoder* dec, HEVCStreamInfo* info);
   ```
-- [ ] Structure `HEVCFrame` : pointeurs vers les plans Y/Cb/Cr, dimensions, stride, POC
-- [ ] Structure `HEVCStreamInfo` : dimensions, profil, level, bit depth, chroma format
-- [ ] Gestion du feeding incrémental (pas besoin d'avoir tout le fichier)
+- [ ] `HEVCFrame` structure : pointers to the Y/Cb/Cr planes, dimensions, stride, POC
+- [ ] `HEVCStreamInfo` structure : dimensions, profile, level, bit depth, chroma format
+- [ ] Incremental feeding support (no need to have the whole file)
 
-### 8.2 — Build Emscripten
-- [ ] CMake toolchain Emscripten
-- [ ] Options de compilation WASM :
+### 8.2 — Emscripten build
+- [ ] Emscripten CMake toolchain
+- [ ] WASM compilation options:
   - `-s WASM=1`
   - `-s ALLOW_MEMORY_GROWTH=1`
   - `-s MODULARIZE=1`
   - `-s EXPORT_NAME=HEVCDecoder`
   - `-s EXPORTED_FUNCTIONS=[...]`
-  - `-O3` pour la performance
-- [ ] Taille du .wasm optimisée (strip, -Os si perf OK)
-- [ ] Vérifier que le build WASM produit les mêmes résultats que le build natif
+  - `-O3` for performance
+- [ ] Optimised .wasm size (strip, -Os if perf is OK)
+- [ ] Check that the WASM build produces the same results as the native build
 
-### 8.3 — Bindings JavaScript
-- [ ] Wrapper JS autour des fonctions C (cwrap ou Embind)
-- [ ] Gestion de la mémoire WASM (malloc/free pour les buffers de données)
-- [ ] API JS promise-based :
+### 8.3 — JavaScript bindings
+- [ ] JS wrapper around the C functions (cwrap or Embind)
+- [ ] WASM memory management (malloc/free for the data buffers)
+- [ ] Promise-based JS API:
   ```js
   const decoder = await HEVCDecoder.create();
   decoder.feed(uint8Array);
@@ -46,10 +46,10 @@ Phase 6 minimum (Main profile). Peut démarrer en parallèle de Phase 7.
   ```
 
 ### 8.4 — Web Worker
-- [ ] Décodage dans un Web Worker (pas de blocage du thread principal)
+- [ ] Decoding in a Web Worker (no blocking of the main thread)
 - [ ] Communication via postMessage
-- [ ] Transfert des frames via Transferable (ou SharedArrayBuffer)
-- [ ] Protocol de messages :
+- [ ] Frame transfer via Transferable (or SharedArrayBuffer)
+- [ ] Message protocol:
   ```
   Main -> Worker : { type: 'feed', data: ArrayBuffer }
   Main -> Worker : { type: 'flush' }
@@ -58,10 +58,10 @@ Phase 6 minimum (Main profile). Peut démarrer en parallèle de Phase 7.
   Worker -> Main : { type: 'error', message: string }
   ```
 
-### 8.5 — Rendu
-- [ ] Option 1 : YUV -> RGB conversion en JS/WASM, puis Canvas 2D
-- [ ] Option 2 : YUV -> WebGL (meilleure perf, conversion dans le shader)
-- [ ] Shader YUV -> RGB :
+### 8.5 — Rendering
+- [ ] Option 1 : YUV -> RGB conversion in JS/WASM, then Canvas 2D
+- [ ] Option 2 : YUV -> WebGL (better perf, conversion in the shader)
+- [ ] YUV -> RGB shader:
   ```glsl
   // BT.709 (HD/4K)
   vec3 yuv = vec3(texY, texCb - 0.5, texCr - 0.5);
@@ -69,27 +69,27 @@ Phase 6 minimum (Main profile). Peut démarrer en parallèle de Phase 7.
                   0.0, -0.187, 1.856,
                   1.575, -0.468, 0.0) * yuv;
   ```
-- [ ] Gestion du chroma upsampling (4:2:0 -> 4:4:4 pour l'affichage)
+- [ ] Chroma upsampling handling (4:2:0 -> 4:4:4 for display)
 
-### 8.6 — Démo HTML
-- [ ] Page HTML minimale avec :
-  - File input pour charger un .265
-  - Canvas pour afficher les frames
-  - Contrôles play/pause/step
-  - Infos : dimensions, profil, FPS, frame count
-- [ ] Streaming : lecture progressive du fichier (fetch + ReadableStream)
+### 8.6 — HTML demo
+- [ ] Minimal HTML page with:
+  - File input to load a .265
+  - Canvas to display the frames
+  - Play/pause/step controls
+  - Info : dimensions, profile, FPS, frame count
+- [ ] Streaming : progressive file reading (fetch + ReadableStream)
 
 ### 8.7 — Memory Management
-- [ ] Pool de buffers pour les frames (éviter malloc/free par frame)
-- [ ] Limite de mémoire WASM raisonnable (128MB initial, growth)
-- [ ] Monitoring de la mémoire utilisée
+- [ ] Buffer pool for the frames (avoid malloc/free per frame)
+- [ ] Reasonable WASM memory limit (128MB initial, growth)
+- [ ] Monitoring of the memory used
 
-## Critère de sortie
+## Exit criterion
 
-- Démo HTML fonctionnelle qui décode et affiche un fichier .265
-- Fonctionne sur Chrome et Firefox
-- Pas de crash mémoire sur des séquences longues
-- Les frames sont identiques au build natif (pas de régression WASM)
+- Working HTML demo that decodes and displays a .265 file
+- Works on Chrome and Firefox
+- No memory crash on long sequences
+- The frames are identical to the native build (no WASM regression)
 
-## Estimation de complexité
-Modérée. Le code de décodage existe déjà. C'est principalement de l'intégration et du plumbing.
+## Complexity estimate
+Moderate. The decoding code already exists. It is mainly integration and plumbing.

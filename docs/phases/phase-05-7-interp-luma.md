@@ -1,100 +1,100 @@
-# 5.7 -- Interpolation Luma (8-tap)
+# 5.7 -- Luma Interpolation (8-tap)
 
-## Objectif
+## Goal
 
-Verifier que le filtre d'interpolation luma 8-tap est bit-exact pour les 4 cas
-de shift/clip (H-only, V-only, 2D passe H, 2D passe V).
+Verify that the 8-tap luma interpolation filter is bit-exact for the 4 shift/clip
+cases (H-only, V-only, 2D H pass, 2D V pass).
 
 ## Spec refs
 
 - S8.5.3.2.2 : Luma sample interpolation process
 - Table 8-1 : Luma interpolation filter coefficients
 
-## Code existant
+## Existing code
 
-`src/decoding/interpolation.cpp` (303 lignes) : `perform_inter_prediction()`
+`src/decoding/interpolation.cpp` (303 lines) : `perform_inter_prediction()`
 
-## Coefficients du filtre (Table 8-1)
+## Filter coefficients (Table 8-1)
 
 ```cpp
 const int16_t luma_filter[4][8] = {
-    {  0,  0,  0, 64,  0,  0,  0,  0 },  // frac=0 (entier)
+    {  0,  0,  0, 64,  0,  0,  0,  0 },  // frac=0 (integer)
     { -1,  4,-10, 58, 17, -5,  1,  0 },  // frac=1 (1/4 pel)
     { -1,  4,-11, 40, 40,-11,  4, -1 },  // frac=2 (1/2 pel)
     {  0,  1, -5, 17, 58,-10,  4, -1 },  // frac=3 (3/4 pel)
 };
 ```
 
-## 4 cas de shift/clip (SOURCE #1 DE MISMATCH)
+## 4 shift/clip cases (#1 SOURCE OF MISMATCH)
 
-### Cas 1 : H-only (xFrac != 0, yFrac == 0)
+### Case 1 : H-only (xFrac != 0, yFrac == 0)
 ```
-shift1 = BitDepth - 8     (= 0 pour 8-bit)
-offset1 = 0 (si shift1 == 0) ou 1 << (shift1 - 1)
+shift1 = BitDepth - 8     (= 0 for 8-bit)
+offset1 = 0 (if shift1 == 0) or 1 << (shift1 - 1)
 result = Clip3(0, maxVal, (sum + offset1) >> shift1)
 ```
 
-### Cas 2 : V-only (xFrac == 0, yFrac != 0)
+### Case 2 : V-only (xFrac == 0, yFrac != 0)
 ```
 shift1 = BitDepth - 8
-offset1 = 0 ou 1 << (shift1 - 1)
+offset1 = 0 or 1 << (shift1 - 1)
 result = Clip3(0, maxVal, (sum + offset1) >> shift1)
 ```
-Note: meme shift que H-only pour uni-pred.
+Note: same shift as H-only for uni-pred.
 
-### Cas 3 : 2D passe H (xFrac != 0, yFrac != 0, premiere passe)
+### Case 3 : 2D H pass (xFrac != 0, yFrac != 0, first pass)
 ```
 shift1 = BitDepth - 8
-offset1 = 0 ou 1 << (shift1 - 1)
-temp = (sum + offset1) >> shift1     ← PAS de clip ! Resultat int16_t
+offset1 = 0 or 1 << (shift1 - 1)
+temp = (sum + offset1) >> shift1     ← NO clip ! int16_t result
 ```
 
-### Cas 4 : 2D passe V (deuxieme passe sur le buffer temporaire)
+### Case 4 : 2D V pass (second pass on the temporary buffer)
 ```
 shift2 = 6
 offset2 = 1 << (shift2 - 1) = 32
 result = Clip3(0, maxVal, (sum + offset2) >> shift2)
 ```
 
-### Bi-prediction : precision etendue
-Pour bi-pred, les passes H et V utilisent des shifts DIFFERENTS :
+### Bi-prediction : extended precision
+For bi-pred, the H and V passes use DIFFERENT shifts :
 ```
-shift1_bipred = 14 - BitDepth    (= 6 pour 8-bit)
-Pas de clip intermediaire, resultat en precision etendue (int16_t)
-Averaging final : (predL0 + predL1 + offset) >> (15 - BitDepth + 1)
-                  avec offset = 1 << (15 - BitDepth)
+shift1_bipred = 14 - BitDepth    (= 6 for 8-bit)
+No intermediate clip, result in extended precision (int16_t)
+Final averaging : (predL0 + predL1 + offset) >> (15 - BitDepth + 1)
+                  with offset = 1 << (15 - BitDepth)
 ```
 
-## Pieges identifies
+## Known pitfalls
 
-1. **shift1 pour 8-bit = 0** : pas de shift en passe H pour uni-pred 8-bit
-2. **2D passe H : PAS de clip** entre les deux passes
-3. **Bi-pred shifts different de uni-pred** : shift1=6 au lieu de 0 pour 8-bit
-4. **Buffer temporaire** : doit etre int16_t, pas uint8_t (valeurs peuvent etre negatives)
-5. **Marge du buffer temp** : pour la passe V, il faut 3 lignes au-dessus et 4 en-dessous
+1. **shift1 for 8-bit = 0** : no shift in the H pass for 8-bit uni-pred
+2. **2D H pass : NO clip** between the two passes
+3. **Bi-pred shifts differ from uni-pred** : shift1=6 instead of 0 for 8-bit
+4. **Temporary buffer** : must be int16_t, not uint8_t (values can be negative)
+5. **Temp buffer margin** : for the V pass, 3 lines above and 4 below are needed
 
-## Audit a faire
+## Audit to do
 
-1. Lire S8.5.3.2.2 du PDF (pages 163-168) -- LIRE LE PDF, PAS LES NOTES
-2. Verifier chaque cas de shift/offset dans le code
-3. Verifier le clip ou non-clip entre les passes
+1. Read S8.5.3.2.2 of the PDF (pages 163-168) -- READ THE PDF, NOT THE NOTES
+2. Check each shift/offset case in the code
+3. Check whether there is a clip between the passes
 
-## Test de validation
+## Validation test
 
 ```cpp
-// Test unitaire par cas :
-// 1. H-only frac=2 sur 8 samples : verifier le resultat exact
-// 2. V-only frac=1 sur 8 samples
-// 3. 2D frac=(1,2) sur 4x4 bloc : verifier buffer temp + resultat final
-// 4. Bi-pred : verifier precision etendue + averaging
+// Unit test per case:
+// 1. H-only frac=2 on 8 samples : check the exact result
+// 2. V-only frac=1 on 8 samples
+// 3. 2D frac=(1,2) on a 4x4 block : check temp buffer + final result
+// 4. Bi-pred : check extended precision + averaging
 
-// Vecteurs de test : utiliser des valeurs simples (128, 129, 130...)
-// pour pouvoir calculer le resultat a la main
+// Test vectors: use simple values (128, 129, 130...)
+// so the result can be computed by hand
 ```
 
-## Critere de sortie
+## Exit criterion
 
-- [ ] Test unitaire H-only : 3 positions fractionnaires (1, 2, 3)
-- [ ] Test unitaire V-only : 3 positions fractionnaires
-- [ ] Test unitaire 2D : au moins 1 position (xFrac, yFrac) != (0,0)
-- [ ] Verification shifts : tous les shifts correspondent a la spec pour 8-bit
+- [ ] H-only unit test : 3 fractional positions (1, 2, 3)
+- [ ] V-only unit test : 3 fractional positions
+- [ ] 2D unit test : at least 1 position (xFrac, yFrac) != (0,0)
+- [ ] Shift verification : all shifts match the spec for 8-bit
