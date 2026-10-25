@@ -112,6 +112,30 @@ pnpm test:e2e:prod
 E2E_CPU_THROTTLE=10 npx playwright test --project=local-chromium -g "drops the cap"
 ```
 
+### Benchmarking
+
+`hevc-bench`, built with the native targets, times the decode alone: each run
+decodes the whole stream into a fresh decoder and writes nothing out, unlike
+`hevc-decode -o`, whose output phase dominates a profile.
+
+```bash
+cmake -B build-rel -DCMAKE_BUILD_TYPE=Release && cmake --build build-rel -j
+
+# Best and median of 10 runs, one batch decode() call per run
+build-rel/hevc-bench tests/conformance/fixtures/bbb1080_50f.265 -n 10
+
+# One access unit per feed() call, drained after each, as the WASM worker does
+build-rel/hevc-bench demo/bbb4k_singleslice.265 -n 10 --stream
+
+# One thread: WPP rows decode serially, as in the WASM build
+HEVC_THREADS=1 build-rel/hevc-bench tests/conformance/fixtures/bbb1080_50f.265
+```
+
+`HEVC_THREADS` sets the size of the native decoder's thread pool, the core
+count by default; the WASM build has no threads and ignores it. To compare two
+builds, alternate their runs rather than running one series after the other:
+on a laptop, run-to-run variation can reach several percent.
+
 ## Pull request process
 
 1. Fork the repo and create a branch (`feature/xxx` or `fix/xxx`)
