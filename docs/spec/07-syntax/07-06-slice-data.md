@@ -1,24 +1,24 @@
 # §7.3.8-11 — Slice Data (CTU, CU, PU, TU)
 
-Spec ref : §7.3.8 (coding_tree_unit), §7.3.9 (coding_quadtree), §7.3.10 (coding_unit), §7.3.11 (prediction_unit), §7.3.12 (transform_tree), §7.3.13 (transform_unit)
+Spec ref: §7.3.8 (coding_tree_unit), §7.3.9 (coding_quadtree), §7.3.10 (coding_unit), §7.3.11 (prediction_unit), §7.3.12 (transform_tree), §7.3.13 (transform_unit)
 
-## Vue d'ensemble du quad-tree
+## Quad-tree overview
 
 ```
-CTU (Coding Tree Unit) — taille fixe (ex: 64x64)
+CTU (Coding Tree Unit) — fixed size (e.g. 64x64)
 │
-├── coding_quadtree() — split récursif
-│   ├── split_cu_flag = 1 → 4 sous-blocs
+├── coding_quadtree() — recursive split
+│   ├── split_cu_flag = 1 → 4 sub-blocks
 │   └── split_cu_flag = 0 → CU (Coding Unit)
 │       │
-│       ├── PU (Prediction Unit) — 1 ou plusieurs
-│       │   ├── Intra : 1 PU (2Nx2N) ou 4 PU (NxN si CU = MinCB)
-│       │   └── Inter : 2Nx2N, 2NxN, Nx2N, 2NxnU, 2NxnD, nLx2N, nRx2N
+│       ├── PU (Prediction Unit) — 1 or more
+│       │   ├── Intra: 1 PU (2Nx2N) or 4 PUs (NxN if CU = MinCB)
+│       │   └── Inter: 2Nx2N, 2NxN, Nx2N, 2NxnU, 2NxnD, nLx2N, nRx2N
 │       │
-│       └── TU (Transform Unit) — quad-tree récursif
-│           ├── split_transform_flag = 1 → 4 sous-TU
+│       └── TU (Transform Unit) — recursive quad-tree
+│           ├── split_transform_flag = 1 → 4 sub-TUs
 │           └── split_transform_flag = 0 → TU leaf
-│               └── Coefficients résiduels (CABAC)
+│               └── Residual coefficients (CABAC)
 ```
 
 ## §7.3.8 — coding_tree_unit
@@ -27,7 +27,7 @@ CTU (Coding Tree Unit) — taille fixe (ex: 64x64)
 coding_tree_unit() {
     xCtb = (CtbAddrInRs % PicWidthInCtbsY) * CtbSizeY
     yCtb = (CtbAddrInRs / PicWidthInCtbsY) * CtbSizeY
-    // SAO params pour ce CTB
+    // SAO params for this CTB
     if(slice_sao_luma_flag || slice_sao_chroma_flag)
         sao(rx, ry)
     coding_quadtree(xCtb, yCtb, CtbLog2SizeY, 0)
@@ -64,9 +64,9 @@ coding_quadtree(x0, y0, log2CbSize, cqtDepth) {
 }
 ```
 
-### Note : split forcé aux bords
+### Note: forced split at the edges
 
-Si le bloc dépasse les dimensions de l'image, `split_cu_flag` n'est pas codé — le split est implicite (forcé à 1).
+If the block exceeds the picture dimensions, `split_cu_flag` is not coded — the split is implicit (forced to 1).
 
 ## §7.3.10 — coding_unit
 
@@ -74,20 +74,20 @@ Si le bloc dépasse les dimensions de l'image, `split_cu_flag` n'est pas codé �
 coding_unit(x0, y0, log2CbSize) {
     if(transquant_bypass_enabled_flag)
         cu_transquant_bypass_flag    ae(v)
-    if(!IntraSplitFlag)  // pas dans un slice I avec forced split
+    if(!IntraSplitFlag)  // not in an I slice with forced split
         cu_skip_flag[x0][y0]         ae(v)
 
     nCbS = 1 << log2CbSize
 
     if(cu_skip_flag[x0][y0]) {
-        prediction_unit(x0, y0, nCbS, nCbS)  // merge mode, pas de résidu
+        prediction_unit(x0, y0, nCbS, nCbS)  // merge mode, no residual
     } else {
         if(slice_type != I)
             pred_mode_flag               ae(v)
         // pred_mode_flag: 0=inter, 1=intra
 
         if(CuPredMode == MODE_INTRA) {
-            if(log2CbSize == MinCbLog2SizeY)  // NxN possible seulement si CU = min size
+            if(log2CbSize == MinCbLog2SizeY)  // NxN only possible if CU = min size
                 part_mode                ae(v)  // 0=2Nx2N, 1=NxN
             // ... PCM flag
             // Intra prediction modes
@@ -95,11 +95,11 @@ coding_unit(x0, y0, log2CbSize) {
             if(prev_intra_luma_pred_flag)
                 mpm_idx[i]                ae(v)  // Most Probable Mode index
             else
-                rem_intra_luma_pred_mode[i]  ae(v)  // mode dans la liste restante
+                rem_intra_luma_pred_mode[i]  ae(v)  // mode in the remaining list
             intra_chroma_pred_mode        ae(v)
         } else {  // MODE_INTER
             part_mode                     ae(v)
-            // Selon part_mode : 1, 2 ou 4 PU
+            // Depending on part_mode: 1, 2 or 4 PUs
             for each PU:
                 prediction_unit(xPb, yPb, nPbW, nPbH)
         }
@@ -149,12 +149,12 @@ prediction_unit(x0, y0, nPbW, nPbH) {
 
 ```
 transform_tree(x0, y0, xBase, yBase, log2TrafoSize, trafoDepth, blkIdx) {
-    // Split si trop grand ou si profondeur insuffisante
-    if(conditions de split)
+    // Split if too large or if depth is insufficient
+    if(split conditions)
         split_transform_flag    ae(v)
 
     if(split_transform_flag) {
-        // 4 sous-TU récursifs
+        // 4 recursive sub-TUs
         transform_tree(x0, y0, x0, y0, log2TrafoSize-1, trafoDepth+1, 0)
         transform_tree(x1, y0, x0, y0, log2TrafoSize-1, trafoDepth+1, 1)
         transform_tree(x0, y1, x0, y0, log2TrafoSize-1, trafoDepth+1, 2)
@@ -165,7 +165,7 @@ transform_tree(x0, y0, xBase, yBase, log2TrafoSize, trafoDepth, blkIdx) {
 }
 
 transform_unit(x0, y0, xBase, yBase, log2TrafoSize, trafoDepth, blkIdx) {
-    // CBF (Coded Block Flag) — indique si des coefficients non-nuls existent
+    // CBF (Coded Block Flag) — indicates whether non-zero coefficients exist
     if(log2TrafoSize > 2 || ChromaArrayType == 3) {
         cbf_cb    ae(v)
         cbf_cr    ae(v)
@@ -173,7 +173,7 @@ transform_unit(x0, y0, xBase, yBase, log2TrafoSize, trafoDepth, blkIdx) {
     if(trafoDepth == 0 || cbf_luma from parent)
         cbf_luma    ae(v)
 
-    // Coefficients résiduels
+    // Residual coefficients
     if(cbf_luma)
         residual_coding(x0, y0, log2TrafoSize, 0)   // luma
     if(cbf_cb)
@@ -185,7 +185,7 @@ transform_unit(x0, y0, xBase, yBase, log2TrafoSize, trafoDepth, blkIdx) {
 
 ## residual_coding — §7.3.8.11
 
-C'est ici que les coefficients de transform sont décodés via CABAC. Structure complexe :
+This is where the transform coefficients are decoded via CABAC. Complex structure:
 
 ```
 residual_coding(x0, y0, log2TrafoSize, cIdx) {
@@ -193,12 +193,12 @@ residual_coding(x0, y0, log2TrafoSize, cIdx) {
     transform_skip_flag        ae(v)
     last_sig_coeff_x_prefix    ae(v)
     last_sig_coeff_y_prefix    ae(v)
-    // ... suffixes si nécessaire
+    // ... suffixes if necessary
 
-    // Parcours des sub-blocks (4x4) en scan diagonal inverse
+    // Traversal of the (4x4) sub-blocks in reverse diagonal scan
     for(i = lastSubBlock; i >= 0; i--) {
         // coded_sub_block_flag
-        // sig_coeff_flag pour chaque position
+        // sig_coeff_flag for each position
         // coeff_abs_level_greater1_flag
         // coeff_abs_level_greater2_flag
         // coeff_sign_flag
@@ -209,12 +209,12 @@ residual_coding(x0, y0, log2TrafoSize, cIdx) {
 
 ## Checklist
 
-- [ ] coding_quadtree : split récursif avec gestion des bords
-- [ ] coding_unit : dispatch intra/inter, part_mode
-- [ ] prediction_unit (intra) : prev_intra_luma_pred_flag, mpm_idx, rem
-- [ ] prediction_unit (inter) : merge, AMVP, mvd_coding
-- [ ] transform_tree : split récursif, profondeur max
-- [ ] transform_unit : cbf flags, dispatch luma/chroma
-- [ ] residual_coding : scan order, sub-block decode, coefficient levels
-- [ ] SAO params parsing par CTU
-- [ ] Tests : décoder un bitstream simple et vérifier la structure de l'arbre
+- [ ] coding_quadtree: recursive split with edge handling
+- [ ] coding_unit: intra/inter dispatch, part_mode
+- [ ] prediction_unit (intra): prev_intra_luma_pred_flag, mpm_idx, rem
+- [ ] prediction_unit (inter): merge, AMVP, mvd_coding
+- [ ] transform_tree: recursive split, max depth
+- [ ] transform_unit: cbf flags, luma/chroma dispatch
+- [ ] residual_coding: scan order, sub-block decode, coefficient levels
+- [ ] SAO params parsing per CTU
+- [ ] Tests: decode a simple bitstream and verify the tree structure

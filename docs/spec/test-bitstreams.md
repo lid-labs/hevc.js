@@ -1,26 +1,26 @@
-# Mini-Bitstreams de Test (Hex Annotés)
+# Test Mini-Bitstreams (Annotated Hex)
 
-Petits bitstreams HEVC synthétiques pour les tests unitaires et d'intégration.
-Utilisables directement dans le code C++ sans fichier externe.
+Small synthetic HEVC bitstreams for unit and integration tests.
+Usable directly in C++ code without an external file.
 
-## 1. NAL Unit minimale — VPS (Phase 2)
+## 1. Minimal NAL Unit — VPS (Phase 2)
 
-Un VPS minimal valide (2 bytes header + RBSP).
+A minimal valid VPS (2-byte header + RBSP).
 
 ```
-Byte stream (hex) :
-00 00 00 01    — start code 4-byte
+Byte stream (hex):
+00 00 00 01    — 4-byte start code
 40 01          — NAL header: forbidden=0, nal_unit_type=32 (VPS), nuh_layer_id=0, nuh_temporal_id_plus1=1
-0C 01 FF FF    — VPS RBSP début (vps_video_parameter_set_id=0, ...)
-01 60 00 00    — suite VPS
-03 00 00 03    — contient emulation prevention byte (0x000003)
-00 00 03 00    — encore un emulation prevention
-96 AC 09 00    — suite
+0C 01 FF FF    — start of VPS RBSP (vps_video_parameter_set_id=0, ...)
+01 60 00 00    — VPS continued
+03 00 00 03    — contains an emulation prevention byte (0x000003)
+00 00 03 00    — another emulation prevention
+96 AC 09 00    — continued
 80             — rbsp_stop_one_bit + alignment
 ```
 
 ```cpp
-// Utilisation dans un test
+// Usage in a test
 const uint8_t vps_nal[] = {
     0x00, 0x00, 0x00, 0x01,  // start code
     0x40, 0x01,              // NAL header: type=32(VPS), layer=0, tid=1
@@ -36,14 +36,14 @@ const uint8_t vps_nal[] = {
 // nuh_temporal_id_plus1 = 0x01 & 0x07 = 1
 ```
 
-## 2. Séquence minimale — VPS + SPS + PPS + I-Slice (Phase 3-4)
+## 2. Minimal Sequence — VPS + SPS + PPS + I-Slice (Phase 3-4)
 
-Le plus petit bitstream HEVC décodable : 1 frame 8x8, QP fixe, un seul CTU.
+The smallest decodable HEVC bitstream: 1 8x8 frame, fixed QP, a single CTU.
 
 ```cpp
-// Généré avec x265 --input raw_8x8.yuv --input-res 8x8 --fps 1 --frames 1
+// Generated with x265 --input raw_8x8.yuv --input-res 8x8 --fps 1 --frames 1
 // --preset ultrafast --qp 30 --keyint 1 --no-deblock --no-sao --no-wpp
-// Puis converti en hex
+// Then converted to hex
 const uint8_t minimal_idr_8x8[] = {
     // --- VPS ---
     0x00, 0x00, 0x00, 0x01,  // start code
@@ -70,14 +70,14 @@ const uint8_t minimal_idr_8x8[] = {
     0x26, 0x01,              // NAL type=19 (IDR_W_RADL)
     // ... slice data (CABAC coded)
 };
-// NOTE: Ce bitstream est un EXEMPLE de structure.
-// Pour un bitstream réellement décodable, utiliser x265 pour générer
-// un fichier .265 puis le convertir en tableau C++ avec xxd -i.
+// NOTE: This bitstream is an EXAMPLE of the structure.
+// For a truly decodable bitstream, use x265 to generate
+// a .265 file then convert it to a C++ array with xxd -i.
 ```
 
-## 3. Décomposition NAL Header (Phase 2)
+## 3. NAL Header Breakdown (Phase 2)
 
-Exemples annotés de headers NAL pour tester le parsing :
+Annotated NAL header examples for testing parsing:
 
 ```cpp
 struct NalTestCase {
@@ -106,7 +106,7 @@ const NalTestCase nal_header_tests[] = {
     {{ 0x02, 0x05 }, NalUnitType::TRAIL_R,   0, 4, "Trail R, TemporalId=4" },
 };
 
-// Décomposition du header NAL (2 bytes) :
+// NAL header breakdown (2 bytes):
 // Byte 0: [forbidden_zero_bit(1)] [nal_unit_type(6)] [nuh_layer_id MSB(1)]
 // Byte 1: [nuh_layer_id LSB(5)]  [nuh_temporal_id_plus1(3)]
 //
@@ -120,7 +120,7 @@ const NalTestCase nal_header_tests[] = {
 ```cpp
 struct ExpGolombTestCase {
     std::vector<uint8_t> bytes;
-    int start_bit;        // bit offset dans bytes
+    int start_bit;        // bit offset in bytes
     uint32_t expected_ue;
     int32_t expected_se;
     int bits_consumed;
@@ -153,30 +153,30 @@ const ExpGolombTestCase eg_tests[] = {
 ## 5. Access Unit Boundary test vectors (Phase 2)
 
 ```cpp
-// Séquence de NAL units pour tester la détection des frontières AU
+// NAL unit sequence to test AU boundary detection
 const uint8_t au_boundary_test[] = {
     // === AU 0 ===
     0x00, 0x00, 0x00, 0x01, 0x40, 0x01, /* VPS data... */ 0x80,
     0x00, 0x00, 0x00, 0x01, 0x42, 0x01, /* SPS data... */ 0x80,
     0x00, 0x00, 0x00, 0x01, 0x44, 0x01, /* PPS data... */ 0x80,
     0x00, 0x00, 0x00, 0x01, 0x26, 0x01, /* IDR slice first_slice=1 */ 0x80,
-    0x00, 0x00, 0x00, 0x01, 0x50, 0x01, /* Suffix SEI (meme AU!) */ 0x80,
+    0x00, 0x00, 0x00, 0x01, 0x50, 0x01, /* Suffix SEI (same AU!) */ 0x80,
 
     // === AU 1 ===
-    0x00, 0x00, 0x00, 0x01, 0x4E, 0x01, /* Prefix SEI (nouveau AU!) */ 0x80,
+    0x00, 0x00, 0x00, 0x01, 0x4E, 0x01, /* Prefix SEI (new AU!) */ 0x80,
     0x00, 0x00, 0x00, 0x01, 0x02, 0x01, /* TRAIL_R first_slice=1 */ 0x80,
 
     // === AU 2 ===
     0x00, 0x00, 0x00, 0x01, 0x02, 0x01, /* TRAIL_R first_slice=1 */ 0x80,
 };
 
-// Résultat attendu : 3 Access Units
+// Expected result: 3 Access Units
 // AU 0 : VPS + SPS + PPS + IDR + Suffix SEI (5 NALs)
 // AU 1 : Prefix SEI + TRAIL_R (2 NALs)
 // AU 2 : TRAIL_R (1 NAL)
 //
-// PIEGE : le Suffix SEI (type 40) reste dans AU 0
-//         le Prefix SEI (type 39) déclenche AU 1
+// PITFALL: the Suffix SEI (type 40) stays in AU 0
+//          the Prefix SEI (type 39) starts AU 1
 ```
 
 ## 6. Emulation Prevention test vectors (Phase 2)
@@ -222,20 +222,20 @@ const EmulationPreventionTest ep_tests[] = {
 };
 ```
 
-## Comment générer de vrais bitstreams de test
+## How to generate real test bitstreams
 
 ```bash
-# Créer un YUV brut 8x8 (tous les pixels à 128)
+# Create a raw 8x8 YUV (all pixels at 128)
 python3 -c "import sys; sys.stdout.buffer.write(bytes([128]*8*8 + [128]*4*4*2))" > /tmp/gray_8x8.yuv
 
-# Encoder avec x265
+# Encode with x265
 x265 --input /tmp/gray_8x8.yuv --input-res 8x8 --fps 1 --frames 1 \
      --preset ultrafast --qp 30 --keyint 1 --no-deblock --no-sao \
      -o /tmp/test_8x8.265
 
-# Convertir en tableau C++
+# Convert to a C++ array
 xxd -i /tmp/test_8x8.265 > tests/fixtures/test_8x8.h
 
-# Décoder avec libde265 pour référence
+# Decode with libde265 for reference
 dec265 /tmp/test_8x8.265 -o /tmp/ref_8x8.yuv
 ```

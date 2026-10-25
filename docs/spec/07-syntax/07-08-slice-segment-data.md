@@ -1,10 +1,10 @@
 # §7.3.8.1 — Slice Segment Data
 
-Spec ref : §7.3.8.1 (general slice segment data syntax)
+Spec ref: §7.3.8.1 (general slice segment data syntax)
 
-## Vue d'ensemble
+## Overview
 
-`slice_segment_data()` est la boucle principale qui itere sur les CTU d'un slice. C'est le coeur du decodeur.
+`slice_segment_data()` is the main loop that iterates over the CTUs of a slice. It is the core of the decoder.
 
 ## Pseudo-code (spec)
 
@@ -23,48 +23,48 @@ slice_segment_data() {
 }
 ```
 
-## Points critiques
+## Critical points
 
 ### `end_of_slice_segment_flag`
 
-- Decode via `decode_terminate()` (CABAC terminate mode, §9.3.4.5), **PAS** via `decode_decision()`
-- `decode_terminate()` utilise un sous-range fixe de 2 :
+- Decoded via `decode_terminate()` (CABAC terminate mode, §9.3.4.5), **NOT** via `decode_decision()`
+- `decode_terminate()` uses a fixed sub-range of 2:
   - `ivlCurrRange -= 2`
-  - Si `ivlOffset >= ivlCurrRange` → flag = 1 (fin du slice), puis lire `alignment bits`
-  - Sinon → flag = 0, renormalize
-- Parse apres **chaque** CTU sans exception
-- Un oubli de ce flag cause un overrun sur le bitstream ou un decrochage CABAC
+  - Si `ivlOffset >= ivlCurrRange` → flag = 1 (end of slice), then read `alignment bits`
+  - Otherwise → flag = 0, renormalize
+- Parsed after **every** CTU without exception
+- Forgetting this flag causes a bitstream overrun or a CABAC desync
 
 ### Scan order (tiles)
 
-- `CtbAddrInRs` : adresse raster scan (gauche→droite, haut→bas dans la picture)
-- `CtbAddrInTs` : adresse tile scan (gauche→droite, haut→bas **dans chaque tile**)
-- Les tables de conversion `CtbAddrRsToTs[]` et `CtbAddrTsToRs[]` sont derivees du layout des tiles (PPS)
-- Sans tiles, les deux ordres sont identiques
+- `CtbAddrInRs`: raster scan address (left→right, top→bottom in the picture)
+- `CtbAddrInTs`: tile scan address (left→right, top→bottom **within each tile**)
+- The conversion tables `CtbAddrRsToTs[]` and `CtbAddrTsToRs[]` are derived from the tile layout (PPS)
+- Without tiles, the two orders are identical
 
-### Reinitialisation CABAC aux frontieres de tiles
+### CABAC reinitialization at tile boundaries
 
-Si `tiles_enabled_flag == 1` et qu'on entre dans un nouveau tile (le CTU courant est le premier d'un tile) :
-- Reinitialiser tous les contextes CABAC
-- Reinitialiser le decodeur arithmetique (lire les bits d'init)
-- Sauf si `dependent_slice_segment_flag == 1` pour ce slice
+If `tiles_enabled_flag == 1` and a new tile is entered (the current CTU is the first of a tile):
+- Reinitialize all CABAC contexts
+- Reinitialize the arithmetic decoder (read the init bits)
+- Unless `dependent_slice_segment_flag == 1` for this slice
 
 ### WPP (Wavefront Parallel Processing)
 
-Si `entropy_coding_sync_enabled_flag == 1` :
-- Au debut de chaque ligne de CTU (sauf la premiere) :
-  - Restaurer les contextes CABAC sauvegardes a la fin du 2eme CTU de la ligne precedente
-  - Reinitialiser le decodeur arithmetique
-- A la fin du 2eme CTU de chaque ligne :
-  - Sauvegarder l'etat de tous les contextes CABAC
+If `entropy_coding_sync_enabled_flag == 1`:
+- At the start of each CTU row (except the first):
+  - Restore the CABAC contexts saved at the end of the 2nd CTU of the previous row
+  - Reinitialize the arithmetic decoder
+- At the end of the 2nd CTU of each row:
+  - Save the state of all CABAC contexts
 
 ### `end_of_sub_stream_one_bit`
 
-Si le slice contient des entry points (tiles ou WPP), `end_of_sub_stream_one_bit` est lu a la fin de chaque sous-stream (sauf le dernier) au lieu de `end_of_slice_segment_flag` :
-- `end_of_sub_stream_one_bit` doit valoir 1
-- Suivi de `byte_alignment()` pour aligner le reader avant le prochain sous-stream
+If the slice contains entry points (tiles or WPP), `end_of_sub_stream_one_bit` is read at the end of each sub-stream (except the last) instead of `end_of_slice_segment_flag`:
+- `end_of_sub_stream_one_bit` must be 1
+- Followed by `byte_alignment()` to align the reader before the next sub-stream
 
-## Implementation C++
+## C++ implementation
 
 ```cpp
 void Decoder::decode_slice_segment_data(SliceHeader& sh) {
@@ -73,13 +73,13 @@ void Decoder::decode_slice_segment_data(SliceHeader& sh) {
     do {
         int ctb_addr_ts = ctb_addr_rs_to_ts[ctb_addr_rs];
 
-        // Reinit CABAC si nouveau tile (sauf dependent slice)
+        // Reinit CABAC if new tile (except dependent slice)
         if (is_first_ctb_in_tile(ctb_addr_ts) && ctb_addr_rs != sh.slice_segment_address) {
             cabac.init_contexts(sh);
             cabac.init_decoder(bitstream);
         }
 
-        // WPP : restaurer les contextes si debut de ligne CTU
+        // WPP: restore the contexts at the start of a CTU row
         if (entropy_coding_sync_enabled && is_first_ctb_in_row(ctb_addr_rs)) {
             if (has_saved_wpp_contexts) {
                 cabac.restore_contexts(saved_wpp_contexts);
@@ -89,15 +89,15 @@ void Decoder::decode_slice_segment_data(SliceHeader& sh) {
 
         decode_coding_tree_unit(ctb_addr_rs);
 
-        // WPP : sauvegarder les contextes apres le 2eme CTU de la ligne
+        // WPP: save the contexts after the 2nd CTU of the row
         if (entropy_coding_sync_enabled && is_second_ctb_in_row(ctb_addr_rs)) {
             cabac.save_contexts(saved_wpp_contexts);
             has_saved_wpp_contexts = true;
         }
 
-        // Detecter fin de sous-stream (tiles/WPP) ou fin de slice
+        // Detect end of sub-stream (tiles/WPP) or end of slice
         if (is_end_of_sub_stream(ctb_addr_ts, sh)) {
-            // end_of_sub_stream_one_bit (doit valoir 1)
+            // end_of_sub_stream_one_bit (must be 1)
             assert(cabac.decode_terminate() == 1);
             bitstream.byte_alignment();
             end_of_slice_segment_flag = false;
@@ -114,11 +114,11 @@ void Decoder::decode_slice_segment_data(SliceHeader& sh) {
 
 ## Checklist
 
-- [ ] Boucle do-while avec `end_of_slice_segment_flag` via `decode_terminate()`
-- [ ] `decode_terminate()` implemente correctement (range -= 2, test offset)
-- [ ] Scan order tile-scan (CtbAddrInTs / CtbAddrInRs conversion)
-- [ ] Reinit CABAC aux frontieres de tiles
-- [ ] WPP : sauvegarde/restauration des contextes aux lignes CTU
-- [ ] `end_of_sub_stream_one_bit` + `byte_alignment()` aux frontieres de sous-streams
-- [ ] Tests : verifier le nombre de CTU decodes par slice
-- [ ] Tests : bitstream multi-tile, verifier la reinit CABAC
+- [ ] do-while loop with `end_of_slice_segment_flag` via `decode_terminate()`
+- [ ] `decode_terminate()` implemented correctly (range -= 2, offset test)
+- [ ] Tile-scan order (CtbAddrInTs / CtbAddrInRs conversion)
+- [ ] CABAC reinit at tile boundaries
+- [ ] WPP: saving/restoring contexts at CTU rows
+- [ ] `end_of_sub_stream_one_bit` + `byte_alignment()` at sub-stream boundaries
+- [ ] Tests: verify the number of CTUs decoded per slice
+- [ ] Tests: multi-tile bitstream, verify the CABAC reinit

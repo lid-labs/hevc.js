@@ -1,12 +1,12 @@
-# Chapitre 9 — Parsing Process (CABAC)
+# Chapter 9 — Parsing Process (CABAC)
 
-Spec ref : §9.1 (general), §9.2 (initialization), §9.3 (binarization), §9.4 (context modeling), §9.5 (decoding engine)
+Spec ref: §9.1 (general), §9.2 (initialization), §9.3 (binarization), §9.4 (context modeling), §9.5 (decoding engine)
 
-## Vue d'ensemble
+## Overview
 
-CABAC (Context-Adaptive Binary Arithmetic Coding) est le seul mode d'entropy coding en HEVC (contrairement a H.264 qui avait aussi CAVLC).
+CABAC (Context-Adaptive Binary Arithmetic Coding) is the only entropy coding mode in HEVC (unlike H.264, which also had CAVLC).
 
-Chaque syntax element `ae(v)` dans le chapitre 7 est decode par CABAC.
+Every `ae(v)` syntax element in chapter 7 is decoded by CABAC.
 
 ### Architecture CABAC
 
@@ -18,17 +18,17 @@ Bitstream → Arithmetic Decoder → Binary decisions (bins)
                                   Syntax Elements
 ```
 
-Le processus :
-1. **Binarization** : chaque syntax element a un schema de binarization (comment il est represente en bins)
-2. **Context modeling** : chaque bin utilise un "contexte" qui stocke la probabilite
-3. **Arithmetic decoding** : decodage du bin base sur la probabilite du contexte
+The process:
+1. **Binarization** : each syntax element has a binarization scheme (how it is represented as bins)
+2. **Context modeling** : each bin uses a "context" that stores the probability
+3. **Arithmetic decoding** : decoding of the bin based on the context probability
 
-## 9.2 — Initialisation
+## 9.2 — Initialization
 
-### Initialisation des contextes
+### Context initialization
 
 ```cpp
-// Au debut de chaque slice :
+// At the start of each slice:
 // §9.2.1.1 — Context variables initialization
 
 struct CabacContext {
@@ -50,12 +50,12 @@ void init_context(CabacContext& ctx, int initValue, int SliceQpY) {
     }
 }
 
-// Il y a ~200 contextes differents en HEVC
-// Chaque type de syntax element a ses propres contextes
-// Les initValues sont tabules dans la spec (Tables 9-5 a 9-42)
+// There are ~200 different contexts in HEVC
+// Each syntax element type has its own contexts
+// The initValues are tabulated in the spec (Tables 9-5 to 9-42)
 ```
 
-### Initialisation du moteur arithmetique
+### Arithmetic engine initialization
 
 ```cpp
 struct ArithmeticDecoder {
@@ -71,41 +71,41 @@ struct ArithmeticDecoder {
 
 ## 9.3 — Binarization
 
-Chaque syntax element a un schema de binarization specifique :
+Each syntax element has a specific binarization scheme:
 
-### Types de binarization
+### Binarization types
 
-| Type | Utilise pour | Description |
+| Type | Used for | Description |
 |------|-------------|-------------|
-| FL (Fixed Length) | flags, petits entiers | n bins, valeur directe |
-| TR (Truncated Rice) | borne | comme unary mais tronque |
-| EGk (Exp-Golomb kth order) | grands entiers | prefix unary + suffix |
-| TU (Truncated Unary) | petits entiers bornes | unary tronque a cMax |
+| FL (Fixed Length) | flags, small integers | n bins, direct value |
+| TR (Truncated Rice) | bounded | like unary but truncated |
+| EGk (Exp-Golomb kth order) | large integers | unary prefix + suffix |
+| TU (Truncated Unary) | small bounded integers | unary truncated at cMax |
 
-### Exemples
+### Examples
 
 ```cpp
 // split_cu_flag : FL, 1 bin, context-coded
-// Binarization triviale : le bin EST la valeur
+// Trivial binarization: the bin IS the value
 
-// part_mode : variable selon slice type et CU size
-// Binarization depend du contexte (Table 9-34)
+// part_mode: varies with slice type and CU size
+// Binarization depends on the context (Table 9-34)
 
-// coeff_abs_level_remaining : Golomb-Rice + EG
+// coeff_abs_level_remaining: Golomb-Rice + EG
 // §9.3.2.7 — prefix TR (cRiceParam) + suffix EGk
-// C'est le plus complexe
+// This is the most complex one
 
-// last_sig_coeff_x_prefix : TR binarization
-// Les bins utilisent des contextes differents selon la position
+// last_sig_coeff_x_prefix: TR binarization
+// The bins use different contexts depending on the position
 ```
 
-### residual_coding binarization (la plus complexe)
+### residual_coding binarization (the most complex)
 
 ```cpp
 // §9.3.3.1 — coeff_abs_level_greater1_flag : 1 bin, context-coded
 // §9.3.3.2 — coeff_abs_level_greater2_flag : 1 bin, context-coded
-// §9.3.3.3 — coeff_abs_level_remaining : bypass-coded (pas de contexte)
-//   → Golomb-Rice code avec parametre adaptatif
+// §9.3.3.3 — coeff_abs_level_remaining : bypass-coded (no context)
+//   → Golomb-Rice code with adaptive parameter
 
 // §9.3.3.11 — coeff_abs_level_remaining binarization
 int decode_coeff_abs_level_remaining(ArithmeticDecoder& ad, int cRiceParam) {
@@ -129,19 +129,19 @@ int decode_coeff_abs_level_remaining(ArithmeticDecoder& ad, int cRiceParam) {
 }
 ```
 
-### Adaptation du parametre Rice (cRiceParam)
+### Rice parameter adaptation (cRiceParam)
 
-Le parametre Rice est adaptatif : il s'ajuste apres chaque sub-block en fonction des niveaux de coefficients decodes.
+The Rice parameter is adaptive: it adjusts after each sub-block based on the decoded coefficient levels.
 
 ```cpp
 // §9.3.3.11 — cRiceParam update
-// Apres le decodage de chaque coeff_abs_level_remaining :
-// Si la valeur absolue reconstruite > 3 * (1 << cRiceParam)
+// After decoding each coeff_abs_level_remaining:
+// If the reconstructed absolute value > 3 * (1 << cRiceParam)
 //    cRiceParam = min(cRiceParam + 1, 4)
-// Le cRiceParam est reinitialise a 0 au debut de chaque sub-block group
+// cRiceParam is reset to 0 at the start of each sub-block group
 
-// En pratique :
-int cRiceParam = 0;  // reset au debut de chaque 4x4 sub-block
+// In practice:
+int cRiceParam = 0;  // reset at the start of each 4x4 sub-block
 for (int n = numSigCoeff - 1; n >= 0; n--) {
     if (need_remaining[n]) {
         int remaining = decode_coeff_abs_level_remaining(ad, cRiceParam);
@@ -153,60 +153,60 @@ for (int n = numSigCoeff - 1; n >= 0; n--) {
 }
 ```
 
-Le `cRiceParam` commence a 0 pour chaque sub-block et peut monter jusqu'a 4. C'est critique pour le decodage correct des grands coefficients residuels.
+`cRiceParam` starts at 0 for each sub-block and can rise up to 4. This is critical for correctly decoding large residual coefficients.
 
 ## 9.4 — Context Modeling
 
-### Choix du contexte
+### Context selection
 
-Chaque bin d'un syntax element utilise un contexte specifique. Le choix du contexte depend souvent de :
+Each bin of a syntax element uses a specific context. The context choice often depends on:
 
-1. **Position dans la binarization** (quel bin du mot)
-2. **Valeurs des voisins** (contexte spatial)
-3. **Profondeur du quad-tree**
-4. **Type de slice** (I, P, B)
-5. **Composante** (luma, Cb, Cr)
+1. **Position in the binarization** (which bin of the word)
+2. **Neighbor values** (spatial context)
+3. **Quad-tree depth**
+4. **Slice type** (I, P, B)
+5. **Component** (luma, Cb, Cr)
 
 ```cpp
-// Exemple : split_cu_flag context (§9.3.4.2.2)
+// Example: split_cu_flag context (§9.3.4.2.2)
 int ctx_split_cu_flag(int x0, int y0, int log2CbSize) {
-    // Contexte base sur la profondeur des CU voisins
+    // Context based on the depth of the neighboring CUs
     int condL = (left_neighbor_depth > current_depth) ? 1 : 0;
     int condA = (above_neighbor_depth > current_depth) ? 1 : 0;
     return condL + condA;  // ctx index 0, 1, or 2
 }
 
-// Exemple : sig_coeff_flag context (§9.3.4.2.8) — tres complexe
-// Depend de : cIdx, log2TrafoSize, scan position, coded_sub_block_flag des voisins
-// ~42 contextes pour luma, ~16 pour chroma
+// Example: sig_coeff_flag context (§9.3.4.2.8) — very complex
+// Depends on: cIdx, log2TrafoSize, scan position, coded_sub_block_flag of the neighbors
+// ~42 contexts for luma, ~16 for chroma
 ```
 
 ### sig_coeff_flag context derivation (§9.3.4.2.8) — CRITIQUE
 
-C'est la derivation de contexte la plus complexe en HEVC. Le contexte depend de 5 facteurs :
+This is the most complex context derivation in HEVC. The context depends on 5 factors:
 
 ```cpp
 int ctx_sig_coeff_flag(int xS, int yS, int xC, int yC, int log2TrafoSize,
                         int cIdx, const uint8_t* coded_sub_block_flag) {
-    // xS, yS : position du sub-block (4x4)
-    // xC, yC : position du coefficient dans le sub-block (0-3)
-    // coded_sub_block_flag : flags des sub-blocks voisins
+    // xS, yS: position of the sub-block (4x4)
+    // xC, yC: position of the coefficient within the sub-block (0-3)
+    // coded_sub_block_flag: flags of the neighboring sub-blocks
 
     int sigCtx;
 
     if (log2TrafoSize == 2) {
-        // 4x4 TU : contexte base sur la position dans le scan
-        // Table fixe : ctxIdxMap[15] pour luma/chroma
+        // 4x4 TU: context based on the position in the scan
+        // Fixed table: ctxIdxMap[15] for luma/chroma
         sigCtx = ctxIdxMap[4*yC + xC];  // Tables 9-50, 9-51
     } else {
-        // TU > 4x4 : contexte base sur les sub-blocks voisins
+        // TU > 4x4: context based on the neighboring sub-blocks
         int prevCsbf = 0;
         if (xS < (1 << (log2TrafoSize - 2)) - 1)
             prevCsbf += coded_sub_block_flag[(xS+1) + yS * stride];  // right
         if (yS < (1 << (log2TrafoSize - 2)) - 1)
             prevCsbf += (coded_sub_block_flag[xS + (yS+1) * stride] << 1);  // below
 
-        // Position dans le sub-block
+        // Position within the sub-block
         int xP = xC, yP = yC;
 
         if (prevCsbf == 0)
@@ -218,9 +218,9 @@ int ctx_sig_coeff_flag(int xS, int yS, int xC, int yC, int log2TrafoSize,
         else
             sigCtx = 2;
 
-        // Offset par composante et taille
+        // Offset per component and size
         if (cIdx == 0) {
-            // Luma : 27 contextes (3 zones de taille)
+            // Luma: 27 contexts (3 size zones)
             if (log2TrafoSize == 3)
                 sigCtx += 9;    // 8x8
             else if (log2TrafoSize == 4)
@@ -228,22 +228,22 @@ int ctx_sig_coeff_flag(int xS, int yS, int xC, int yC, int log2TrafoSize,
             else
                 sigCtx += 12;   // 32x32
         } else {
-            // Chroma : 15 contextes base
+            // Chroma: 15 base contexts
             sigCtx += (log2TrafoSize == 3) ? 9 : 12;
         }
     }
 
-    // Le contexte 0 est reserve au "last" coefficient (DC du dernier sub-block)
-    // Ajouter l'offset de base pour sig_coeff_flag (different I/P/B)
+    // Context 0 is reserved for the "last" coefficient (DC of the last sub-block)
+    // Add the base offset for sig_coeff_flag (different for I/P/B)
     return sigCtx;
 }
 ```
 
-**Attention** : Ce pseudo-code est simplifie. L'implementation DOIT suivre exactement les equations 9-48 a 9-54 de la spec. Une erreur d'un seul contexte corrompt l'ensemble du decodage CABAC.
+**Warning**: This pseudo-code is simplified. The implementation MUST follow equations 9-48 to 9-54 of the spec exactly. A single context error corrupts the whole CABAC decoding.
 
-### Table des contextes (resume)
+### Context table (summary)
 
-| Syntax element | Nombre de contextes | Init table |
+| Syntax element | Number of contexts | Init table |
 |---------------|--------------------:|------------|
 | split_cu_flag | 3 | 9-5 |
 | cu_skip_flag | 3 | 9-6 |
@@ -332,39 +332,39 @@ void ArithmeticDecoder::renormalize() {
 ```cpp
 // Table 9-48 : rangeTabLps[64][4]
 // 64 states x 4 range indices
-// Ces tables sont dans la spec, ~256 entrees a recopier exactement
+// These tables are in the spec, ~256 entries to copy exactly
 
 // Table 9-49 : transIdxMps[64] — next state after MPS
 // Table 9-50 : transIdxLps[64] — next state after LPS
 ```
 
-## Strategie d'implementation
+## Implementation strategy
 
-1. **Moteur arithmetique** en premier (decode_decision, decode_bypass, renormalize)
-2. **Initialisation des contextes** (recopier les tables d'init)
-3. **Binarization** de chaque syntax element un par un
-4. **Tests** : decoder un slice simple (I-frame) et verifier les syntax elements
+1. **Arithmetic engine** first (decode_decision, decode_bypass, renormalize)
+2. **Context initialization** (copy the init tables)
+3. **Binarization** of each syntax element, one by one
+4. **Tests**: decode a simple slice (I-frame) and verify the syntax elements
 
-Le CABAC est la partie la plus sensible aux erreurs : un seul bit mal lu fait diverger tout le reste. C'est pourquoi il faut le tester tres finement.
+CABAC is the part most sensitive to errors: a single misread bit makes everything after it diverge. That is why it must be tested very finely.
 
-## Pieges connus
+## Known pitfalls
 
-1. **Bit-exactness** : L'arithmetique est entiere et doit etre exactement conforme a la spec
-2. **Renormalization** : Chaque oubli de renorm corrompt le decodage
-3. **Context index** : Le moindre mauvais contexte produit des resultats absurdes
-4. **cabac_init_flag** : Peut permuter les tables d'init entre I et P/B
-5. **Dependent slice segments** : Le CABAC continue l'etat du slice precedent
-6. **End of slice detection** : end_of_slice_segment_flag + byte alignment
+1. **Bit-exactness**: The arithmetic is integer and must conform exactly to the spec
+2. **Renormalization**: Every missed renorm corrupts the decoding
+3. **Context index**: The slightest wrong context produces absurd results
+4. **cabac_init_flag**: Can swap the init tables between I and P/B
+5. **Dependent slice segments**: CABAC continues the state of the previous slice
+6. **End of slice detection**: end_of_slice_segment_flag + byte alignment
 
 ## Checklist
 
 - [ ] Arithmetic decoder (decode_decision, decode_bypass, terminate)
 - [ ] Renormalization
-- [ ] Tables rangeTabLps, transIdxMps, transIdxLps (recopier de la spec)
-- [ ] Context initialization avec toutes les tables d'initValues
-- [ ] Binarization de chaque syntax element ae(v)
-- [ ] Context selection pour chaque syntax element
+- [ ] Tables rangeTabLps, transIdxMps, transIdxLps (copy from the spec)
+- [ ] Context initialization with all the initValues tables
+- [ ] Binarization of each ae(v) syntax element
+- [ ] Context selection for each syntax element
 - [ ] cabac_init_flag handling
 - [ ] Dependent slice segment CABAC continuation
 - [ ] end_of_slice_segment_flag detection
-- [ ] Tests : decoder un I-frame minimal et verifier tous les syntax elements
+- [ ] Tests: decode a minimal I-frame and verify all syntax elements

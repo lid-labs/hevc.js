@@ -1,25 +1,25 @@
-# Chapitre 8 — Decoding Process (Index)
+# Chapter 8 — Decoding Process (Index)
 
-Ce chapitre decrit le processus de decodage complet, depuis les syntax elements parses jusqu'aux samples reconstruits.
+This chapter describes the complete decoding process, from the parsed syntax elements to the reconstructed samples.
 
 ## Structure
 
-| Section | Fichier | Contenu | Phase |
+| Section | File | Content | Phase |
 |---------|---------|---------|-------|
-| 8.3 | `08-03-reference-pictures.md` | Gestion des ref pics, DPB, POC | 5 |
+| 8.3 | `08-03-reference-pictures.md` | Ref pic management, DPB, POC | 5 |
 | 8.4 | (inline 8.6) | Quantization matrices | 4 |
 | 8.5.3 | `08-04-inter-prediction.md` | Motion compensation, interpolation | 5 |
-| 8.5.4 | `08-05-intra-prediction.md` | 35 modes intra (DC, Planar, Angular) | 4 |
-| 8.6 | `08-06-transform-quant.md` | Transform inverse, dequant, scaling | 4 |
+| 8.5.4 | `08-05-intra-prediction.md` | 35 intra modes (DC, Planar, Angular) | 4 |
+| 8.6 | `08-06-transform-quant.md` | Inverse transform, dequant, scaling | 4 |
 | 8.7.2 | `08-07-deblocking.md` | Deblocking filter | 6 |
 | 8.7.3 | `08-08-sao.md` | Sample Adaptive Offset | 6 |
 
-## Pipeline de decodage d'un CU
+## CU decoding pipeline
 
 ```
 +------------------+
 | Syntax Parsing   | (CABAC -> syntax elements)
-| (Chapitre 7+9)   |
+| (Chapter 7+9)    |
 +--------+---------+
          |
     +----+----+
@@ -43,7 +43,7 @@ Ce chapitre decrit le processus de decodage complet, depuis les syntax elements 
 | Reconstruction   |  recSamples = Clip(predSamples + resSamples)
 +--------+---------+
          |
-         v  (apres tous les CUs de la picture)
+         v  (after all the CUs of the picture)
 +------------------+
 | Deblocking       |  8.7.2
 +--------+---------+
@@ -55,14 +55,14 @@ Ce chapitre decrit le processus de decodage complet, depuis les syntax elements 
          |
          v
 +------------------+
-| DPB Storage      |  Frame prete pour output/reference
+| DPB Storage      |  Frame ready for output/reference
 +------------------+
 ```
 
 ## Convention
 
-Chaque fichier 08-xx contient :
-1. Le pseudo-code de la spec pour chaque sous-processus
-2. La traduction C++ correspondante
-3. Les edge cases et pieges identifies
-4. La checklist de validation
+Each 08-xx file contains:
+1. The spec pseudo-code for each sub-process
+2. The corresponding C++ translation
+3. The edge cases and pitfalls identified
+4. The validation checklist

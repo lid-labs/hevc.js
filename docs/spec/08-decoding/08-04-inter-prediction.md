@@ -1,20 +1,20 @@
 # 8.5.3 — Inter Prediction
 
-Spec ref : 8.5.3.1 (general), 8.5.3.2 (luma interpolation), 8.5.3.3 (chroma interpolation), 8.5.3.4 (weighted pred)
+Spec ref: 8.5.3.1 (general), 8.5.3.2 (luma interpolation), 8.5.3.3 (chroma interpolation), 8.5.3.4 (weighted pred)
 
-## Vue d'ensemble
+## Overview
 
-L'inter prediction reconstruit un bloc a partir d'une frame de reference + un motion vector. Le MV a une precision au 1/4 de pixel (luma), necessitant une interpolation.
+Inter prediction reconstructs a block from a reference frame + a motion vector. The MV has quarter-pixel precision (luma), which requires interpolation.
 
-## 8.5.3.1 — Processus general
+## 8.5.3.1 — General process
 
 ```
 Inputs:
-- (xPb, yPb) : position du PU
-- (nPbW, nPbH) : dimensions du PU
-- mvL0, mvL1 : motion vectors (en 1/4 pel)
-- refIdxL0, refIdxL1 : indices dans les listes de reference
-- predFlagL0, predFlagL1 : flags de prediction
+- (xPb, yPb): PU position
+- (nPbW, nPbH): PU dimensions
+- mvL0, mvL1: motion vectors (in 1/4 pel)
+- refIdxL0, refIdxL1: indices into the reference lists
+- predFlagL0, predFlagL1: prediction flags
 
 Process:
 if (predFlagL0)
@@ -23,7 +23,7 @@ if (predFlagL1)
     predSamplesL1 = motion_compensation(refPicL1, mvL1, nPbW, nPbH)
 
 if (predFlagL0 && predFlagL1)
-    // Bi-prediction : moyenne ponderee
+    // Bi-prediction: weighted average
     predSamples = (predSamplesL0 + predSamplesL1 + offset) >> shift
 else if (predFlagL0)
     predSamples = predSamplesL0
@@ -33,53 +33,53 @@ else
 
 ## 8.5.3.2 — Luma Sample Interpolation
 
-Filtre d'interpolation 8-tap pour les positions fractionnaires :
+8-tap interpolation filter for fractional positions:
 
-### Coefficients du filtre luma (8.5.3.2.2, Table 8-1)
+### Luma filter coefficients (8.5.3.2.2, Table 8-1)
 
 ```cpp
-// Positions fractionnaires (1/4 pel) : 0, 1, 2, 3
-// Position 0 = pixel entier, pas d'interpolation
+// Fractional positions (1/4 pel): 0, 1, 2, 3
+// Position 0 = integer pixel, no interpolation
 const int16_t luma_filter[4][8] = {
-    {  0,  0,  0, 64,  0,  0,  0,  0 },  // position 0 (entier)
+    {  0,  0,  0, 64,  0,  0,  0,  0 },  // position 0 (integer)
     { -1,  4,-10, 58, 17, -5,  1,  0 },  // position 1 (1/4)
     { -1,  4,-11, 40, 40,-11,  4, -1 },  // position 2 (1/2)
     {  0,  1, -5, 17, 58,-10,  4, -1 },  // position 3 (3/4)
 };
 ```
 
-### Processus d'interpolation
+### Interpolation process
 
 ```cpp
-// Pour chaque sample (x, y) du bloc de prediction :
+// For each sample (x, y) of the prediction block:
 void luma_interpolation(
-    const int16_t* ref,        // frame de reference
+    const int16_t* ref,        // reference frame
     int ref_stride,
-    int16_t* pred,             // bloc de sortie
+    int16_t* pred,             // output block
     int pred_stride,
-    int xFrac, int yFrac,      // position fractionnaire (0-3)
+    int xFrac, int yFrac,      // fractional position (0-3)
     int width, int height
 ) {
     if (xFrac == 0 && yFrac == 0) {
-        // Copie directe (pixel entier)
+        // Direct copy (integer pixel)
     } else if (yFrac == 0) {
-        // Filtre horizontal seulement
+        // Horizontal filter only
         for (y = 0; y < height; y++)
             for (x = 0; x < width; x++)
                 pred[y*stride+x] = filter_h(ref, x, y, xFrac);
     } else if (xFrac == 0) {
-        // Filtre vertical seulement
+        // Vertical filter only
         for (y = 0; y < height; y++)
             for (x = 0; x < width; x++)
                 pred[y*stride+x] = filter_v(ref, x, y, yFrac);
     } else {
-        // Filtre 2D : horizontal d'abord, puis vertical sur le resultat
-        // Etape 1 : filtre horizontal -> buffer temporaire (avec marge verticale)
-        // Etape 2 : filtre vertical sur le buffer temporaire
+        // 2D filter: horizontal first, then vertical on the result
+        // Step 1: horizontal filter -> temporary buffer (with vertical margin)
+        // Step 2: vertical filter on the temporary buffer
     }
 }
 
-// Filtre horizontal 8-tap
+// 8-tap horizontal filter
 int filter_h(const int16_t* ref, int x, int y, int frac) {
     const int16_t* f = luma_filter[frac];
     return f[0]*ref[x-3] + f[1]*ref[x-2] + f[2]*ref[x-1] + f[3]*ref[x]
@@ -87,56 +87,56 @@ int filter_h(const int16_t* ref, int x, int y, int frac) {
 }
 ```
 
-### Precision intermediaire pour le filtre 2D
+### Intermediate precision for the 2D filter
 
-Pour l'interpolation 2D (xFrac != 0 ET yFrac != 0), le filtre horizontal produit des valeurs intermediaires en precision etendue :
-- **Pas de clipping** apres le filtre horizontal
-- Les valeurs intermediaires sont sur ~22 bits (8-bit input * 8-tap filter avec coefficients jusqu'a 64)
-- Le filtre vertical applique ensuite sur ces valeurs etendues
-- Le clipping final est applique apres le filtre vertical : Clip3(0, (1 << BitDepth) - 1, (result + offset) >> shift)
+For 2D interpolation (xFrac != 0 AND yFrac != 0), the horizontal filter produces intermediate values in extended precision:
+- **No clipping** after the horizontal filter
+- The intermediate values are on ~22 bits (8-bit input * 8-tap filter with coefficients up to 64)
+- The vertical filter is then applied to these extended values
+- The final clipping is applied after the vertical filter: Clip3(0, (1 << BitDepth) - 1, (result + offset) >> shift)
 
-### Shifts d'interpolation — Reference definitive (§8.5.3.3.3)
+### Interpolation shifts — Definitive reference (§8.5.3.3.3)
 
-Les shifts dependent de la combinaison (H/V/HV) et du mode (uni/bi pred). Valeurs exactes :
+The shifts depend on the combination (H/V/HV) and the mode (uni/bi pred). Exact values:
 
 ```
-Cas 1 — H-only (xFrac != 0, yFrac == 0) :
+Case 1 — H-only (xFrac != 0, yFrac == 0):
   shift    = BitDepth - 8
   offset   = shift > 0 ? (1 << (shift - 1)) : 0
-  resultat = Clip3(0, (1 << BitDepth) - 1, (sum + offset) >> shift)
+  result   = Clip3(0, (1 << BitDepth) - 1, (sum + offset) >> shift)
 
-Cas 2 — V-only (xFrac == 0, yFrac != 0) :
+Case 2 — V-only (xFrac == 0, yFrac != 0):
   shift    = 14 - BitDepth
   offset   = 1 << (shift - 1)
-  resultat = Clip3(0, (1 << BitDepth) - 1, (sum + offset) >> shift)
+  result   = Clip3(0, (1 << BitDepth) - 1, (sum + offset) >> shift)
 
-Cas 3 — 2D / passe H (xFrac != 0, yFrac != 0, premiere passe) :
+Case 3 — 2D / H pass (xFrac != 0, yFrac != 0, first pass):
   shift    = BitDepth - 8
   offset   = 0
-  resultat = (sum + offset) >> shift    // PAS de clipping
-  → valeurs intermediaires sur ~15 bits (8-bit) ou ~17 bits (10-bit)
-  → buffer int16_t pour 8-bit, int32_t pour 10-bit
+  result   = (sum + offset) >> shift    // NO clipping
+  → intermediate values on ~15 bits (8-bit) or ~17 bits (10-bit)
+  → int16_t buffer for 8-bit, int32_t for 10-bit
 
-Cas 4 — 2D / passe V (deuxieme passe sur le buffer intermediaire) :
+Case 4 — 2D / V pass (second pass on the intermediate buffer):
   shift    = 6
   offset   = 1 << 5 = 32
-  resultat = Clip3(0, (1 << BitDepth) - 1, (sum + offset) >> shift)
+  result   = Clip3(0, (1 << BitDepth) - 1, (sum + offset) >> shift)
 ```
 
-Pour la **bi-prediction**, l'interpolation produit des valeurs en precision etendue (pas de clip final dans les cas 1-4), puis :
+For **bi-prediction**, the interpolation produces values in extended precision (no final clip in cases 1-4), then:
 
 ```
-Bi-pred averaging :
+Bi-pred averaging:
   shift    = 15 - BitDepth
   offset   = 1 << (shift - 1)
-  resultat = Clip3(0, (1 << BitDepth) - 1, (predL0 + predL1 + offset) >> shift)
+  result   = Clip3(0, (1 << BitDepth) - 1, (predL0 + predL1 + offset) >> shift)
 ```
 
-Dans ce cas, les interpolations H-only et V-only utilisent des shifts differents pour conserver la precision etendue. Se referer a §8.5.3.3.3.1 pour les details.
+In this case, the H-only and V-only interpolations use different shifts to preserve the extended precision. Refer to §8.5.3.3.3.1 for details.
 
 ## 8.5.3.3 — Chroma Sample Interpolation
 
-Filtre 4-tap pour la chroma (precision 1/8 pel) :
+4-tap filter for chroma (1/8 pel precision):
 
 ```cpp
 // Table 8-2
@@ -152,17 +152,17 @@ const int16_t chroma_filter[8][4] = {
 };
 ```
 
-Le MV chroma est derive du MV luma en divisant par SubWidthC/SubHeightC (avec ajustement de la position fractionnaire).
+The chroma MV is derived from the luma MV by dividing by SubWidthC/SubHeightC (with an adjustment of the fractional position).
 
 ## 8.5.3.4 — Weighted Prediction
 
 ```cpp
-// Si weighted_pred_flag (P slice) ou weighted_bipred_flag (B slice) :
-// Uni-prediction :
+// If weighted_pred_flag (P slice) or weighted_bipred_flag (B slice):
+// Uni-prediction:
 predSamples[x][y] = Clip3(0, maxVal,
     ((predSamplesLX[x][y] * w0 + (1 << (log2Wd - 1))) >> log2Wd) + o0)
 
-// Bi-prediction :
+// Bi-prediction:
 predSamples[x][y] = Clip3(0, maxVal,
     ((predSamplesL0[x][y] * w0 + predSamplesL1[x][y] * w1
       + ((o0 + o1 + 1) << log2Wd)) >> (log2Wd + 1)))
@@ -173,23 +173,23 @@ predSamples[x][y] = Clip3(0, maxVal,
 ### Merge Mode (8.5.3.2.2)
 
 ```
-Candidats merge (dans l'ordre de priorite, Figure 8-5) :
-1. A1 (left)       : (xPb-1, yPb+nPbH-1)  — bas du cote gauche du PU
-2. B1 (above)      : (xPb+nPbW-1, yPb-1)  — droite du cote superieur du PU
-3. B0 (above-right) : (xPb+nPbW, yPb-1)    — coin superieur droit du PU
-4. A0 (below-left)  : (xPb-1, yPb+nPbH)    — coin inferieur gauche du PU
-5. B2 (above-left)  : (xPb-1, yPb-1)       — coin superieur gauche, seulement si < 4 candidats
-6. Temporal candidate (co-located block dans la ref pic)
-7. Zero MV (padding si < MaxNumMergeCand)
+Merge candidates (in priority order, Figure 8-5):
+1. A1 (left)       : (xPb-1, yPb+nPbH-1)  — bottom of the PU's left side
+2. B1 (above)      : (xPb+nPbW-1, yPb-1)  — right of the PU's top side
+3. B0 (above-right) : (xPb+nPbW, yPb-1)    — top-right corner of the PU
+4. A0 (below-left)  : (xPb-1, yPb+nPbH)    — bottom-left corner of the PU
+5. B2 (above-left)  : (xPb-1, yPb-1)       — top-left corner, only if < 4 candidates
+6. Temporal candidate (co-located block in the ref pic)
+7. Zero MV (padding if < MaxNumMergeCand)
 ```
 
 ### Combined Bi-predictive Merge Candidates (§8.5.3.2.4)
 
-Si le nombre de candidats merge est inferieur a `MaxNumMergeCand` et que le slice est de type B, des candidats bi-predictifs combines sont generes :
+If the number of merge candidates is lower than `MaxNumMergeCand` and the slice is of type B, combined bi-predictive candidates are generated:
 
 ```cpp
-// Combiner des paires de candidats L0-only en candidats bi-predictifs
-// Pour chaque paire (l0Idx, l1Idx) dans un ordre defini :
+// Combine pairs of L0-only candidates into bi-predictive candidates
+// For each pair (l0Idx, l1Idx) in a defined order:
 // combIdx: 0 -> (0,1), 1 -> (1,0), 2 -> (0,2), ...
 for (int combIdx = 0; combIdx < numCombinations && numMergeCand < MaxNumMergeCand; combIdx++) {
     int l0CandIdx = l0CandIdxTable[combIdx];
@@ -198,8 +198,8 @@ for (int combIdx = 0; combIdx < numCombinations && numMergeCand < MaxNumMergeCan
     MergeCand& l0Cand = mergeCandList[l0CandIdx];
     MergeCand& l1Cand = mergeCandList[l1CandIdx];
 
-    // Combiner seulement si les ref pics sont differentes
-    // (sinon c'est redondant avec le candidat original)
+    // Combine only if the ref pics are different
+    // (otherwise it is redundant with the original candidate)
     if (l0Cand.refPicL0 != l1Cand.refPicL1) {
         MergeCand combined;
         combined.predFlagL0 = 1;
@@ -213,7 +213,7 @@ for (int combIdx = 0; combIdx < numCombinations && numMergeCand < MaxNumMergeCan
 }
 ```
 
-### Ordre des paires (Table 8-8 de la spec)
+### Pair order (Table 8-8 of the spec)
 
 | combIdx | l0CandIdx | l1CandIdx |
 |---------|-----------|-----------|
@@ -227,20 +227,20 @@ for (int combIdx = 0; combIdx < numCombinations && numMergeCand < MaxNumMergeCan
 ### AMVP (8.5.3.2.6)
 
 ```
-Candidats AMVP (2 candidats) :
-1. Spatial : A0/A1 (gauche), puis B0/B1/B2 (haut)
-2. Temporal : co-located block
+AMVP candidates (2 candidates):
+1. Spatial: A0/A1 (left), then B0/B1/B2 (above)
+2. Temporal: co-located block
 3. Zero MV (padding)
 
-MV final = mvp_candidate[mvp_flag] + mvd
+Final MV = mvp_candidate[mvp_flag] + mvd
 ```
 
-## Pieges connus
+## Known pitfalls
 
-1. **Clipping MV** : Le MV peut pointer hors de la frame -> clamping necessaire + padding des bords
-2. **Interpolation 2D** : Le filtre horizontal produit des valeurs intermediaires sur plus de bits -> attention au buffer temporaire (besoin de 16 bits min)
-3. **Bi-prediction shift/round** : Les erreurs d'arrondi sont la source #1 de mismatch avec l'oracle
-4. **Chroma MV derivation** : Diviser le MV luma par SubWidthC/SubHeightC, la position fractionnaire change
+1. **MV clipping**: The MV can point outside the frame -> clamping necessary + edge padding
+2. **2D interpolation**: The horizontal filter produces intermediate values on more bits -> watch the temporary buffer (16 bits min needed)
+3. **Bi-prediction shift/round**: Rounding errors are the #1 source of mismatch with the oracle
+4. **Chroma MV derivation**: Divide the luma MV by SubWidthC/SubHeightC, the fractional position changes
 
 ## Checklist
 
@@ -250,5 +250,5 @@ MV final = mvp_candidate[mvp_flag] + mvd
 - [ ] Chroma interpolation 4-tap
 - [ ] Bi-prediction averaging
 - [ ] Weighted prediction (explicit)
-- [ ] MV clipping aux bords de la frame
-- [ ] Tests : bitstreams P-only puis B, pixel-perfect vs libde265
+- [ ] MV clipping at the frame edges
+- [ ] Tests: P-only then B bitstreams, pixel-perfect vs libde265

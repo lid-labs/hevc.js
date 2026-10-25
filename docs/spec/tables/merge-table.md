@@ -1,22 +1,22 @@
 # Merge Candidate Combination Table
 
-Table complete des paires pour les combined bi-predictive merge candidates (spec ITU-T H.265, Table 8-8).
+Complete table of pairs for the combined bi-predictive merge candidates (spec ITU-T H.265, Table 8-8).
 
 ## Table 8-8 — combIdx to l0CandIdx and l1CandIdx
 
-Utilisee dans §8.5.3.2.4 pour generer les candidats bi-predictifs combines a partir des candidats uni-directionnels existants.
+Used in §8.5.3.2.4 to generate the combined bi-predictive candidates from the existing uni-directional candidates.
 
 ```cpp
-// Nombre max de combinaisons a tester
-// numOrigMergeCand * (numOrigMergeCand - 1) paires possibles
-// mais on s'arrete des que numMergeCand == MaxNumMergeCand
+// Max number of combinations to test
+// numOrigMergeCand * (numOrigMergeCand - 1) possible pairs
+// but we stop as soon as numMergeCand == MaxNumMergeCand
 
 struct MergeCombination {
     int l0CandIdx;
     int l1CandIdx;
 };
 
-// Table ordonnee par combIdx (pour MaxNumMergeCand = 5)
+// Table ordered by combIdx (for MaxNumMergeCand = 5)
 const MergeCombination mergeCombTable[] = {
     { 0, 1 },  // combIdx 0
     { 1, 0 },  // combIdx 1
@@ -33,7 +33,7 @@ const MergeCombination mergeCombTable[] = {
 };
 ```
 
-## Algorithme de generation
+## Generation algorithm
 
 ```cpp
 void generateCombinedBiPredCandidates(
@@ -42,7 +42,7 @@ void generateCombinedBiPredCandidates(
     int MaxNumMergeCand,
     int numOrigMergeCand
 ) {
-    // Seulement pour les B-slices
+    // B-slices only
     int combIdx = 0;
     int numCombinations = numOrigMergeCand * (numOrigMergeCand - 1);
 
@@ -59,8 +59,8 @@ void generateCombinedBiPredCandidates(
         MergeCandidate& l0Cand = mergeCandList[l0CandIdx];
         MergeCandidate& l1Cand = mergeCandList[l1CandIdx];
 
-        // Condition : les ref pics doivent etre differentes
-        // pour que le candidat combine apporte une information nouvelle
+        // Condition: the ref pics must be different
+        // so that the combined candidate brings new information
         if (l0Cand.predFlagL0 == 1 && l1Cand.predFlagL1 == 1) {
             if (RefPicList0[l0Cand.refIdxL0] != RefPicList1[l1Cand.refIdxL1] ||
                 l0Cand.mvL0 != l1Cand.mvL1)
@@ -82,7 +82,7 @@ void generateCombinedBiPredCandidates(
 
 ## Zero MV Candidates (padding)
 
-Apres les combined bi-pred candidates, si `numMergeCand < MaxNumMergeCand`, on ajoute des candidats zero MV :
+After the combined bi-pred candidates, if `numMergeCand < MaxNumMergeCand`, zero MV candidates are added:
 
 ```cpp
 void addZeroMVCandidates(

@@ -1,23 +1,23 @@
-# Chapitre 7 — Syntax and Semantics (Index)
+# Chapter 7 — Syntax and Semantics (Index)
 
-Ce chapitre est le coeur du parsing HEVC. Chaque sous-section correspond à une structure syntaxique à parser depuis le bitstream.
+This chapter is the core of HEVC parsing. Each subsection corresponds to a syntactic structure to parse from the bitstream.
 
-## Structure du chapitre
+## Chapter structure
 
-| Section | Fichier | Contenu | Phase |
+| Section | File | Content | Phase |
 |---------|---------|---------|-------|
 | §7.3.1 | `07-03-nal-unit.md` | NAL unit syntax | 2 |
 | §7.3.2-4 | `07-04-parameter-sets.md` | VPS, SPS, PPS | 3 |
 | §7.3.6 | `07-05-slice-header.md` | Slice segment header | 3 |
-| §7.3.8.1 | `07-08-slice-segment-data.md` | Boucle slice_segment_data(), end_of_slice_segment_flag | 4 |
+| §7.3.8.1 | `07-08-slice-segment-data.md` | slice_segment_data() loop, end_of_slice_segment_flag | 4 |
 | §7.3.8-11 | `07-06-slice-data.md` | CTU, CU, PU, TU | 4-5 |
-| §7.3.7 | `07-07-sei.md` | SEI messages | Optionnel |
+| §7.3.7 | `07-07-sei.md` | SEI messages | Optional |
 
-## Convention de lecture de la spec
+## Spec reading conventions
 
-La spec utilise des fonctions de lecture du bitstream :
+The spec uses bitstream reading functions:
 
-| Notation spec | Fonction C++ | Description |
+| Spec notation | C++ function | Description |
 |--------------|-------------|-------------|
 | `f(n)` | `read_bits(n)` | n bits fixed-length |
 | `u(n)` | `read_u(n)` | unsigned integer, n bits |
@@ -27,20 +27,20 @@ La spec utilise des fonctions de lecture du bitstream :
 | `ae(v)` | `cabac_decode()` | CABAC-coded (context-adaptive) |
 | `b(8)` | `read_byte()` | byte-aligned byte |
 
-## Descripteurs conditionnels
+## Conditional descriptors
 
-La spec utilise abondamment des conditions de présence. Règle : **si un syntax element n'est pas présent, sa valeur inferred est définie dans la semantics (§7.4)**.
+The spec makes extensive use of presence conditions. Rule: **if a syntax element is not present, its inferred value is defined in the semantics (§7.4)**.
 
-Exemple :
+Example:
 ```
 if( condition )
     syntax_element    ue(v)
 ```
-Si `condition` est faux, `syntax_element` prend sa valeur inferred (souvent 0).
+If `condition` is false, `syntax_element` takes its inferred value (often 0).
 
-## Approche d'implémentation
+## Implementation approach
 
-1. Traduire le pseudo-code de la spec en C++ ligne par ligne
-2. Chaque syntax element est stocké dans une struct
-3. Les valeurs dérivées (§7.4) sont calculées immédiatement après parsing
-4. Les valeurs inferred sont initialisées dans le constructeur de la struct
+1. Translate the spec pseudo-code to C++ line by line
+2. Each syntax element is stored in a struct
+3. Derived values (§7.4) are computed immediately after parsing
+4. Inferred values are initialized in the struct constructor

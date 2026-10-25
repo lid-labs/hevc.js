@@ -1,23 +1,23 @@
 # 8.5.4 — Intra Prediction
 
-Spec ref : 8.5.4.1 (general), 8.5.4.2 (reference sample availability + substitution), 8.5.4.3 (filtering), 8.5.4.4 (Planar), 8.5.4.5 (DC), 8.5.4.6 (Angular)
+Spec ref: 8.5.4.1 (general), 8.5.4.2 (reference sample availability + substitution), 8.5.4.3 (filtering), 8.5.4.4 (Planar), 8.5.4.5 (DC), 8.5.4.6 (Angular)
 
-## Vue d'ensemble
+## Overview
 
-35 modes intra pour luma (0-34), 5 modes pour chroma :
+35 intra modes for luma (0-34), 5 modes for chroma:
 
-| Mode | Nom | Description |
+| Mode | Name | Description |
 |------|-----|-------------|
-| 0 | Planar | Interpolation bilineaire |
-| 1 | DC | Moyenne des samples de reference |
-| 2-34 | Angular | Directionnels (26 = vertical, 10 = horizontal) |
+| 0 | Planar | Bilinear interpolation |
+| 1 | DC | Average of the reference samples |
+| 2-34 | Angular | Directional (26 = vertical, 10 = horizontal) |
 
 ## 8.5.4.2 — Reference Sample Availability
 
-Avant la prediction, il faut construire le vecteur de samples de reference `p[x][y]` :
+Before prediction, the reference sample vector `p[x][y]` must be built:
 
 ```
-Samples de reference (pour un bloc NxN) :
+Reference samples (for an NxN block):
 
         p[-1][-1]  p[0][-1] ... p[2N-1][-1]
         p[-1][0]
@@ -25,50 +25,50 @@ Samples de reference (pour un bloc NxN) :
         ...
         p[-1][2N-1]
 
--> 4N+1 samples au total (coin + bord haut + bord gauche)
+-> 4N+1 samples in total (corner + top edge + left edge)
 ```
 
-### Processus de disponibilite
+### Availability process
 
 ```cpp
-// Pour chaque position de sample de reference :
-// 1. Verifier si le bloc voisin est disponible (dans le meme slice/tile, deja decode)
-// 2. Si non disponible : substitution
-//    - Premier sample disponible -> propager aux positions non disponibles
-//    - Si aucun disponible : valeur par defaut = 1 << (BitDepth - 1) (mi-echelle)
+// For each reference sample position:
+// 1. Check whether the neighboring block is available (in the same slice/tile, already decoded)
+// 2. If not available: substitution
+//    - First available sample -> propagate to the unavailable positions
+//    - If none is available: default value = 1 << (BitDepth - 1) (mid-scale)
 ```
 
 ## 8.5.4.3 — Reference Sample Filtering
 
 ```cpp
-// Le filtrage depend du mode et de la taille du bloc
+// Filtering depends on the mode and the block size
 bool filter_flag;
 if (intraMode == DC || nTbS == 4)
-    filter_flag = false;  // Pas de filtrage pour DC ou 4x4
+    filter_flag = false;  // No filtering for DC or 4x4
 else {
-    // Table 8-3 : minDistVerHor = min(abs(mode-26), abs(mode-10))
+    // Table 8-3: minDistVerHor = min(abs(mode-26), abs(mode-10))
     int minDist = std::min(std::abs(mode - 26), std::abs(mode - 10));
-    // Threshold depend de la taille du bloc
+    // Threshold depends on the block size
     int thresh = (nTbS == 8) ? 7 : (nTbS == 16) ? 1 : 0;
     filter_flag = (minDist > thresh);
 }
 
 if (filter_flag) {
-    // Filtre [1,2,1]/4 sur les samples de reference
+    // [1,2,1]/4 filter on the reference samples
     p'[-1][-1] = (p[-1][0] + 2*p[-1][-1] + p[0][-1] + 2) >> 2;
     for (i = 0; i < 2*nTbS - 1; i++) {
         p'[-1][i] = (p[-1][i-1] + 2*p[-1][i] + p[-1][i+1] + 2) >> 2;
         p'[i][-1] = (p[i-1][-1] + 2*p[i][-1] + p[i+1][-1] + 2) >> 2;
     }
-    // Dernier sample non filtre
+    // Last sample not filtered
 }
 
-// Strong intra smoothing (8.5.4.2.3) pour 32x32
+// Strong intra smoothing (8.5.4.2.3) for 32x32
 if (strong_intra_smoothing_enabled_flag && nTbS == 32 && filter_flag) {
     int threshold = 1 << (BitDepthY - 5);
     bool bilinear = (abs(p[-1][2*nTbS-1] + p[2*nTbS-1][-1] - 2*p[-1][-1]) < threshold);
     if (bilinear) {
-        // Interpolation bilineaire entre les coins
+        // Bilinear interpolation between the corners
         for (i = 0; i < 2*nTbS - 1; i++) {
             p'[-1][i] = ((2*nTbS-1-i)*p[-1][-1] + (i+1)*p[-1][2*nTbS-1] + nTbS) >> (log2(nTbS)+1);
             p'[i][-1] = ((2*nTbS-1-i)*p[-1][-1] + (i+1)*p[2*nTbS-1][-1] + nTbS) >> (log2(nTbS)+1);
@@ -117,36 +117,36 @@ void intra_pred_planar(int16_t* pred, int stride, const int16_t* p, int nTbS) {
 
 ```cpp
 void intra_pred_dc(int16_t* pred, int stride, const int16_t* ref, int nTbS, int cIdx) {
-    // Moyenne des samples top + left
+    // Average of the top + left samples
     int sum = 0;
     for (int i = 0; i < nTbS; i++) {
         sum += ref[i + 1];       // top (p[i][-1])
-        sum += ref[-1 - i - 1];  // left (p[-1][i]) — depend du layout
+        sum += ref[-1 - i - 1];  // left (p[-1][i]) — depends on the layout
     }
     int dcVal = (sum + nTbS) >> (log2(nTbS) + 1);
 
-    // Remplir le bloc
+    // Fill the block
     for (int y = 0; y < nTbS; y++)
         for (int x = 0; x < nTbS; x++)
             pred[y*stride + x] = dcVal;
 
-    // DC filtering (luma seulement, cIdx == 0)
+    // DC filtering (luma only, cIdx == 0)
     if (cIdx == 0) {
-        pred[0] = (ref[1] + 2*dcVal + ref[-1-1] + 2) >> 2;  // coin
+        pred[0] = (ref[1] + 2*dcVal + ref[-1-1] + 2) >> 2;  // corner
         for (int x = 1; x < nTbS; x++)
-            pred[x] = (ref[x+1] + 3*dcVal + 2) >> 2;        // bord haut
+            pred[x] = (ref[x+1] + 3*dcVal + 2) >> 2;        // top edge
         for (int y = 1; y < nTbS; y++)
-            pred[y*stride] = (ref[-1-y-1] + 3*dcVal + 2) >> 2; // bord gauche
+            pred[y*stride] = (ref[-1-y-1] + 3*dcVal + 2) >> 2; // left edge
     }
 }
 ```
 
 ## 8.5.4.6 — Angular Modes (Modes 2-34)
 
-### Angles de prediction
+### Prediction angles
 
 ```cpp
-// Table 8-4 : angles en 1/32 de pixel
+// Table 8-4: angles in 1/32 pixel
 const int8_t intraPredAngle[35] = {
     0,   0,  32, 26, 21, 17, 13,  9,  5,  2,  // modes 0-9
     0,  -2, -5, -9,-13,-17,-21,-26,-32,-26,    // modes 10-19
@@ -154,11 +154,11 @@ const int8_t intraPredAngle[35] = {
     13, 17, 21, 26, 32                           // modes 30-34
 };
 
-// invAngle pour modes avec angle negatif (modes 11-25 sauf 10, 26)
+// invAngle for modes with a negative angle (modes 11-25 except 10, 26)
 const int16_t invAngle[35] = { /* ... */ };
 ```
 
-### Processus
+### Process
 
 ```cpp
 void intra_pred_angular(int16_t* pred, int stride, const int16_t* ref,
@@ -166,20 +166,20 @@ void intra_pred_angular(int16_t* pred, int stride, const int16_t* ref,
     int angle = intraPredAngle[mode];
     bool is_horizontal = (mode >= 2 && mode <= 17);  // modes 2-17
 
-    // Construire le vecteur de reference etendu
+    // Build the extended reference vector
     // For horizontal modes: main = left refs, side = top refs
     // For vertical modes:   main = top refs,  side = left refs
-    int16_t refMain[2*64+1];  // taille max pour 32x32
+    int16_t refMain[2*64+1];  // max size for 32x32
     int16_t refSide[2*64+1];
 
     if (is_horizontal) {
         // Main = left, Side = top
-        // Copier left dans refMain, top dans refSide
+        // Copy left into refMain, top into refSide
     } else {
         // Main = top, Side = left
     }
 
-    // Extension pour angles negatifs (spec 8.4.4.2.6)
+    // Extension for negative angles (spec 8.4.4.2.6)
     // For negative angles, extend refMain with projected samples from refSide
     if (angle < 0) {
         int invAng = invAngle[mode];
@@ -235,7 +235,7 @@ void intra_pred_angular(int16_t* pred, int stride, const int16_t* ref,
 ### Most Probable Modes (MPM)
 
 ```cpp
-// 3 MPM derives des voisins A (gauche) et B (haut)
+// 3 MPMs derived from neighbors A (left) and B (above)
 void derive_mpm(int candModeList[3], int modeA, int modeB) {
     if (modeA == modeB) {
         if (modeA < 2) {
@@ -244,8 +244,8 @@ void derive_mpm(int candModeList[3], int modeA, int modeB) {
             candModeList[2] = 26; // Vertical
         } else {
             candModeList[0] = modeA;
-            candModeList[1] = 2 + ((modeA - 2 + 29) % 32);  // voisin -1
-            candModeList[2] = 2 + ((modeA - 2 +  1) % 32);  // voisin +1  (spec: inverse?)
+            candModeList[1] = 2 + ((modeA - 2 + 29) % 32);  // neighbor -1
+            candModeList[2] = 2 + ((modeA - 2 +  1) % 32);  // neighbor +1  (spec: reversed?)
         }
     } else {
         candModeList[0] = modeA;
@@ -259,23 +259,23 @@ void derive_mpm(int candModeList[3], int modeA, int modeB) {
     }
 }
 
-// Si prev_intra_luma_pred_flag :
+// If prev_intra_luma_pred_flag:
 //    IntraPredModeY = candModeList[mpm_idx]
-// Sinon :
-//    Trier les 3 MPM, puis indexer rem_intra_luma_pred_mode dans les 32 modes restants
+// Otherwise:
+//    Sort the 3 MPMs, then index rem_intra_luma_pred_mode into the 32 remaining modes
 ```
 
 ### Chroma mode derivation
 
 ```cpp
-// 5 modes chroma possibles :
+// 5 possible chroma modes:
 // intra_chroma_pred_mode  -> mode
 // 0                       -> Planar (0)
 // 1                       -> Vertical (26)
 // 2                       -> Horizontal (10)
 // 3                       -> DC (1)
 // 4                       -> Derived from luma (IntraPredModeY)
-// Si le mode chroma == luma mode, remplacer par mode 34
+// If the chroma mode == luma mode, replace it with mode 34
 ```
 
 ## Checklist
@@ -285,8 +285,8 @@ void derive_mpm(int candModeList[3], int modeA, int modeB) {
 - [ ] Reference sample filtering ([1,2,1] + strong intra smoothing)
 - [ ] Planar mode prediction
 - [ ] DC mode prediction + DC filtering
-- [ ] Angular prediction (modes 2-34) avec extension des refs
-- [ ] Post-filtering pour vertical/horizontal purs
+- [ ] Angular prediction (modes 2-34) with ref extension
+- [ ] Post-filtering for pure vertical/horizontal
 - [ ] MPM derivation
 - [ ] Chroma mode derivation
-- [ ] Tests : bitstreams I-only, chaque mode isole si possible
+- [ ] Tests: I-only bitstreams, each mode in isolation if possible

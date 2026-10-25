@@ -1,12 +1,12 @@
 # Scaling List Default Matrices
 
-Matrices par defaut pour la dequantization (spec ITU-T H.265, Tables 7-3 a 7-6).
+Default matrices for dequantization (spec ITU-T H.265, Tables 7-3 to 7-6).
 
-Utilisees quand `scaling_list_enabled_flag == 1` mais les scaling lists ne sont pas presentes dans le SPS/PPS.
+Used when `scaling_list_enabled_flag == 1` but the scaling lists are not present in the SPS/PPS.
 
-## 4x4 — Matrice par defaut (identique intra et inter)
+## 4x4 — Default matrix (identical for intra and inter)
 
-Flat 16 pour toutes les tailles 4x4 (Table 7-3) :
+Flat 16 for all 4x4 sizes (Table 7-3):
 
 ```cpp
 const uint8_t default_scaling_list_4x4[16] = {
@@ -47,14 +47,14 @@ const uint8_t default_scaling_list_8x8_inter[64] = {
 };
 ```
 
-## 16x16 et 32x32
+## 16x16 and 32x32
 
-Les matrices 16x16 et 32x32 reutilisent les matrices 8x8 par upscaling :
-- La matrice 16x16 est la matrice 8x8 upsamplee 2x en chaque dimension
-- La matrice 32x32 est la matrice 8x8 upsamplee 4x, avec `dc_coef` (coin [0][0]) specifie separement
+The 16x16 and 32x32 matrices reuse the 8x8 matrices by upscaling:
+- The 16x16 matrix is the 8x8 matrix upsampled 2x in each dimension
+- The 32x32 matrix is the 8x8 matrix upsampled 4x, with `dc_coef` (corner [0][0]) specified separately
 
 ```cpp
-// Upsample une matrice 8x8 vers NxN (N = 16 ou 32)
+// Upsample an 8x8 matrix to NxN (N = 16 or 32)
 void upscale_scaling_list(const uint8_t* src_8x8, uint8_t* dst, int dstSize) {
     int ratio = dstSize / 8;
     for (int y = 0; y < dstSize; y++)
@@ -63,17 +63,17 @@ void upscale_scaling_list(const uint8_t* src_8x8, uint8_t* dst, int dstSize) {
 }
 ```
 
-## DC coefficient pour 16x16 et 32x32
+## DC coefficient for 16x16 and 32x32
 
-Quand `scaling_list_dc_coef_minus8` n'est pas present, la valeur par defaut du DC coefficient est **16** (identique a la matrice 4x4).
+When `scaling_list_dc_coef_minus8` is not present, the default value of the DC coefficient is **16** (identical to the 4x4 matrix).
 
 ```cpp
-// Pour les matrices 16x16 et 32x32, le coefficient [0][0] est remplace par dc_coef
-int dc_coef_16x16 = scaling_list_dc_coef_minus8 + 8;  // si present
-// default : dc_coef = 16
+// For the 16x16 and 32x32 matrices, coefficient [0][0] is replaced by dc_coef
+int dc_coef_16x16 = scaling_list_dc_coef_minus8 + 8;  // if present
+// default: dc_coef = 16
 ```
 
-## Mapping des scaling lists par sizeId et matrixId
+## Scaling list mapping by sizeId and matrixId
 
 ```
 sizeId 0 (4x4)   : matrixId 0-5  → 6 matrices (3 intra Y/Cb/Cr + 3 inter Y/Cb/Cr)
@@ -82,16 +82,16 @@ sizeId 2 (16x16) : matrixId 0-5  → 6 matrices (3 intra + 3 inter)
 sizeId 3 (32x32) : matrixId 0-1  → 2 matrices (1 intra Y + 1 inter Y)
 ```
 
-Les matrices par defaut :
-- `sizeId 0` : toutes flat 16
-- `sizeId 1, matrixId 0-2` (intra) : `default_scaling_list_8x8_intra`
-- `sizeId 1, matrixId 3-5` (inter) : `default_scaling_list_8x8_inter`
-- `sizeId 2` : upscale de sizeId 1 (memes defaults intra/inter)
-- `sizeId 3, matrixId 0` (intra) : upscale de `default_scaling_list_8x8_intra`
-- `sizeId 3, matrixId 1` (inter) : upscale de `default_scaling_list_8x8_inter`
+The default matrices:
+- `sizeId 0`: all flat 16
+- `sizeId 1, matrixId 0-2` (intra): `default_scaling_list_8x8_intra`
+- `sizeId 1, matrixId 3-5` (inter): `default_scaling_list_8x8_inter`
+- `sizeId 2`: upscale of sizeId 1 (same intra/inter defaults)
+- `sizeId 3, matrixId 0` (intra): upscale of `default_scaling_list_8x8_intra`
+- `sizeId 3, matrixId 1` (inter): upscale of `default_scaling_list_8x8_inter`
 
 ## Fallback mechanism (§7.4.5)
 
-Quand `scaling_list_pred_mode_flag[sizeId][matrixId] == 0` et `scaling_list_pred_matrix_id_delta == 0`, la matrice par defaut s'applique.
+When `scaling_list_pred_mode_flag[sizeId][matrixId] == 0` and `scaling_list_pred_matrix_id_delta == 0`, the default matrix applies.
 
-Quand `scaling_list_pred_matrix_id_delta > 0`, la matrice est copiee depuis `matrixId - delta` (meme sizeId).
+When `scaling_list_pred_matrix_id_delta > 0`, the matrix is copied from `matrixId - delta` (same sizeId).

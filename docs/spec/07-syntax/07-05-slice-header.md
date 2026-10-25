@@ -1,12 +1,12 @@
 # §7.3.6 — Slice Segment Header
 
-Spec ref : §7.3.6.1 (syntax), §7.4.7 (semantics)
+Spec ref: §7.3.6.1 (syntax), §7.4.7 (semantics)
 
-## Complexité
+## Complexity
 
-Le slice header est la structure la plus complexe à parser car il dépend fortement du SPS/PPS actif et contient de nombreux champs conditionnels.
+The slice header is the most complex structure to parse because it depends heavily on the active SPS/PPS and contains many conditional fields.
 
-## Pseudo-code spec (éléments critiques)
+## Spec pseudo-code (critical elements)
 
 ```
 slice_segment_header() {
@@ -20,7 +20,7 @@ slice_segment_header() {
         slice_segment_address                     u(v)  // Ceil(Log2(PicSizeInCtbsY)) bits
     }
     if(!dependent_slice_segment_flag) {
-        // slice_reserved_flag[i] pour num_extra_slice_header_bits
+        // slice_reserved_flag[i] for num_extra_slice_header_bits
         slice_type                                ue(v)
         // 0=B, 1=P, 2=I
         if(output_flag_present_flag)
@@ -59,7 +59,7 @@ slice_segment_header() {
             // mvd_l1_zero_flag (B slices)
             // cabac_init_flag
             // collocated_from_l0_flag, collocated_ref_idx
-            // pred_weight_table() si weighted pred
+            // pred_weight_table() if weighted pred
         }
         five_minus_max_num_merge_cand              ue(v)
         // QP
@@ -70,7 +70,7 @@ slice_segment_header() {
 }
 ```
 
-## Valeurs dérivées critiques (§7.4.7.1)
+## Critical derived values (§7.4.7.1)
 
 ```cpp
 // Slice type
@@ -79,7 +79,7 @@ enum SliceType { B = 0, P = 1, I = 2 };
 // QP
 SliceQpY = 26 + pps.init_qp_minus26 + slice_qp_delta
 
-// Nombre de ref idx actifs
+// Number of active ref idx
 if (num_ref_idx_active_override_flag) {
     NumRefIdxL0Active = num_ref_idx_l0_active_minus1 + 1;
     NumRefIdxL1Active = (slice_type == B) ? num_ref_idx_l1_active_minus1 + 1 : 0;
@@ -92,19 +92,19 @@ if (num_ref_idx_active_override_flag) {
 MaxNumMergeCand = 5 - five_minus_max_num_merge_cand
 
 // POC derivation (§8.3.1)
-// Complexe : dépend du type de NAL, du POC précédent, du MSB wrapping
+// Complex: depends on the NAL type, the previous POC, MSB wrapping
 ```
 
 ## Short-Term Reference Picture Set — §7.3.7
 
-Structure complexe et récursive (peut référencer un RPS précédent).
+Complex, recursive structure (can reference a previous RPS).
 
 ```
 st_ref_pic_set(stRpsIdx) {
     if(stRpsIdx != 0)
         inter_ref_pic_set_prediction_flag    u(1)
     if(inter_ref_pic_set_prediction_flag) {
-        // Prédiction delta à partir d'un RPS existant
+        // Delta prediction from an existing RPS
         if(stRpsIdx == num_short_term_ref_pic_sets)
             delta_idx_minus1                 ue(v)
         delta_rps_sign                       u(1)
@@ -115,7 +115,7 @@ st_ref_pic_set(stRpsIdx) {
                 use_delta_flag[j]            u(1)
         }
     } else {
-        // Définition explicite
+        // Explicit definition
         num_negative_pics                    ue(v)
         num_positive_pics                    ue(v)
         for(i = 0; i < num_negative_pics; i++) {
@@ -130,15 +130,15 @@ st_ref_pic_set(stRpsIdx) {
 }
 ```
 
-### Dérivation des listes (§7.4.8)
+### List derivation (§7.4.8)
 
 ```cpp
 struct ShortTermRPS {
     int NumNegativePics;
     int NumPositivePics;
     int NumDeltaPocs;  // = NumNeg + NumPos
-    int DeltaPocS0[16];   // POC deltas négatifs
-    int DeltaPocS1[16];   // POC deltas positifs
+    int DeltaPocS0[16];   // Negative POC deltas
+    int DeltaPocS1[16];   // Positive POC deltas
     bool UsedByCurrPicS0[16];
     bool UsedByCurrPicS1[16];
 };
@@ -146,13 +146,13 @@ struct ShortTermRPS {
 
 ## Checklist
 
-- [ ] Slice header parsing complet (tous les champs conditionnels)
-- [ ] SliceType enum et dérivation
+- [ ] Complete slice header parsing (all conditional fields)
+- [ ] SliceType enum and derivation
 - [ ] POC derivation (§8.3.1)
-- [ ] Short-term RPS parsing (inter-prediction mode inclus)
+- [ ] Short-term RPS parsing (including inter-prediction mode)
 - [ ] Long-term ref pic parsing
 - [ ] Reference picture list construction
 - [ ] Pred weight table parsing
 - [ ] Deblocking filter overrides
 - [ ] Byte alignment
-- [ ] Tests : comparer slice header fields avec libde265
+- [ ] Tests: compare slice header fields with libde265
