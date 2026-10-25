@@ -255,6 +255,21 @@ if(BUILD_TESTS AND NOT BUILD_WASM)
     set_tests_properties(oracle_merge_8x4_480p_16f PROPERTIES LABELS "oracle;phase5"
         SKIP_RETURN_CODE 2)
 
+    # JCT-VC conformance bitstreams, with the MD5 shipped alongside each (HM output).
+    # RPLM_B has several slices per picture with differing reference picture lists:
+    # it fails on a decoder that builds the lists once per picture (#299).
+    add_test(NAME oracle_rplm_a_qualcomm_4
+        COMMAND ${ORACLE_SCRIPT} ${FIXTURES_DIR}/RPLM_A_qualcomm_4.265 416 240
+            011794872709c341880ee42ade036ed3 $<TARGET_FILE:hevc-decode>)
+    set_tests_properties(oracle_rplm_a_qualcomm_4 PROPERTIES LABELS "oracle;phase5;conformance"
+        SKIP_RETURN_CODE 2)
+
+    add_test(NAME oracle_rplm_b_qualcomm_4
+        COMMAND ${ORACLE_SCRIPT} ${FIXTURES_DIR}/RPLM_B_qualcomm_4.265 416 240
+            653ac7c46fa7b9d7d966e3db317eb938 $<TARGET_FILE:hevc-decode>)
+    set_tests_properties(oracle_rplm_b_qualcomm_4 PROPERTIES LABELS "oracle;phase5;conformance"
+        SKIP_RETURN_CODE 2)
+
     # Real-world bitstreams — Big Buck Bunny (Main profile, full pipeline)
     add_test(NAME oracle_bbb1080_50f
         COMMAND ${ORACLE_SCRIPT} ${FIXTURES_DIR}/bbb1080_50f.265 1920 1080

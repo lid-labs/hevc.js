@@ -482,7 +482,7 @@ static bool decode_wpp_parallel(DecodingContext& ctx, BitstreamReader& bs,
 
             // Phase 10: record slice ownership
             if (row_ctx.slice_idx) {
-                row_ctx.slice_idx[CtbAddrInRs] = static_cast<uint8_t>(ctx.current_slice_idx);
+                row_ctx.slice_idx[CtbAddrInRs] = static_cast<uint16_t>(ctx.current_slice_idx);
             }
 
             decode_coding_tree_unit(row_ctx, xCtb, yCtb);
@@ -607,7 +607,7 @@ bool decode_slice_segment_data(DecodingContext& ctx, BitstreamReader& bs,
 
         // Phase 10: record slice ownership for this CTU
         if (ctx.slice_idx) {
-            ctx.slice_idx[CtbAddrInRs] = static_cast<uint8_t>(ctx.current_slice_idx);
+            ctx.slice_idx[CtbAddrInRs] = static_cast<uint16_t>(ctx.current_slice_idx);
         }
 
         decode_coding_tree_unit(ctx, xCtb, yCtb);

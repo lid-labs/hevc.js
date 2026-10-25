@@ -27,7 +27,7 @@ static bool sao_ctb_neighbourhood_uniform(const DecodingContext& ctx, const PPS&
     const int w = sps.PicWidthInCtbsY;
     const int h = sps.PicHeightInCtbsY;
     const int curAddr = ry * w + rx;
-    const uint8_t si_cur = ctx.slice_idx[curAddr];
+    const uint16_t si_cur = ctx.slice_idx[curAddr];
 
     const bool checkTiles = !pps.loop_filter_across_tiles_enabled_flag && !pps.TileId.empty();
     const int tile_cur = checkTiles ? pps.TileId[pps.CtbAddrRsToTs[curAddr]] : 0;

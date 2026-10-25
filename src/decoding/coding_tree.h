@@ -85,7 +85,7 @@ struct DecodingContext {
     std::vector<uint16_t>* sao_backup = nullptr;  // array of 3 vectors
 
     // Phase 10: slice index per CTU (for cross-slice boundary detection)
-    uint8_t* slice_idx = nullptr;          // array [PicSizeInCtbsY], indexed by CtbAddrInRs
+    uint16_t* slice_idx = nullptr;         // array [PicSizeInCtbsY], indexed by CtbAddrInRs
     int current_slice_idx = 0;             // slice index being decoded (set before each decode_slice_segment_data)
 
     // Phase 10: per-slice headers for correct filter parameter lookup

@@ -175,15 +175,24 @@ static bool derive_collocated_mv_at(const DecodingContext& ctx,
         }
     }
 
-    if (colList < 0 || !colMi.pred_flag[colList] ||
-        colMi.ref_idx[colList] < 0 ||
-        colMi.ref_idx[colList] >= static_cast<int>(colPic->ref_poc[colList].size()))
+    if (colList < 0 || !colMi.pred_flag[colList] || colMi.ref_idx[colList] < 0)
         return false;
+
+    // §8.5.3.2.9: refIdxCol indexes the lists of the slice that contains colPb
+    int log2Ctb = ctx.sps->CtbLog2SizeY;
+    size_t colCtb = static_cast<size_t>((yColQ >> log2Ctb) * ctx.sps->PicWidthInCtbsY +
+                                        (xColQ >> log2Ctb));
+    if (colCtb >= colPic->ctb_slice_idx.size()) return false;
+    size_t colSlice = colPic->ctb_slice_idx[colCtb];
+    if (colSlice >= colPic->slice_ref_poc.size()) return false;
+    const auto& colRefPocs = colPic->slice_ref_poc[colSlice].list[colList];
+    if (colMi.ref_idx[colList] >= static_cast<int>(colRefPocs.size())) return false;
 
     MV colMV;
     colMV.x = colMi.mv_x[colList];
     colMV.y = colMi.mv_y[colList];
-    int colRefPOC = colPic->ref_poc[colList][colMi.ref_idx[colList]];
+    int colRefPOC = colRefPocs[colMi.ref_idx[colList]];
+    if (colRefPOC == Picture::kNoRefPoc) return false;
 
     // Scale MV by POC distance
     int currPOC = ctx.pic->poc;

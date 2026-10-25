@@ -114,6 +114,23 @@ slower --rect --min-cu-size 8 --max-merge 5 --b-adapt 0 --bframes 4 --qp 24 --no
 --no-info`, x265 4.3. Few encodes hit the case; the encoded stream depends on the x265
 and ffmpeg versions, so regenerating may give a stream that no longer does.
 
+## JCT-VC conformance bitstreams
+
+| File | Size | Resolution | Frames | Exercises | MD5 (YUV decode) |
+|------|------|------------|--------|-----------|------------------|
+| `RPLM_A_qualcomm_4.265` | 201K | 416x240 | 300 | reference picture list modification | `011794872709c341880ee42ade036ed3` |
+| `RPLM_B_qualcomm_4.265` | 218K | 416x240 | 300 | the same, several slices per picture | `653ac7c46fa7b9d7d966e3db317eb938` |
+
+Bitstreams of the HEVC v1 conformance suite, unmodified apart from the extension
+(`.bit` upstream), from
+https://www.itu.int/wftp3/av-arch/jctvc-site/bitstream_exchange/draft_conformance/HEVC_v1/.
+The MD5 is the one shipped with each stream, computed on the HM reference decoder output.
+
+The slices of an `RPLM_B` picture have different reference picture lists, which §8.3.4
+builds per slice. It fails on a decoder that builds them once per picture, from the
+first slice (#299), and also on one that applies those per-slice lists only during
+slice decoding but not to TMVP or to the deblocking filter's Bs derivation.
+
 ## Common encoding parameters
 
 ```
