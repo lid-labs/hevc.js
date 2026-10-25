@@ -129,6 +129,7 @@ and ffmpeg versions, so regenerating may give a stream that no longer does.
 | `WPP_A_ericsson_MAIN_2.265` | 66K | 416x240 | 48 | WPP with independent and dependent slice segments down to one CTB | `cd7e815eb47e8138fec2185d4de84304` |
 | `WPP_D_ericsson_MAIN_2.265` | 22K | 64x240 | 48 | the same, one CTB wide | `f710612103f386c415be3e6300693451` |
 | `DBLK_D_VIXS_2.265` | 17K | 1280x720 | 8 | slices and dependent slice segments over 4x3 tiles, no loop filtering across slices | `f6f3075edca573f5dfe4e352d26170f1` |
+| `PMERGE_B_TI_3.265` | 16K | 416x240 | 8 | `log2_parallel_merge_level_minus2` = 1 | `7d0e57ebdbbc6633c972083a17d97550` |
 
 Bitstreams of the HEVC v1 conformance suite, unmodified apart from the extension
 (`.bit` upstream), from
@@ -152,6 +153,11 @@ previous segment of the same slice as another slice, WPP rows synced from anothe
 slice's contexts, and the QP predictor restarted at every segment. `WPP_D` also hung
 the parallel WPP path, which now only takes single-segment pictures at least two CTBs
 wide. Each of these causes, put back on its own, makes at least one of the three fail.
+
+`PMERGE_B` failed before #316's fix. Above parallel merge level 2, the prediction units
+of an 8x8 coding unit share the merge list of the whole coding unit (§8.5.3.2.2), and
+the decoder then applied the 8x4/4x8 bi-to-uni restriction to that shared 8x8 size, so
+never. The restriction reads the unit's own size, `nOrigPbW + nOrigPbH`.
 
 The slices of an `RPLM_B` picture have different reference picture lists, which §8.3.4
 builds per slice. It fails on a decoder that builds them once per picture, from the
