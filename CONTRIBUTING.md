@@ -79,6 +79,17 @@ a WASM build in `packages/core/wasm/` (`pnpm build:wasm`) and Node:
 scripts/wasm-native-diff.sh <native-decoder> packages/core/wasm [stream...]
 ```
 
+The JCT-VC HEVC v1 conformance suite — 147 streams, each shipped with the MD5 of the
+output of the HM reference decoder — runs with one script. The first run downloads it
+from the ITU site, about 140 MB, into the work directory you name:
+
+```bash
+tools/run_conformance.sh build/hevc-decode /tmp/hevc-conformance [stream...]
+```
+
+It prints PASS or FAIL per stream and the count. Use a Release build; each decode is
+allowed 300 s, `CONFORMANCE_TIMEOUT` to change it.
+
 ### Running tests
 
 ```bash
