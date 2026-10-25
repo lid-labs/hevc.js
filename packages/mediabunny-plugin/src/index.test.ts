@@ -102,5 +102,6 @@ describe("registerHevcDecoder", () => {
     const i420 = (f: HEVCFrame) => Uint8Array.from([...f.y, ...f.cb, ...f.cr]);
     expect(firstAndLast[0]).toEqual(i420(frames[0]!));
     expect(firstAndLast[1]).toEqual(i420(frames[frames.length - 1]!));
-  });
+    // Decodes 250 frames of 720p twice: ~4s on an M4 Pro, 11.6s on a GitHub runner
+  }, 60_000);
 });
