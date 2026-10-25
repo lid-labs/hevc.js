@@ -576,20 +576,24 @@ bool decode_slice_segment_data(DecodingContext& ctx, BitstreamReader& bs,
 
     uint32_t substream_idx = 0;
 
-    // Initialize CABAC
-    if (!sh.dependent_slice_segment_flag) {
+    // CTU scan
+    int CtbAddrInTs = pps.CtbAddrRsToTs[sh.slice_segment_address];
+    int CtbAddrInRs = sh.slice_segment_address;
+
+    // Initialize CABAC. §9.3.1: a dependent slice segment carries the contexts
+    // over, unless it starts a tile.
+    bool starts_tile = pps.tiles_enabled_flag &&
+        (CtbAddrInTs == 0 || pps.TileId[CtbAddrInTs] != pps.TileId[CtbAddrInTs - 1]);
+    if (!sh.dependent_slice_segment_flag || starts_tile) {
         int sliceType = static_cast<int>(sh.slice_type);
         cabac.init_contexts(sliceType, sh.SliceQpY, sh.cabac_init_flag);
     }
+    if (starts_tile) ctx.wpp_contexts_available = false;
     cabac.init_decoder(bs);
 
     // Init QP
     ctx.QpY_prev = sh.SliceQpY;
     ctx.QpY_prev_qg = sh.SliceQpY;
-
-    // CTU scan
-    int CtbAddrInTs = pps.CtbAddrRsToTs[sh.slice_segment_address];
-    int CtbAddrInRs = sh.slice_segment_address;
 
     HEVC_LOG(TREE, "slice_segment_data: addr=%d type=%d QP=%d entry_points=%u",
              sh.slice_segment_address, static_cast<int>(sh.slice_type),
@@ -614,10 +618,22 @@ bool decode_slice_segment_data(DecodingContext& ctx, BitstreamReader& bs,
         HEVC_LOG(TREE, "CTU addr_rs=%d consumed %zu bits, remaining=%zu",
                  CtbAddrInRs, bs.bits_read() - bits_before, bs.bits_remaining());
 
-        // §9.2.2: WPP — save contexts after the 2nd CTU of each row (col index 1)
-        if (pps.entropy_coding_sync_enabled_flag && ctuCol == 1) {
-            cabac.save_contexts(ctx.wpp_saved_contexts);
-            ctx.wpp_contexts_available = true;
+        // §9.3.2.2: WPP — save contexts after the 2nd CTU of each row of the
+        // tile, i.e. one past the tile's first column
+        if (pps.entropy_coding_sync_enabled_flag) {
+            int tileCol0 = 0;
+            if (pps.tiles_enabled_flag) {
+                int rowStart = CtbAddrInRs - ctuCol;
+                tileCol0 = ctuCol;
+                while (tileCol0 > 0 &&
+                       pps.TileId[pps.CtbAddrRsToTs[rowStart + tileCol0 - 1]] ==
+                       pps.TileId[CtbAddrInTs])
+                    tileCol0--;
+            }
+            if (ctuCol == tileCol0 + 1) {
+                cabac.save_contexts(ctx.wpp_saved_contexts);
+                ctx.wpp_contexts_available = true;
+            }
         }
 
         end_of_slice = decode_end_of_slice_segment_flag(cabac);
@@ -640,9 +656,11 @@ bool decode_slice_segment_data(DecodingContext& ctx, BitstreamReader& bs,
                 } else {
                     bs.byte_alignment();
                 }
-                // §9.3.1: a tile starts with freshly initialised contexts
+                // §9.3.1: a tile starts with freshly initialised contexts, and
+                // WPP rows in it never sync from another tile
                 cabac.init_contexts(static_cast<int>(sh.slice_type),
                                     sh.SliceQpY, sh.cabac_init_flag);
+                ctx.wpp_contexts_available = false;
                 cabac.init_decoder(bs);
                 // §8.6.1: Reset QpY_prev at first QG in a tile
                 ctx.QpY_prev = sh.SliceQpY;
