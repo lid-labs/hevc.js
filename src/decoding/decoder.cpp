@@ -260,10 +260,12 @@ DecodeStatus Decoder::decode_picture(const std::vector<NalUnit>& nals,
         for (int i = 0; i < dpb_.num_ref_list0(); i++) {
             auto* ref = dpb_.ref_pic_list0(i);
             ref_pocs.list[0].push_back(ref ? ref->poc : Picture::kNoRefPoc);
+            ref_pocs.is_long_term[0].push_back(ref && ref->used_for_long_term_ref);
         }
         for (int i = 0; i < dpb_.num_ref_list1(); i++) {
             auto* ref = dpb_.ref_pic_list1(i);
             ref_pocs.list[1].push_back(ref ? ref->poc : Picture::kNoRefPoc);
+            ref_pocs.is_long_term[1].push_back(ref && ref->used_for_long_term_ref);
         }
 
         HEVC_LOG(PARSE, "Slice %zu: addr=%d type=%d QP=%d dependent=%d",
