@@ -257,10 +257,27 @@ static void weighted_pred_default(const int16_t* predL0, const int16_t* predL1,
     const bool bi = flagL0 && flagL1;
     // eq 8-262 / 8-263: uni-pred from whichever list predicted
     const int16_t* uni = flagL0 ? predL0 : predL1;
+    // 8-bit: 8 lanes of int16, on the int16 intermediate as stored, without
+    // overflowing it: the bi-pred sum is taken as its floor half,
+    // (p0 + p1 + 64) >> 7 == (floor((p0 + p1) / 2) + 32) >> 6, and the rounding
+    // add is halved too, (v + 32) >> 6 == ((v >> 1) + 16) >> 5, both exact.
+    const bool lanes16 = (bitDepth == 8);
+    const i16x8 zero8 = splat8(0), max8 = splat8(static_cast<int16_t>(maxVal));
+    const i16x8 one8 = splat8(1), off8 = splat8(static_cast<int16_t>(offset1 >> 1));
     for (int y = 0; y < h; y++, output += stride) {
         const int16_t* p0 = (bi ? predL0 : uni) + y * w;
         const int16_t* p1 = predL1 + y * w;
         int x = 0;
+        if (lanes16 && bi) {
+            for (; x + 8 <= w; x += 8) {
+                const i16x8 a = load8(p0 + x), b = load8(p1 + x);
+                const i16x8 half = (a >> 1) + (b >> 1) + (a & b & one8);
+                store8(output + x, max(zero8, min(max8, ((half >> 1) + off8) >> (shift1 - 1))));
+            }
+        } else if (lanes16) {
+            for (; x + 8 <= w; x += 8)
+                store8(output + x, max(zero8, min(max8, ((load8(p0 + x) >> 1) + off8) >> (shift1 - 1))));
+        }
         if (bi) {
             // eq 8-264: bi-pred
             for (; x + 4 <= w; x += 4)

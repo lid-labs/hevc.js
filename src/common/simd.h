@@ -137,8 +137,13 @@ inline void store8(uint16_t* p, i16x8 v) {
 #if defined(__clang__)
 #define HEVC_SHUFFLE16(a, b, ...) __builtin_shufflevector((a), (b), __VA_ARGS__)
 #else
+// Through a function: inside a template, GCC reports the operands of an inline
+// __builtin_shuffle as set but not used. The mask is constant once inlined.
+inline i16x8 shuffle16(i16x8 a, i16x8 b, i16x8 mask) {
+    return __builtin_shuffle(a, b, mask);
+}
 #define HEVC_SHUFFLE16(a, b, ...) \
-    __builtin_shuffle((a), (b), ::hevc::simd::i16x8{__VA_ARGS__})
+    ::hevc::simd::shuffle16((a), (b), ::hevc::simd::i16x8{__VA_ARGS__})
 #endif
 
 // Lanes 0-3 / 4-7 of an i16x8, widened. 32-byte vectors are avoided: on x86

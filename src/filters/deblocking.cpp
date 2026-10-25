@@ -118,6 +118,19 @@ static int derive_bs(const DecodingContext& ctx, int xP, int yP, int xQ, int yQ,
     auto& miP = ctx.motion_info[(yP >> kGridLog2) * miStride + (xP >> kGridLog2)];
     auto& miQ = ctx.motion_info[(yQ >> kGridLog2) * miStride + (xQ >> kGridLog2)];
 
+    // Same motion, field for field, in the same slice: same reference pictures
+    // and no motion vector difference, so every test below gives 0. Inside a
+    // PU, and between skipped blocks that share their motion, this is most edges.
+    // Fields the prediction does not use may differ; the full test then runs.
+    static_assert(sizeof(PUMotionInfo) == 12, "PUMotionInfo has no padding to compare");
+    if (std::memcmp(&miP, &miQ, sizeof(PUMotionInfo)) == 0) {
+        const int log2CtbS = sps.CtbLog2SizeY;
+        if (!ctx.slice_idx ||
+            ctx.slice_idx[(yP >> log2CtbS) * sps.PicWidthInCtbsY + (xP >> log2CtbS)] ==
+            ctx.slice_idx[(yQ >> log2CtbS) * sps.PicWidthInCtbsY + (xQ >> log2CtbS)])
+            return 0;
+    }
+
     int nRefP = (miP.pred_flag[0] ? 1 : 0) + (miP.pred_flag[1] ? 1 : 0);
     int nRefQ = (miQ.pred_flag[0] ? 1 : 0) + (miQ.pred_flag[1] ? 1 : 0);
 
