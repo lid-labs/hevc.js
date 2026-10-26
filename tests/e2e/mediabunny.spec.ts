@@ -14,7 +14,9 @@ interface DemoResult {
   meanLuma: number;
 }
 
-async function decodePreset(page: Page, label: string): Promise<DemoResult> {
+async function decodePreset(page: Page, label: string, { fast = true } = {}): Promise<DemoResult> {
+  // The page plays frames at their timestamps unless told to decode flat out
+  await page.locator('#fast-decode').setChecked(fast);
   await loadPreset(page, label);
   // Set by the page once the last sample is drawn, or on error
   const handle = await page.waitForFunction(() => (window as any).demoResult, null, { timeout: 60_000 });
@@ -60,4 +62,20 @@ test.describe('Mediabunny plugin', () => {
       });
     }
   }
+
+  test('plays frames at their timestamps by default', async ({ page }) => {
+    await loadDemoPage(page, 'mediabunny.html?force=1');
+    await assertStatus(page, /Ready/);
+
+    const start = Date.now();
+    const result = await decodePreset(page, 'Main 10 QCIF (10 frames)', { fast: false });
+    const wallMs = Date.now() - start;
+
+    expect(result.error).toBeUndefined();
+    expect(result.frames).toBe(10);
+    // The last frame is due (last - first) timestamp after the first one; decoding flat out takes ~20 ms
+    const spanMs = (result.timestamps[9]! - result.timestamps[0]!) * 1000;
+    expect(spanMs).toBeGreaterThan(300);
+    expect(wallMs).toBeGreaterThanOrEqual(spanMs);
+  });
 });

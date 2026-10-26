@@ -40,14 +40,19 @@
     <input type="checkbox" id="force-hevcjs" class="demo-toggle-switch">
     <label for="force-hevcjs" class="demo-toggle-label">Force hevc.js (bypass native HEVC detection, reloads the page)</label>
   </div>
+  <div class="demo-toggle">
+    <input type="checkbox" id="fast-decode" class="demo-toggle-switch">
+    <label for="fast-decode" class="demo-toggle-label">Decode as fast as possible (frames are shown at their timestamps otherwise)</label>
+  </div>
 
   <canvas id="frame" class="demo-video" width="1280" height="720"></canvas>
   <div id="status" class="demo-status">Loading...</div>
   <div id="stats" class="demo-status" style="font-family:monospace;font-size:13px;">
     <span id="stat-decoder">decoder: —</span> ·
     <span id="stat-frames">frames: —</span> ·
+    <span id="stat-time">time: —</span> ·
     <span id="stat-format">format: —</span> ·
-    <span id="stat-speed">speed: —</span>
+    <span id="stat-speed">decode speed: —</span>
   </div>
   <textarea id="log" class="demo-log" readonly></textarea>
 
@@ -163,8 +168,13 @@ document.getElementById('file-input').addEventListener('change', (e) => {
   if (file) decode(new HevcMediabunny.BlobSource(file), file.name);
 });
 
+// Bumped by each decode: an older run still drawing stops at its next frame
+let currentRun = 0;
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 async function decode(source, label) {
   window.demoResult = null;
+  const run = ++currentRun;
   try {
     await ready;
     setStatus('Decoding ' + label + '...');
@@ -186,22 +196,37 @@ async function decode(source, label) {
     let format = null;
     let size = '';
     let meanLuma = null;
+    const realtime = !document.getElementById('fast-decode').checked;
+    const duration = await input.computeDuration();
+    // Observed: a WebCodecs decoder was configured for this track, or none was and the plugin decoded it.
+    // Configuration precedes the first frame, so the answer is known from then on.
+    const usedDecoder = () => window.nativeDecoderConfigs > nativeConfigsBefore ? 'WebCodecs (native)' : 'hevc.js (WASM)';
     const t0 = performance.now();
+    let firstTimestamp = 0;
     for await (const sample of new HevcMediabunny.VideoSampleSink(track).samples()) {
+      if (run !== currentRun) { sample.close(); return; }
       if (timestamps.length === 0) {
         canvas.width = sample.displayWidth;
         canvas.height = sample.displayHeight;
         format = sample.format;
         size = sample.codedWidth + 'x' + sample.codedHeight;
+        firstTimestamp = sample.timestamp;
+        setStat('stat-decoder', 'decoder: ' + usedDecoder());
+      }
+      if (realtime) {
+        // Hold the frame until its timestamp comes up
+        const wait = (sample.timestamp - firstTimestamp) * 1000 - (performance.now() - t0);
+        if (wait > 0) await sleep(wait);
       }
       sample.draw(ctx, 0, 0);
       timestamps.push(sample.timestamp);
       sample.close();
+      setStat('stat-time', 'time: ' + sample.timestamp.toFixed(1) + ' / ' + duration.toFixed(1) + ' s');
       if (timestamps.length % 10 === 0) setStat('stat-frames', 'frames: ' + timestamps.length);
     }
+    if (run !== currentRun) return;
     const ms = performance.now() - t0;
-    // Observed: a WebCodecs decoder was configured for this track, or none was and the plugin decoded it
-    const decoder = window.nativeDecoderConfigs > nativeConfigsBefore ? 'WebCodecs (native)' : 'hevc.js (WASM)';
+    const decoder = usedDecoder();
     setStat('stat-decoder', 'decoder: ' + decoder);
 
     // Mean brightness of the last frame drawn, to tell a picture from a blank canvas
@@ -212,7 +237,10 @@ async function decode(source, label) {
 
     setStat('stat-frames', 'frames: ' + timestamps.length);
     setStat('stat-format', 'format: ' + format + ' ' + size);
-    setStat('stat-speed', 'speed: ' + (timestamps.length / (ms / 1000)).toFixed(0) + ' fps');
+    // Only meaningful flat out: while playback holds a frame, Mediabunny keeps decoding ahead
+    setStat('stat-speed', realtime
+      ? 'decode speed: tick "Decode as fast as possible" to measure'
+      : 'decode speed: ' + (timestamps.length / (ms / 1000)).toFixed(0) + ' fps');
     window.demoResult = { label, codec, native, decoder, frames: timestamps.length, timestamps, format, size, meanLuma, ms };
     console.log('[demo]', label, decoder, timestamps.length + ' frames', format, size, Math.round(ms) + ' ms');
     setStatus('Done — ' + timestamps.length + ' frames decoded');
