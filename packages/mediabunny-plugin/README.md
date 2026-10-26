@@ -10,6 +10,8 @@ Where the browser decodes HEVC itself, the plugin stays out of the way: it only 
 npm install @hevcjs/mediabunny-plugin mediabunny
 ```
 
+**[Live demo](https://hevcjs.dev/demo/mediabunny.html)**: decode an HEVC file in your browser, with a toggle to force hevc.js where WebCodecs has native HEVC.
+
 ## Usage
 
 Copy the decoder from `@hevcjs/core` to your public directory:
