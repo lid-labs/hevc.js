@@ -9,8 +9,8 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ALL_FORMATS, BufferSource, EncodedPacketSink, Input, VideoSampleSink } from "mediabunny";
-import { HEVCDecoder } from "@hevcjs/core";
-import type { HEVCFrame } from "@hevcjs/core";
+import { HEVCDecoder } from "@hevcjs/core/decoder";
+import type { HEVCFrame } from "@hevcjs/core/decoder";
 import { packetToAnnexB, readStreamConfig } from "./bitstream.js";
 import { registerHevcDecoder } from "./index.js";
 
