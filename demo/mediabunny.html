@@ -41,6 +41,10 @@
     <label for="force-hevcjs" class="demo-toggle-label">Force hevc.js (bypass native HEVC detection, reloads the page)</label>
   </div>
   <div class="demo-toggle">
+    <input type="checkbox" id="use-worker" class="demo-toggle-switch">
+    <label for="use-worker" class="demo-toggle-label">Decode in a Web Worker (on the page's thread otherwise, reloads the page)</label>
+  </div>
+  <div class="demo-toggle">
     <input type="checkbox" id="fast-decode" class="demo-toggle-switch">
     <label for="fast-decode" class="demo-toggle-label">Decode as fast as possible (frames are shown at their timestamps otherwise)</label>
   </div>
@@ -59,9 +63,9 @@
   <div class="demo-code"><span class="kw">import</span> { <span class="fn">Input</span>, <span class="fn">ALL_FORMATS</span>, <span class="fn">BlobSource</span>, <span class="fn">VideoSampleSink</span> } <span class="kw">from</span> <span class="str">'mediabunny'</span>;
 <span class="kw">import</span> { <span class="fn">registerHevcDecoder</span> } <span class="kw">from</span> <span class="str">'@hevcjs/mediabunny-plugin'</span>;
 
-<span class="cm">// With hevc-decode.js loaded by a script tag. Profiles the browser</span>
-<span class="cm">// decodes natively stay with WebCodecs.</span>
-<span class="kw">await</span> <span class="fn">registerHevcDecoder</span>();
+<span class="cm">// decode-worker.js, hevc-decode.js and .wasm served side by side.</span>
+<span class="cm">// Profiles the browser decodes natively stay with WebCodecs.</span>
+<span class="kw">await</span> <span class="fn">registerHevcDecoder</span>({ workerUrl: <span class="str">'/decode-worker.js'</span> });
 
 <span class="kw">const</span> input = <span class="kw">new</span> <span class="fn">Input</span>({ source: <span class="kw">new</span> <span class="fn">BlobSource</span>(file), formats: ALL_FORMATS });
 <span class="kw">const</span> track = <span class="kw">await</span> input.<span class="fn">getPrimaryVideoTrack</span>();
@@ -113,19 +117,29 @@ console.error = (...a) => { _err(...a); log('[ERROR]', ...a); };
 function setStatus(text) { document.getElementById('status').textContent = text; }
 function setStat(id, text) { document.getElementById(id).textContent = text; }
 
-// The plugin registers once, with the options of the first call: forcing it
-// means a fresh page, hence the reload.
-const force = new URLSearchParams(location.search).get('force') === '1';
+// The plugin registers once, with the options of the first call: changing
+// them means a fresh page, hence the reloads.
+const params = new URLSearchParams(location.search);
+const force = params.get('force') === '1';
+const useWorker = params.get('worker') !== '0';
+function reloadWith(param, value) {
+  const url = new URL(location.href);
+  if (value === null) url.searchParams.delete(param);
+  else url.searchParams.set(param, value);
+  location.href = url.href;
+}
 const forceBox = document.getElementById('force-hevcjs');
 forceBox.checked = force;
-forceBox.addEventListener('change', () => {
-  const url = new URL(location.href);
-  if (forceBox.checked) url.searchParams.set('force', '1');
-  else url.searchParams.delete('force');
-  location.href = url.href;
-});
+forceBox.addEventListener('change', () => reloadWith('force', forceBox.checked ? '1' : null));
+const workerBox = document.getElementById('use-worker');
+workerBox.checked = useWorker;
+workerBox.addEventListener('change', () => reloadWith('worker', workerBox.checked ? null : '0'));
 
-const ready = HevcMediabunny.registerHevcDecoder({ force })
+const ready = HevcMediabunny.registerHevcDecoder({
+  force,
+  // The worker loads hevc-decode.js and .wasm from its own directory
+  ...(useWorker ? { workerUrl: 'mediabunny-decode-worker.js' } : {}),
+})
   .then(() => setStatus('Ready — pick a preset or a file'))
   .catch((e) => { setStatus('Error: ' + e.message); console.error(e); });
 
@@ -201,8 +215,10 @@ async function decode(source, label) {
     // Observed: a WebCodecs decoder was configured for this track, or none was and the plugin decoded it.
     // Configuration precedes the first frame, so the answer is known from then on.
     const usedDecoder = () => window.nativeDecoderConfigs > nativeConfigsBefore ? 'WebCodecs (native)' : 'hevc.js (WASM)';
+    const describe = (decoder) => decoder === 'hevc.js (WASM)'
+      ? decoder + (useWorker ? ', in a worker' : ', on the page\'s thread')
+      : decoder;
     const t0 = performance.now();
-    let lastYield = t0;
     let firstTimestamp = 0;
     for await (const sample of new HevcMediabunny.VideoSampleSink(track).samples()) {
       if (run !== currentRun) { sample.close(); return; }
@@ -212,18 +228,12 @@ async function decode(source, label) {
         format = sample.format;
         size = sample.codedWidth + 'x' + sample.codedHeight;
         firstTimestamp = sample.timestamp;
-        setStat('stat-decoder', 'decoder: ' + usedDecoder());
+        setStat('stat-decoder', 'decoder: ' + describe(usedDecoder()));
       }
       if (realtime) {
         // Hold the frame until its timestamp comes up
         const wait = (sample.timestamp - firstTimestamp) * 1000 - (performance.now() - t0);
         if (wait > 0) await sleep(wait);
-      } else if (performance.now() - lastYield > 50) {
-        // The plugin decodes on this thread and Mediabunny chains it through
-        // promises only: without a task boundary now and then, the page cannot
-        // repaint or take a click until the whole file is decoded.
-        await sleep(0);
-        lastYield = performance.now();
       }
       sample.draw(ctx, 0, 0);
       timestamps.push(sample.timestamp);
@@ -234,7 +244,7 @@ async function decode(source, label) {
     if (run !== currentRun) return;
     const ms = performance.now() - t0;
     const decoder = usedDecoder();
-    setStat('stat-decoder', 'decoder: ' + decoder);
+    setStat('stat-decoder', 'decoder: ' + describe(decoder));
 
     // Mean brightness of the last frame drawn, to tell a picture from a blank canvas
     const px = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
@@ -248,7 +258,7 @@ async function decode(source, label) {
     setStat('stat-speed', realtime
       ? 'decode speed: tick "Decode as fast as possible" to measure'
       : 'decode speed: ' + (timestamps.length / (ms / 1000)).toFixed(0) + ' fps');
-    window.demoResult = { label, codec, native, decoder, frames: timestamps.length, timestamps, format, size, meanLuma, ms };
+    window.demoResult = { label, codec, native, decoder, worker: useWorker, frames: timestamps.length, timestamps, format, size, meanLuma, ms };
     console.log('[demo]', label, decoder, timestamps.length + ' frames', format, size, Math.round(ms) + ' ms');
     setStatus('Done — ' + timestamps.length + ' frames decoded');
   } catch (e) {
