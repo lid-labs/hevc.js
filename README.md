@@ -420,6 +420,7 @@ hevc.js/
 | [dash.js](https://hevcjs.dev/demo/dash.html) | HEVC DASH streams via dash.js + WASM transcoding |
 | [Shaka](https://hevcjs.dev/demo/shaka.html) | HEVC DASH streams via Shaka Player + WASM transcoding |
 | [hls.js](https://hevcjs.dev/demo/hls.html) | HEVC HLS streams (ABR + audio) via hls.js + WASM transcoding |
+| [Mediabunny](https://hevcjs.dev/demo/mediabunny.html) | HEVC files (8 and 10-bit) read and decoded by Mediabunny, hevc.js as its decoder — or drop your own file |
 
 **Docs:** [dash.js plugin](https://hevcjs.dev/docs/dashjs-plugin.html) · [Shaka plugin](https://hevcjs.dev/docs/shaka-plugin.html) · [hls.js plugin](https://hevcjs.dev/docs/hlsjs-plugin.html)
 
