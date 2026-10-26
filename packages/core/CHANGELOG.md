@@ -1,5 +1,47 @@
 # @hevcjs/core
 
+## 1.6.0
+
+### Minor Changes
+
+- [#343](https://github.com/lid-labs/hevc.js/pull/343) [`87bb5a8`](https://github.com/lid-labs/hevc.js/commit/87bb5a82604d474b0cf20ecd0f3493e49e2424e9) Thanks [@privaloops](https://github.com/privaloops)! - `@hevcjs/core/decoder`: a decoder-only entry point (`HEVCDecoder` and its types) that does not pull mp4box into the app's bundle. `@hevcjs/mediabunny-plugin` imports from it, which brings an app bundle that only registers the plugin from 150 KB down to 8.4 KB minified.
+
+### Patch Changes
+
+- [#325](https://github.com/lid-labs/hevc.js/pull/325) [`e922213`](https://github.com/lid-labs/hevc.js/commit/e92221374d0061885d9c3c10480b5298b7d5364e) Thanks [@privaloops](https://github.com/privaloops)! - Decoder: streams with constrained intra prediction decode correctly; intra prediction no longer reads the samples of inter coded units.
+
+- [#297](https://github.com/lid-labs/hevc.js/pull/297) [`c847fed`](https://github.com/lid-labs/hevc.js/commit/c847fed4b36f4828f48b19c8b3b6151fb5858fcd) Thanks [@privaloops](https://github.com/privaloops)! - The deblocking filter reads the POCs of the reference picture lists once per picture instead of querying the DPB for every edge segment. Decoded output is unchanged, bit for bit. Measured with the WASM build under Node 24: under 1% less decode time at 1080p and 4K.
+
+- [#323](https://github.com/lid-labs/hevc.js/pull/323) [`efd3868`](https://github.com/lid-labs/hevc.js/commit/efd386812320650d9265cea26fc114be6141e5bf) Thanks [@privaloops](https://github.com/privaloops)! - Decoder: streams with dependent slice segments, alone or combined with WPP, decode correctly. They used to decode to wrong pictures, abort, or hang.
+
+- [#290](https://github.com/lid-labs/hevc.js/pull/290) [`05fdae1`](https://github.com/lid-labs/hevc.js/commit/05fdae1a88ae37cdc0c1a212a9ccec96daef6e2e) Thanks [@privaloops](https://github.com/privaloops)! - Decoder: an end-of-sequence NAL now opens a new coded video sequence at the next IRAP, as §8.1 requires. That IRAP's RASL pictures are no longer output, and the pictures of the previous sequence still pending output are dropped when `NoOutputOfPriorPicsFlag` is 1 — always after an EOS on a CRA, and on an IDR or BLA that sets `no_output_of_prior_pics_flag` — matching ffmpeg frame for frame. Dropped pictures are reported by `takeSuppressedPictures()`, so timestamps stay aligned. `cvsId` now also increments on a CRA that opens a sequence, so a stream starting on a CRA numbers its sequences from 1 instead of 0; ordering is unchanged.
+
+- [#322](https://github.com/lid-labs/hevc.js/pull/322) [`9e46057`](https://github.com/lid-labs/hevc.js/commit/9e460573797de74c7798857c291827de94955c45) Thanks [@privaloops](https://github.com/privaloops)! - Decoder: streams whose SPS carries HRD parameters in its VUI now decode correctly; they used to decode to garbage. A corrupt or desynchronised stream can no longer make the decoder loop forever while parsing coefficients or motion vector differences.
+
+- [#328](https://github.com/lid-labs/hevc.js/pull/328) [`141b358`](https://github.com/lid-labs/hevc.js/commit/141b358dc6f2626376b862d8d9be5d9c7931edd8) Thanks [@privaloops](https://github.com/privaloops)! - Decoder: streams with long-term reference pictures decode correctly with TMVP, and a PPS sent before the SPS it refers to is no longer rejected. With this, all 147 streams of the JCT-VC HEVC v1 conformance suite decode bit-exactly.
+
+- [#306](https://github.com/lid-labs/hevc.js/pull/306) [`267b7ef`](https://github.com/lid-labs/hevc.js/commit/267b7ef421285312f607aa19b530bfb8d22aed0f) Thanks [@privaloops](https://github.com/privaloops)! - Decoder: merge candidate pruning compares only the reference lists a candidate uses. Next to an 8x4 or 4x8 prediction unit whose bi-prediction had been turned into uni-prediction, a duplicate candidate was kept and later merge indices selected the wrong motion, corrupting B pictures. The JCT-VC scaling list conformance streams now decode bit-exactly.
+
+- [#326](https://github.com/lid-labs/hevc.js/pull/326) [`c5820d7`](https://github.com/lid-labs/hevc.js/commit/c5820d79227df4c62cf4d62a04d677f8e1243c3a) Thanks [@privaloops](https://github.com/privaloops)! - Decoder: streams with PCM coding units decode correctly — PCM samples on fewer bits than the bit depth, PCM samples starting on a byte boundary, and PCM units next to the loop filters all used to decode wrong.
+
+- [#307](https://github.com/lid-labs/hevc.js/pull/307) [`8ebcfb1`](https://github.com/lid-labs/hevc.js/commit/8ebcfb1840cd3677e29def2f2d54312aa9cefd04) Thanks [@privaloops](https://github.com/privaloops)! - Decoder: the reference picture lists and the collocated picture are built for each slice instead of once per picture from the first slice. Pictures whose slices use different lists, such as different numbers of active references or list modification, were predicted from the wrong reference pictures in every slice after the first.
+
+- [#324](https://github.com/lid-labs/hevc.js/pull/324) [`2a60790`](https://github.com/lid-labs/hevc.js/commit/2a60790756335790d654305b71f67832803e9236) Thanks [@privaloops](https://github.com/privaloops)! - Decoder: streams with a parallel merge level above 2 decode correctly. The bi-to-uni restriction of 8x4 and 4x8 prediction units was skipped in 8x8 coding units sharing a merge list, which corrupted B pictures.
+
+- [#327](https://github.com/lid-labs/hevc.js/pull/327) [`4174a7e`](https://github.com/lid-labs/hevc.js/commit/4174a7eb9d845f2c36ce09b0732579b3f8a1e327) Thanks [@privaloops](https://github.com/privaloops)! - Decoder: fixes three conformance defects. Pictures after a non-reference picture or a CRA with a nonzero POC could be output in the wrong order; an IDR or BLA with `no_output_of_prior_pics_flag` dropped pictures that should have been output; and streams whose minimum transform size is above 4x4 decoded to wrong pictures.
+
+- [#296](https://github.com/lid-labs/hevc.js/pull/296) [`aa242a8`](https://github.com/lid-labs/hevc.js/commit/aa242a814001274559e6bbab0256ff3695d97b40) Thanks [@privaloops](https://github.com/privaloops)! - Faster coefficient parsing in the WASM decoder: `residual_coding` now derives the `sig_coeff_flag` context once per sub-block, reads coefficient levels over the significant positions only, and locates the last significant coefficient directly. Decoded output is unchanged, bit for bit. Measured with the WASM build under Node 24: about 6% less decode time at 1080p and 8–9% at 4K.
+
+- [#303](https://github.com/lid-labs/hevc.js/pull/303) [`58e4e5d`](https://github.com/lid-labs/hevc.js/commit/58e4e5dad6a19c2239ec12e790dfac6ac1c39ae0) Thanks [@privaloops](https://github.com/privaloops)! - Decoder: an SPS or PPS whose scaling list data is out of the ranges of §7.4.5 is now rejected. A malformed `scaling_list_pred_matrix_id_delta` could make the decoder read past its scaling list tables. Conforming streams decode as before.
+
+- [#332](https://github.com/lid-labs/hevc.js/pull/332) [`c8100e6`](https://github.com/lid-labs/hevc.js/commit/c8100e6ff39b963dd4a04bfb1b9763397131b6d1) Thanks [@privaloops](https://github.com/privaloops)! - Faster WASM decoding: SIMD inter-prediction interpolation, inverse transforms, SAO and deblocking, transforms and dequantization bounded to the nonzero coefficients, and a faster CABAC engine. Measured under Node 24 on an Apple M4 Pro: 91 to 135 fps on a 1080p stream, 23.8 to 29.7 and 30.8 to 40 fps on two 4K streams. Decoded output is unchanged, bit for bit.
+
+- [#311](https://github.com/lid-labs/hevc.js/pull/311) [`770eb45`](https://github.com/lid-labs/hevc.js/commit/770eb45440252a0a6c0db6d7ccc3a61054522d6c) Thanks [@privaloops](https://github.com/privaloops)! - Decoder: streams with tiles decode correctly. Each tile now starts at its entry point with freshly initialised CABAC contexts; before, a tiled stream could decode to wrong pictures from one tile on, or abort.
+
+- [#301](https://github.com/lid-labs/hevc.js/pull/301) [`d3a0ebf`](https://github.com/lid-labs/hevc.js/commit/d3a0ebf60c2b8b742ff64502dd415cfa5e07a7a3) Thanks [@privaloops](https://github.com/privaloops)! - Fix decoding of streams that use transform skip or scaling lists sent in the bitstream: transform-skip residuals were scaled 4 times too small, and explicit scaling list coefficients were applied at the wrong positions. Streams using neither tool decode exactly as before.
+
+- [#330](https://github.com/lid-labs/hevc.js/pull/330) [`5b23efa`](https://github.com/lid-labs/hevc.js/commit/5b23efafd382c54126e8c823d2c63f9fecf0803d) Thanks [@privaloops](https://github.com/privaloops)! - Decoder: about 5% faster at 1080p and 9% at 4K in WebAssembly, by no longer zeroing large scratch buffers for every transform unit. Output is unchanged.
+
 ## 1.5.0
 
 ### Minor Changes

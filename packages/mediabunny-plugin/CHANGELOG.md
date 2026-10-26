@@ -1,0 +1,16 @@
+# @hevcjs/mediabunny-plugin
+
+## 0.1.0
+
+### Minor Changes
+
+- [#345](https://github.com/lid-labs/hevc.js/pull/345) [`37c07bd`](https://github.com/lid-labs/hevc.js/commit/37c07bd10974f84fbd3c02f73723481a1ec1001c) Thanks [@privaloops](https://github.com/privaloops)! - Decode in a Web Worker with `registerHevcDecoder({ workerUrl })`, serving `dist/decode-worker.js` next to `hevc-decode.js` and `.wasm`. Without a worker, decoding on the page's thread now yields to the event loop about every 50 ms, so decoding flat out no longer freezes the page.
+
+- [#333](https://github.com/lid-labs/hevc.js/pull/333) [`1d98ebc`](https://github.com/lid-labs/hevc.js/commit/1d98ebc11923fa618f10f56ce83f501b32513e5e) Thanks [@privaloops](https://github.com/privaloops)! - New package: registers the hevc.js decoder with Mediabunny as a custom video decoder, for HEVC Main and Main 10 tracks WebCodecs cannot decode. `registerHevcDecoder()` leaves the profiles the browser decodes natively to WebCodecs; `force: true` claims them all.
+
+### Patch Changes
+
+- [#343](https://github.com/lid-labs/hevc.js/pull/343) [`87bb5a8`](https://github.com/lid-labs/hevc.js/commit/87bb5a82604d474b0cf20ecd0f3493e49e2424e9) Thanks [@privaloops](https://github.com/privaloops)! - `@hevcjs/core/decoder`: a decoder-only entry point (`HEVCDecoder` and its types) that does not pull mp4box into the app's bundle. `@hevcjs/mediabunny-plugin` imports from it, which brings an app bundle that only registers the plugin from 150 KB down to 8.4 KB minified.
+
+- Updated dependencies [[`e922213`](https://github.com/lid-labs/hevc.js/commit/e92221374d0061885d9c3c10480b5298b7d5364e), [`87bb5a8`](https://github.com/lid-labs/hevc.js/commit/87bb5a82604d474b0cf20ecd0f3493e49e2424e9), [`c847fed`](https://github.com/lid-labs/hevc.js/commit/c847fed4b36f4828f48b19c8b3b6151fb5858fcd), [`efd3868`](https://github.com/lid-labs/hevc.js/commit/efd386812320650d9265cea26fc114be6141e5bf), [`05fdae1`](https://github.com/lid-labs/hevc.js/commit/05fdae1a88ae37cdc0c1a212a9ccec96daef6e2e), [`9e46057`](https://github.com/lid-labs/hevc.js/commit/9e460573797de74c7798857c291827de94955c45), [`141b358`](https://github.com/lid-labs/hevc.js/commit/141b358dc6f2626376b862d8d9be5d9c7931edd8), [`267b7ef`](https://github.com/lid-labs/hevc.js/commit/267b7ef421285312f607aa19b530bfb8d22aed0f), [`c5820d7`](https://github.com/lid-labs/hevc.js/commit/c5820d79227df4c62cf4d62a04d677f8e1243c3a), [`8ebcfb1`](https://github.com/lid-labs/hevc.js/commit/8ebcfb1840cd3677e29def2f2d54312aa9cefd04), [`2a60790`](https://github.com/lid-labs/hevc.js/commit/2a60790756335790d654305b71f67832803e9236), [`4174a7e`](https://github.com/lid-labs/hevc.js/commit/4174a7eb9d845f2c36ce09b0732579b3f8a1e327), [`aa242a8`](https://github.com/lid-labs/hevc.js/commit/aa242a814001274559e6bbab0256ff3695d97b40), [`58e4e5d`](https://github.com/lid-labs/hevc.js/commit/58e4e5dad6a19c2239ec12e790dfac6ac1c39ae0), [`c8100e6`](https://github.com/lid-labs/hevc.js/commit/c8100e6ff39b963dd4a04bfb1b9763397131b6d1), [`770eb45`](https://github.com/lid-labs/hevc.js/commit/770eb45440252a0a6c0db6d7ccc3a61054522d6c), [`d3a0ebf`](https://github.com/lid-labs/hevc.js/commit/d3a0ebf60c2b8b742ff64502dd415cfa5e07a7a3), [`5b23efa`](https://github.com/lid-labs/hevc.js/commit/5b23efafd382c54126e8c823d2c63f9fecf0803d)]:
+  - @hevcjs/core@1.6.0
