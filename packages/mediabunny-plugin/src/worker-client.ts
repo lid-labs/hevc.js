@@ -35,11 +35,16 @@ export class DecodeWorkerClient {
     onError: (error: Error) => void,
   ): Promise<DecodeWorkerClient> {
     return new Promise((resolve, reject) => {
+      // Mediabunny never calls close() on a decoder whose init() failed
+      const failed = (error: Error) => {
+        worker.terminate();
+        reject(error);
+      };
       worker.onmessage = (event: MessageEvent<FromWorker>) => {
         if (event.data.type === "ready") resolve(new DecodeWorkerClient(worker, onOutput, onError));
-        else if (event.data.type === "error") reject(new Error(event.data.message));
+        else if (event.data.type === "error") failed(new Error(event.data.message));
       };
-      worker.onerror = (event: ErrorEvent) => reject(new Error(`HEVC decode worker: ${event.message}`));
+      worker.onerror = (event: ErrorEvent) => failed(new Error(`HEVC decode worker: ${event.message}`));
       worker.postMessage({ type: "init", ...init } satisfies ToWorker);
     });
   }
@@ -90,6 +95,8 @@ export class DecodeWorkerClient {
   private _fail(error: Error): void {
     if (this._failure) return;
     this._failure = error;
+    // Once a call has failed, Mediabunny skips the later ones, close() included
+    this._worker.terminate();
     this._flush?.reject(error);
     this._flush = null;
     for (const wake of this._wake.splice(0)) wake();
