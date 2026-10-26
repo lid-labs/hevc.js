@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    // index.test.ts loads the WASM glue and a demo stream from disk.
+    "types": ["node"]
+  },
+  "include": ["src"]
+}
