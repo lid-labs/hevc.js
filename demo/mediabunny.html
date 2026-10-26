@@ -202,6 +202,7 @@ async function decode(source, label) {
     // Configuration precedes the first frame, so the answer is known from then on.
     const usedDecoder = () => window.nativeDecoderConfigs > nativeConfigsBefore ? 'WebCodecs (native)' : 'hevc.js (WASM)';
     const t0 = performance.now();
+    let lastYield = t0;
     let firstTimestamp = 0;
     for await (const sample of new HevcMediabunny.VideoSampleSink(track).samples()) {
       if (run !== currentRun) { sample.close(); return; }
@@ -217,6 +218,12 @@ async function decode(source, label) {
         // Hold the frame until its timestamp comes up
         const wait = (sample.timestamp - firstTimestamp) * 1000 - (performance.now() - t0);
         if (wait > 0) await sleep(wait);
+      } else if (performance.now() - lastYield > 50) {
+        // The plugin decodes on this thread and Mediabunny chains it through
+        // promises only: without a task boundary now and then, the page cannot
+        // repaint or take a click until the whole file is decoded.
+        await sleep(0);
+        lastYield = performance.now();
       }
       sample.draw(ctx, 0, 0);
       timestamps.push(sample.timestamp);
