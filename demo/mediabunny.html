@@ -82,10 +82,19 @@
 <!-- WASM decoder -->
 <script src="hevc-decode.js"></script>
 <script>
-// Counts the WebCodecs decoders Mediabunny configures, so the page reports
-// the decoder that actually ran rather than the one it expects. Installed
-// before Mediabunny loads; Mediabunny looks VideoDecoder up when decoding.
+// Counts the WebCodecs decoders Mediabunny configures and the workers the
+// plugin starts, so the page reports the decoder and the thread that actually
+// ran rather than the ones it expects. Installed before Mediabunny and the
+// plugin load; both look these constructors up when decoding.
 window.nativeDecoderConfigs = 0;
+window.workersStarted = 0;
+const NativeWorker = Worker;
+window.Worker = class extends NativeWorker {
+  constructor(...args) {
+    super(...args);
+    window.workersStarted++;
+  }
+};
 if (typeof VideoDecoder !== 'undefined') {
   const NativeVideoDecoder = VideoDecoder;
   window.VideoDecoder = class extends NativeVideoDecoder {
@@ -203,6 +212,7 @@ async function decode(source, label) {
     const native = typeof VideoDecoder !== 'undefined'
       && (await VideoDecoder.isConfigSupported(config).catch(() => ({ supported: false }))).supported === true;
     const nativeConfigsBefore = window.nativeDecoderConfigs;
+    const workersBefore = window.workersStarted;
 
     const canvas = document.getElementById('frame');
     const ctx = canvas.getContext('2d');
@@ -215,8 +225,10 @@ async function decode(source, label) {
     // Observed: a WebCodecs decoder was configured for this track, or none was and the plugin decoded it.
     // Configuration precedes the first frame, so the answer is known from then on.
     const usedDecoder = () => window.nativeDecoderConfigs > nativeConfigsBefore ? 'WebCodecs (native)' : 'hevc.js (WASM)';
+    // Observed too: the plugin starts its worker in the decoder's init, before the first frame
+    const inWorker = () => window.workersStarted > workersBefore;
     const describe = (decoder) => decoder === 'hevc.js (WASM)'
-      ? decoder + (useWorker ? ', in a worker' : ', on the page\'s thread')
+      ? decoder + (inWorker() ? ', in a worker' : ', on the page\'s thread')
       : decoder;
     const t0 = performance.now();
     let firstTimestamp = 0;
@@ -258,7 +270,7 @@ async function decode(source, label) {
     setStat('stat-speed', realtime
       ? 'decode speed: tick "Decode as fast as possible" to measure'
       : 'decode speed: ' + (timestamps.length / (ms / 1000)).toFixed(0) + ' fps');
-    window.demoResult = { label, codec, native, decoder, worker: useWorker, frames: timestamps.length, timestamps, format, size, meanLuma, ms };
+    window.demoResult = { label, codec, native, decoder, worker: inWorker(), frames: timestamps.length, timestamps, format, size, meanLuma, ms };
     console.log('[demo]', label, decoder, timestamps.length + ' frames', format, size, Math.round(ms) + ' ms');
     setStatus('Done — ' + timestamps.length + ' frames decoded');
   } catch (e) {
