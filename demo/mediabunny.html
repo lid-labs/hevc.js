@@ -132,16 +132,30 @@ const PRESETS = {
 };
 
 async function decodePreset(name) {
+  window.demoResult = null;
   setStatus('Fetching...');
-  const parts = await Promise.all(PRESETS[name].map(async (url) => {
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(url + ': HTTP ' + res.status);
-    return new Uint8Array(await res.arrayBuffer());
-  }));
-  const bytes = new Uint8Array(parts.reduce((sum, p) => sum + p.byteLength, 0));
-  let off = 0;
-  for (const p of parts) { bytes.set(p, off); off += p.byteLength; }
+  let bytes;
+  try {
+    const parts = await Promise.all(PRESETS[name].map(async (url) => {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(url + ': HTTP ' + res.status);
+      return new Uint8Array(await res.arrayBuffer());
+    }));
+    bytes = new Uint8Array(parts.reduce((sum, p) => sum + p.byteLength, 0));
+    let off = 0;
+    for (const p of parts) { bytes.set(p, off); off += p.byteLength; }
+  } catch (e) {
+    fail(name, e);
+    return;
+  }
   await decode(new HevcMediabunny.BufferSource(bytes), name);
+}
+
+// Reported to the page and to window.demoResult, which the e2e spec waits on
+function fail(label, e) {
+  window.demoResult = { label, error: e.message };
+  setStatus('Error: ' + e.message);
+  console.error(e);
 }
 
 document.getElementById('file-input').addEventListener('change', (e) => {
@@ -203,9 +217,7 @@ async function decode(source, label) {
     console.log('[demo]', label, decoder, timestamps.length + ' frames', format, size, Math.round(ms) + ' ms');
     setStatus('Done — ' + timestamps.length + ' frames decoded');
   } catch (e) {
-    window.demoResult = { label, error: e.message };
-    setStatus('Error: ' + e.message);
-    console.error(e);
+    fail(label, e);
   }
 }
 </script>
