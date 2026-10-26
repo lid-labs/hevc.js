@@ -142,10 +142,11 @@ No player instance needed to attach: hls.js keeps HEVC levels in its ladder as l
 ```js
 import { registerHevcDecoder } from '@hevcjs/mediabunny-plugin';
 
-await registerHevcDecoder(); // with hevc-decode.js loaded by a script tag
+// decode-worker.js (from this package), hevc-decode.js and .wasm served side by side
+await registerHevcDecoder({ workerUrl: '/decode-worker.js' });
 ```
 
-Not a player plugin: it registers a custom video decoder with [Mediabunny](https://mediabunny.dev), so reading, converting and extracting frames from HEVC files works where WebCodecs cannot decode HEVC. No transcoding to H.264 here, the decoded frames go to Mediabunny as they are. Profiles the browser decodes natively are left to WebCodecs. See the [plugin README](packages/mediabunny-plugin/README.md).
+Not a player plugin: it registers a custom video decoder with [Mediabunny](https://mediabunny.dev), so reading, converting and extracting frames from HEVC files works where WebCodecs cannot decode HEVC. No transcoding to H.264 here, the decoded frames go to Mediabunny as they are. Profiles the browser decodes natively are left to WebCodecs. Decoding runs in a Web Worker, or on the page's thread without `workerUrl`. See the [plugin README](packages/mediabunny-plugin/README.md).
 
 ### How the transcoding works
 

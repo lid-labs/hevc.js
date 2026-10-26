@@ -10,21 +10,16 @@ Where the browser decodes HEVC itself, the plugin stays out of the way: it only 
 npm install @hevcjs/mediabunny-plugin mediabunny
 ```
 
-**[Live demo](https://hevcjs.dev/demo/mediabunny.html)**: decode an HEVC file in your browser, with a toggle to force hevc.js where WebCodecs has native HEVC.
+**[Live demo](https://hevcjs.dev/demo/mediabunny.html)**: decode an HEVC file in your browser, with toggles to force hevc.js where WebCodecs has native HEVC and to decode in a worker or on the page's thread.
 
 ## Usage
 
-Copy the decoder from `@hevcjs/core` to your public directory:
+Serve the decode worker and the decoder side by side, from this package and from `@hevcjs/core`:
 
 ```bash
+cp node_modules/@hevcjs/mediabunny-plugin/dist/decode-worker.js public/
 cp node_modules/@hevcjs/core/dist/wasm/hevc-decode.js public/
 cp node_modules/@hevcjs/core/dist/wasm/hevc-decode.wasm public/
-```
-
-Load the glue with a script tag; it finds `hevc-decode.wasm` next to itself:
-
-```html
-<script src="/hevc-decode.js"></script>
 ```
 
 Then register the decoder, and await it, before any decoding task:
@@ -33,7 +28,7 @@ Then register the decoder, and await it, before any decoding task:
 import { Input, ALL_FORMATS, BlobSource, VideoSampleSink } from 'mediabunny';
 import { registerHevcDecoder } from '@hevcjs/mediabunny-plugin';
 
-await registerHevcDecoder();
+await registerHevcDecoder({ workerUrl: '/decode-worker.js' });
 
 const input = new Input({ source: new BlobSource(file), formats: ALL_FORMATS });
 const track = await input.getPrimaryVideoTrack();
@@ -45,15 +40,22 @@ for await (const sample of new VideoSampleSink(track).samples()) {
 }
 ```
 
+Each track being decoded gets its own worker, which loads `hevc-decode.js` and `hevc-decode.wasm` from the worker's directory unless `wasmUrl` / `wasmBinaryUrl` say otherwise. A worker on another origin, a CDN for instance, is fetched and started from a blob URL, since classic workers refuse cross-origin scripts; it then runs with your page's origin, so serve it, the glue and the binary only from sources you trust. Under a Content Security Policy, that cross-origin path needs `connect-src` for the worker's host and `worker-src blob:`; a same-origin worker needs `worker-src 'self'`.
+
 Mediabunny prefers a registered decoder over WebCodecs, so `registerHevcDecoder()` asks WebCodecs first, once, which profiles it decodes, and leaves those to it. `registerHevcDecoder({ force: true })` decodes with hevc.js everywhere, which is useful to test the WASM path on a browser that has native HEVC.
+
+### Without a worker
+
+Leave `workerUrl` out and the page's thread decodes. Load the glue with a script tag instead, `<script src="/hevc-decode.js"></script>`; it finds `hevc-decode.wasm` next to itself. The plugin then yields to the event loop about every 50 ms so the page keeps painting and handling input, but the decoding itself still competes with the page for its thread.
 
 ## Options
 
 | Option | Default | |
 |---|---|---|
+| `workerUrl` | none: decode on the page's thread | URL of `decode-worker.js` |
 | `force` | `false` | Claim every supported profile, even those WebCodecs decodes natively |
-| `wasmUrl` | `./wasm/hevc-decode.js` | Forwarded to `HEVCDecoder.create()` of `@hevcjs/core`, which only uses it when no glue is loaded globally |
-| `wasmBinaryUrl` | next to the glue | URL of `hevc-decode.wasm`, forwarded likewise |
+| `wasmUrl` | with a worker: `hevc-decode.js` next to it; without: `./wasm/hevc-decode.js`, used only when no glue is loaded globally | URL of the Emscripten glue |
+| `wasmBinaryUrl` | next to the glue | URL of `hevc-decode.wasm` |
 
 The options of the first call stay in effect: later calls return the same registration.
 
@@ -65,7 +67,6 @@ The options of the first call stay in effect: later calls return the same regist
 
 ## Limitations
 
-- Decoding runs on the thread that runs Mediabunny. Run Mediabunny in a Web Worker to keep the page responsive; in a classic worker, load the glue with `importScripts('/hevc-decode.js')` instead of a script tag, and pass `wasmBinaryUrl` unless `hevc-decode.wasm` sits next to the worker script — inside a worker, the glue resolves it against the worker's URL.
 - The native probe tests one level per profile (level 3.1). A browser that decodes HEVC at that level but not at a higher one is not detected, and Mediabunny will report those tracks as undecodable; `force: true` covers that case.
 - No colour metadata is attached to the frames yet: they take `VideoFrame`'s defaults.
 
