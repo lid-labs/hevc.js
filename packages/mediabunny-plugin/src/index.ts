@@ -14,8 +14,9 @@
 
 import { CustomVideoDecoder, EncodedPacket, registerDecoder, VideoSample } from "mediabunny";
 import type { VideoCodec } from "mediabunny";
-import { HEVCDecoder } from "@hevcjs/core";
-import type { DecoderOptions, HEVCFrame } from "@hevcjs/core";
+// The decoder-only entry: the main one would pull mp4box into the app's bundle
+import { HEVCDecoder } from "@hevcjs/core/decoder";
+import type { DecoderOptions, HEVCFrame } from "@hevcjs/core/decoder";
 import { packetToAnnexB, readStreamConfig } from "./bitstream.js";
 import { OutputTimestamps } from "./output-timestamps.js";
 import type { SlotTime } from "./output-timestamps.js";
