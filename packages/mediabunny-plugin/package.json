@@ -42,7 +42,7 @@
     "url": "https://github.com/lid-labs/hevc.js/issues"
   },
   "scripts": {
-    "build": "tsup && tsc -p tsconfig.build.json",
+    "build": "tsup && tsc -p tsconfig.build.json && mv dist/decode-worker.global.js dist/decode-worker.js && mv dist/decode-worker.global.js.map dist/decode-worker.js.map",
     "dev": "tsup --watch",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"

@@ -7,7 +7,7 @@
  * ```ts
  * import { registerHevcDecoder } from '@hevcjs/mediabunny-plugin';
  *
- * await registerHevcDecoder({ wasmUrl: '/hevc-decode.js' });
+ * await registerHevcDecoder({ workerUrl: '/decode-worker.js' });
  * // Mediabunny now decodes HEVC tracks the browser cannot decode itself.
  * ```
  */
@@ -16,10 +16,13 @@ import { CustomVideoDecoder, EncodedPacket, registerDecoder, VideoSample } from 
 import type { VideoCodec } from "mediabunny";
 // The decoder-only entry: the main one would pull mp4box into the app's bundle
 import { HEVCDecoder } from "@hevcjs/core/decoder";
-import type { DecoderOptions, HEVCFrame } from "@hevcjs/core/decoder";
+import type { DecoderOptions } from "@hevcjs/core/decoder";
 import { packetToAnnexB, readStreamConfig } from "./bitstream.js";
+import { packFrame } from "./frames.js";
+import type { PackedFrame } from "./frames.js";
 import { OutputTimestamps } from "./output-timestamps.js";
 import type { SlotTime } from "./output-timestamps.js";
+import { DecodeWorkerClient, createWorker } from "./worker-client.js";
 
 export interface HevcDecoderPluginOptions extends DecoderOptions {
   /**
@@ -28,6 +31,13 @@ export interface HevcDecoderPluginOptions extends DecoderOptions {
    * this the plugin only claims the profiles the browser cannot decode.
    */
   force?: boolean;
+  /**
+   * URL of `decode-worker.js` (shipped in this package's dist/): decodes in a
+   * Web Worker, one per track being decoded, off the page's thread. The worker
+   * loads `wasmUrl`, by default `hevc-decode.js` next to it. Without it, the
+   * page's thread decodes, yielding to the event loop about every 50 ms.
+   */
+  workerUrl?: string;
 }
 
 /** Profiles @hevcjs/core decodes: Main and Main 10. */
@@ -39,8 +49,14 @@ const PROBE_CODECS: Record<(typeof DECODABLE_PROFILES)[number], string> = {
   2: "hvc1.2.4.L93.B0",
 };
 
+/** How long the page's thread decodes before it lets the page paint and handle input. */
+const YIELD_EVERY_MS = 50;
+
 interface Settings {
+  /** For the page's thread */
   decoderOptions: DecoderOptions;
+  /** For a decode worker: absolute URLs, the worker may run from a blob URL */
+  worker: { workerUrl: string; wasmUrl: string; wasmBinaryUrl: string } | null;
   /** Profiles this plugin claims: the decodable ones WebCodecs cannot decode, or all of them when forced */
   profiles: Set<number>;
   /** Whether VideoFrame accepts I420P10; when it does not, 10-bit output is scaled down to 8 bits */
@@ -70,15 +86,27 @@ export function registerHevcDecoder(options: HevcDecoderPluginOptions = {}): Pro
 }
 
 async function register(options: HevcDecoderPluginOptions): Promise<void> {
-  const { force = false, ...decoderOptions } = options;
+  const { force = false, workerUrl, ...decoderOptions } = options;
 
   const profiles = new Set<number>();
   for (const profile of DECODABLE_PROFILES) {
     if (force || !(await nativelyDecodes(PROBE_CODECS[profile]))) profiles.add(profile);
   }
 
-  settings = { decoderOptions, profiles, i420p10: supportsI420P10() };
+  let worker: Settings["worker"] = null;
+  if (workerUrl !== undefined) {
+    const absWorkerUrl = absolute(workerUrl);
+    const wasmUrl = absolute(decoderOptions.wasmUrl ?? "hevc-decode.js", absWorkerUrl);
+    const wasmBinaryUrl = absolute(decoderOptions.wasmBinaryUrl ?? "hevc-decode.wasm", wasmUrl);
+    worker = { workerUrl: absWorkerUrl, wasmUrl, wasmBinaryUrl };
+  }
+
+  settings = { decoderOptions, worker, profiles, i420p10: supportsI420P10() };
   registerDecoder(HevcDecoder);
+}
+
+function absolute(url: string, base?: string): string {
+  return new URL(url, base ?? (typeof location === "undefined" ? undefined : location.href)).href;
 }
 
 async function nativelyDecodes(codec: string): Promise<boolean> {
@@ -104,8 +132,10 @@ function supportsI420P10(): boolean {
 }
 
 class HevcDecoder extends CustomVideoDecoder {
-  private _decoder: HEVCDecoder | null = null;
+  private _worker: DecodeWorkerClient | null = null;
+  private _local: HEVCDecoder | null = null;
   private _nalLengthSize = 0;
+  private _lastYield = 0;
   private readonly _timestamps = new OutputTimestamps();
 
   static override supports(codec: VideoCodec, config: VideoDecoderConfig): boolean {
@@ -119,45 +149,79 @@ class HevcDecoder extends CustomVideoDecoder {
 
   async init(): Promise<void> {
     const stream = readStreamConfig(this.config.codec, this.config.description);
+    const { worker, decoderOptions, i420p10 } = settings!;
+
+    if (worker) {
+      this._worker = await DecodeWorkerClient.open(
+        await createWorker(worker.workerUrl),
+        {
+          wasmUrl: worker.wasmUrl,
+          wasmBinaryUrl: worker.wasmBinaryUrl,
+          nalLengthSize: stream.nalLengthSize,
+          parameterSets: stream.parameterSets,
+          i420p10,
+        },
+        (suppressed, frames) => {
+          this._timestamps.noteSuppressed(suppressed);
+          this._emit(frames);
+        },
+        error => this.onError(error),
+      );
+      return;
+    }
+
     this._nalLengthSize = stream.nalLengthSize;
-    this._decoder = await HEVCDecoder.create(settings!.decoderOptions);
-    if (stream.parameterSets) this._decoder.feed(stream.parameterSets);
+    this._local = await HEVCDecoder.create(decoderOptions);
+    if (stream.parameterSets) this._local.feed(stream.parameterSets);
+    this._lastYield = performance.now();
   }
 
-  decode(packet: EncodedPacket): void {
-    const decoder = this._decoder!;
+  async decode(packet: EncodedPacket): Promise<void> {
     this._timestamps.add({ timestamp: packet.timestamp, duration: packet.duration });
+    if (this._worker) return this._worker.decode(packet.data);
+
+    const decoder = this._local!;
     decoder.feed(packetToAnnexB(packet.data, this._nalLengthSize));
     // Read before draining: a frame released by this drain may display after
     // a suppressed picture, and would otherwise take its slot.
     this._timestamps.noteSuppressed(decoder.takeSuppressedPictures());
-    this._emit(decoder.drain());
+    this._emit(decoder.drain().map(frame => packFrame(frame, settings!.i420p10)));
+
+    // Mediabunny chains decode() through promises only: without a task
+    // boundary now and then, decoding flat out freezes the page until it ends.
+    if (performance.now() - this._lastYield > YIELD_EVERY_MS) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+      this._lastYield = performance.now();
+    }
   }
 
-  flush(): void {
-    this._emit(this._decoder!.flush());
+  async flush(): Promise<void> {
+    const frames = this._worker
+      ? await this._worker.flush()
+      : this._local!.flush().map(frame => packFrame(frame, settings!.i420p10));
+    this._emit(frames);
     this._timestamps.reset();
   }
 
   close(): void {
-    this._decoder?.destroy();
-    this._decoder = null;
+    this._worker?.close();
+    this._worker = null;
+    this._local?.destroy();
+    this._local = null;
   }
 
-  private _emit(frames: HEVCFrame[]): void {
+  private _emit(frames: PackedFrame[]): void {
     for (const frame of frames) {
       const slot = this._timestamps.next(frame);
       // More frames than packets only comes out of a corrupt stream
       if (!slot) continue;
-      this.onSample(toVideoSample(frame, slot, settings!.i420p10));
+      this.onSample(toVideoSample(frame, slot));
     }
   }
 }
 
-function toVideoSample(frame: HEVCFrame, slot: SlotTime, i420p10: boolean): VideoSample {
-  const { format, data } = packPlanes(frame, i420p10);
-  const codedWidth = frame.width;
-  const codedHeight = frame.height;
+function toVideoSample(frame: PackedFrame, slot: SlotTime): VideoSample {
+  const { format, data, width: codedWidth, height: codedHeight } = frame;
 
   if (typeof VideoFrame !== "undefined") {
     // Build the VideoFrame ourselves: handing Mediabunny raw planes would copy them once more
@@ -179,35 +243,4 @@ function toVideoSample(frame: HEVCFrame, slot: SlotTime, i420p10: boolean): Vide
     timestamp: slot.timestamp,
     duration: slot.duration,
   });
-}
-
-/** The three planes, contiguous, in the layout VideoFrame expects for I420 / I420P10. */
-function packPlanes(frame: HEVCFrame, i420p10: boolean): { format: "I420" | "I420P10"; data: Uint8Array | Uint16Array } {
-  const ySize = frame.y.length;
-  const cSize = frame.cb.length;
-
-  if (frame.bitDepth === 10 && i420p10) {
-    const out = new Uint16Array(ySize + 2 * cSize);
-    out.set(frame.y);
-    out.set(frame.cb, ySize);
-    out.set(frame.cr, ySize + cSize);
-    return { format: "I420P10", data: out };
-  }
-
-  const out = new Uint8Array(ySize + 2 * cSize);
-  if (frame.bitDepth > 8) {
-    const shift = frame.bitDepth - 8;
-    const planes = [frame.y, frame.cb, frame.cr];
-    let off = 0;
-    for (const plane of planes) {
-      for (let i = 0; i < plane.length; i++) out[off + i] = plane[i]! >> shift;
-      off += plane.length;
-    }
-  } else {
-    // 8-bit samples fit a byte: set() converts them as they are copied
-    out.set(frame.y);
-    out.set(frame.cb, ySize);
-    out.set(frame.cr, ySize + cSize);
-  }
-  return { format: "I420", data: out };
 }
