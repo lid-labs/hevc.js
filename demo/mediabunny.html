@@ -72,6 +72,21 @@
 
 <!-- WASM decoder -->
 <script src="hevc-decode.js"></script>
+<script>
+// Counts the WebCodecs decoders Mediabunny configures, so the page reports
+// the decoder that actually ran rather than the one it expects. Installed
+// before Mediabunny loads; Mediabunny looks VideoDecoder up when decoding.
+window.nativeDecoderConfigs = 0;
+if (typeof VideoDecoder !== 'undefined') {
+  const NativeVideoDecoder = VideoDecoder;
+  window.VideoDecoder = class extends NativeVideoDecoder {
+    configure(config) {
+      window.nativeDecoderConfigs++;
+      return super.configure(config);
+    }
+  };
+}
+</script>
 <!-- Mediabunny + hevc.js plugin bundle -->
 <script src="mediabunny-bundle.js"></script>
 
@@ -146,12 +161,10 @@ async function decode(source, label) {
     const config = await track.getDecoderConfig();
     if (!(await track.canDecode())) throw new Error('Mediabunny cannot decode this ' + codec + ' track');
 
-    // Which decoder Mediabunny picks: the plugin claims HEVC wherever
-    // WebCodecs does not decode it, or everywhere when forced.
+    // Whether WebCodecs could decode this track itself
     const native = typeof VideoDecoder !== 'undefined'
       && (await VideoDecoder.isConfigSupported(config).catch(() => ({ supported: false }))).supported === true;
-    const decoder = codec !== 'hevc' || (native && !force) ? 'WebCodecs (native)' : 'hevc.js (WASM)';
-    setStat('stat-decoder', 'decoder: ' + decoder);
+    const nativeConfigsBefore = window.nativeDecoderConfigs;
 
     const canvas = document.getElementById('frame');
     const ctx = canvas.getContext('2d');
@@ -173,6 +186,9 @@ async function decode(source, label) {
       if (timestamps.length % 10 === 0) setStat('stat-frames', 'frames: ' + timestamps.length);
     }
     const ms = performance.now() - t0;
+    // Observed: a WebCodecs decoder was configured for this track, or none was and the plugin decoded it
+    const decoder = window.nativeDecoderConfigs > nativeConfigsBefore ? 'WebCodecs (native)' : 'hevc.js (WASM)';
+    setStat('stat-decoder', 'decoder: ' + decoder);
 
     // Mean brightness of the last frame drawn, to tell a picture from a blank canvas
     const px = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
