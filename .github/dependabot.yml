@@ -27,11 +27,6 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
-    ignore:
-      # v2 renames the inputs release.yml passes and ignores GITHUB_TOKEN from env;
-      # migrating needs a release to test it, so it stays a manual change
-      - dependency-name: changesets/action
-        update-types: ["version-update:semver-major"]
     groups:
       # Single PR for all action bumps so paired actions (codeql init/analyze)
       # always move together and CI stays consistent
