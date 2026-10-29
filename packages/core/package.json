@@ -58,13 +58,13 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "mp4box": "^2.4.1"
+    "mp4box": "^2.5.0"
   },
   "devDependencies": {
-    "@types/node": "^26.2.0",
+    "@types/node": "^26.6.5",
     "tsup": "^8.0.0",
     "typescript": "^7.0.2",
-    "vite": "^8.1.5",
+    "vite": "^8.3.5",
     "vitest": "^4.1.10"
   }
 }

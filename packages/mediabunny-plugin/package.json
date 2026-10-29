@@ -54,7 +54,7 @@
     "mediabunny": "^1.62.0"
   },
   "devDependencies": {
-    "@types/node": "^26.2.0",
+    "@types/node": "^26.6.5",
     "mediabunny": "^1.62.1",
     "tsup": "^8.0.0",
     "typescript": "^7.0.2",
