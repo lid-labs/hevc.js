@@ -6,6 +6,8 @@ updates:
       - /packages/core
       - /packages/dashjs-plugin
       - /packages/shaka-plugin
+      - /packages/hlsjs-plugin
+      - /packages/mediabunny-plugin
     schedule:
       interval: weekly
     open-pull-requests-limit: 10

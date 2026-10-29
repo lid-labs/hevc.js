@@ -6,6 +6,9 @@ name: hevc.js CodeQL config
 paths-ignore:
   - 'demo/dash-bundle.js'
   - 'demo/shaka-bundle.js'
+  - 'demo/hls-bundle.js'
+  - 'demo/mediabunny-bundle.js'
+  - 'demo/mediabunny-decode-worker.js'
   - 'demo/transcode-worker.js'
   - 'demo/worker.js'
   - 'demo/hevc-decode.js'
