@@ -227,8 +227,7 @@ MV decode_mvd(CabacEngine& cabac) {
             absV += (1 << k);
             k++;
         }
-        if (k > 0)
-            absV += cabac.decode_bypass_bins(k);
+        absV += cabac.decode_bypass_bins(k);
         return absV;
     };
 
