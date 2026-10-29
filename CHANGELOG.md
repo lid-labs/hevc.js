@@ -99,6 +99,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Security
 - **The `SECURITY.md` scope lists all five packages**: it named only `@hevcjs/core` and `@hevcjs/dashjs-plugin`. Dependabot now also watches `packages/hlsjs-plugin` and `packages/mediabunny-plugin`, and CodeQL skips the generated demo bundles `hls-bundle.js`, `mediabunny-bundle.js` and `mediabunny-decode-worker.js`, as it already did for the dash.js and Shaka ones.
+- **`pnpm audit` is clean, dev dependencies included** (`package.json`, `packages/*/package.json`, `pnpm-lock.yaml`): 60 advisories down to 0, all in dev tooling — the published packages' dependencies had none. `browserstack-node-sdk`, unused (the BrowserStack projects connect over `wss://cdp.browserstack.com`, the tunnel is `browserstack-local`), is removed, with the two critical `simple-git` advisories it carried; tsup moves to 9.0.0 for esbuild 0.28; vite, vitest, js-yaml, nanoid and source-map-js move to their patched releases. The five packages' `dist/` builds identically to `main`'s.
+- **CI runs on Node 24** (`.github/workflows/`): every job but the release one was on Node 20, end of life since April 2026, below the `^22.18 || ^24.11 || >=26` tsup 9 declares.
 
 ### Removed
 - **`tools/bench_wasm.mjs`**: it aborted on any decoder built with emcc 6.x (`Assertion failed: JS engine does not provide full typed array support`): the hand-built `vm.createContext` it ran the Emscripten glue in no longer passes the runtime's typed-array check. `tools/bench_wasm.cjs` does the same job and works: `node tools/bench_wasm.cjs <bitstream.265> [wasm_dir]`, with `wasm_dir` defaulting to `build-wasm`, or `packages/core/wasm` for the committed decoder. #234.
