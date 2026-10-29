@@ -94,7 +94,6 @@
     "@changesets/cli": "^2.31.1",
     "@playwright/test": "^1.62.0",
     "browserstack-local": "^1.5.13",
-    "browserstack-node-sdk": "^1.64.3",
     "esbuild": "^0.28.1",
     "mediabunny": "^1.62.1"
   }
