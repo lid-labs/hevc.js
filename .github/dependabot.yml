@@ -11,6 +11,9 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 10
+    # Bump the lockfile only while the new version fits the range: a published
+    # range (mp4box in core) is raised on purpose, not by a weekly bump
+    versioning-strategy: increase-if-necessary
     groups:
       # One weekly PR for all minor/patch bumps; majors stay individual
       npm-minor-patch:
@@ -24,6 +27,11 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    ignore:
+      # v2 renames the inputs release.yml passes and ignores GITHUB_TOKEN from env;
+      # migrating needs a release to test it, so it stays a manual change
+      - dependency-name: changesets/action
+        update-types: ["version-update:semver-major"]
     groups:
       # Single PR for all action bumps so paired actions (codeql init/analyze)
       # always move together and CI stays consistent
