@@ -1,4 +1,5 @@
 import type { WorkerRequest, WorkerResponse, HEVCFrame, HEVCStreamInfo } from "./types.js";
+import { parseFrameLayout, type FrameLayout } from "./frame-layout.js";
 
 /**
  * Emscripten module interface
@@ -19,9 +20,16 @@ interface DecoderAPI {
   getFrameCount: (dec: number) => number;
   getFrame: (dec: number, index: number, framePtr: number) => number;
   getInfo: (dec: number, infoPtr: number) => number;
+  frameLayout: () => string;
 }
 
-let decoder: { m: EmscriptenModule; api: DecoderAPI; dec: number } | null = null;
+let decoder: {
+  m: EmscriptenModule;
+  api: DecoderAPI;
+  dec: number;
+  /** Where HEVCFrame's fields sit, as the module itself reports them. */
+  layout: FrameLayout;
+} | null = null;
 
 function post(msg: WorkerResponse, transfer?: Transferable[]): void {
   if (transfer) {
@@ -49,12 +57,13 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
         getFrameCount: m.cwrap("hevc_decoder_get_frame_count", "number", ["number"]) as (dec: number) => number,
         getFrame: m.cwrap("hevc_decoder_get_frame", "number", ["number", "number", "number"]) as (dec: number, index: number, framePtr: number) => number,
         getInfo: m.cwrap("hevc_decoder_get_info", "number", ["number", "number"]) as (dec: number, infoPtr: number) => number,
+        frameLayout: m.cwrap("hevc_frame_layout", "string", []) as () => string,
       };
 
       const dec = api.create();
       if (!dec) throw new Error("Failed to create decoder");
 
-      decoder = { m, api, dec };
+      decoder = { m, api, dec, layout: parseFrameLayout(api.frameLayout()) };
       post({ type: "ready" });
 
     } else if (type === "decode") {
@@ -88,25 +97,26 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
 
       // Frames
       const count = api.getFrameCount(dec);
-      const framePtr = m._malloc(52);
+      const at = decoder.layout.offset;
+      const framePtr = m._malloc(decoder.layout.size);
 
       for (let i = 0; i < count; i++) {
         if (api.getFrame(dec, i, framePtr) !== 0) continue;
 
-        const yPtr    = m.getValue(framePtr, "*");
-        const cbPtr   = m.getValue(framePtr + 4, "*");
-        const crPtr   = m.getValue(framePtr + 8, "*");
-        const width   = m.getValue(framePtr + 12, "i32");
-        const height  = m.getValue(framePtr + 16, "i32");
-        const strideY = m.getValue(framePtr + 20, "i32");
-        const strideC = m.getValue(framePtr + 24, "i32");
-        const cw      = m.getValue(framePtr + 28, "i32");
-        const ch      = m.getValue(framePtr + 32, "i32");
-        const bd      = m.getValue(framePtr + 36, "i32");
-        const poc     = m.getValue(framePtr + 40, "i32");
-        const cvsId   = m.getValue(framePtr + 44, "i32");
+        const yPtr    = m.getValue(framePtr + at.y, "*");
+        const cbPtr   = m.getValue(framePtr + at.cb, "*");
+        const crPtr   = m.getValue(framePtr + at.cr, "*");
+        const width   = m.getValue(framePtr + at.width, "i32");
+        const height  = m.getValue(framePtr + at.height, "i32");
+        const strideY = m.getValue(framePtr + at.stride_y, "i32");
+        const strideC = m.getValue(framePtr + at.stride_c, "i32");
+        const cw      = m.getValue(framePtr + at.chroma_width, "i32");
+        const ch      = m.getValue(framePtr + at.chroma_height, "i32");
+        const bd      = m.getValue(framePtr + at.bit_depth, "i32");
+        const poc     = m.getValue(framePtr + at.poc, "i32");
+        const cvsId   = m.getValue(framePtr + at.cvs_id, "i32");
 
-        const bps     = m.getValue(framePtr + 48, "i32");
+        const bps     = m.getValue(framePtr + at.bytes_per_sample, "i32");
 
         const y  = copyPlane(m, yPtr, width, height, strideY, bps);
         const cb = copyPlane(m, cbPtr, cw, ch, strideC, bps);

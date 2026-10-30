@@ -72,6 +72,14 @@ int hevc_decoder_get_frame(HEVCDecoder* dec, int index, HEVCFrame* frame);
 // Returns HEVC_OK on success, HEVC_ERROR if no stream decoded yet
 int hevc_decoder_get_info(HEVCDecoder* dec, HEVCStreamInfo* info);
 
+// Where each field of HEVCFrame sits, as "name:offset,...,_size:N" with the
+// field names of the struct above. A reader that walks a frame in the module's
+// memory asks for this instead of carrying its own copy of the offsets: there
+// are five such readers and three of them ship unbundled, so a shared module is
+// not an option and the duplication was by construction (#370). The string is
+// owned by the module and valid for its lifetime.
+const char* hevc_frame_layout(void);
+
 // --- Incremental API (streaming) ---
 
 // Feed a chunk of data (one or more complete NAL units with start codes)

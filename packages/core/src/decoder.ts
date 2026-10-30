@@ -1,4 +1,5 @@
 import type { HEVCFrame, HEVCStreamInfo, DecodeResult, DecoderOptions, SuppressedPicture } from "./types.js";
+import { parseFrameLayout, type FrameLayout } from "./frame-layout.js";
 
 /**
  * Emscripten module interface (subset we use)
@@ -25,6 +26,7 @@ interface DecoderAPI {
   flush: (dec: number) => number;
   getSuppressedPictureCount: (dec: number) => number;
   takeSuppressedPictures: (dec: number, out: number, max: number) => number;
+  frameLayout: () => string;
 }
 
 /**
@@ -42,6 +44,8 @@ export class HEVCDecoder {
   private _m: EmscriptenModule;
   private _api: DecoderAPI;
   private _dec: number;
+  /** Where HEVCFrame's fields sit, as the module itself reports them. */
+  private _layout: FrameLayout;
 
   private constructor(module: EmscriptenModule) {
     this._m = module;
@@ -58,7 +62,9 @@ export class HEVCDecoder {
       flush: module.cwrap("hevc_decoder_flush", "number", ["number"]) as (dec: number) => number,
       getSuppressedPictureCount: module.cwrap("hevc_decoder_get_suppressed_picture_count", "number", ["number"]) as (dec: number) => number,
       takeSuppressedPictures: module.cwrap("hevc_decoder_take_suppressed_pictures", "number", ["number", "number", "number"]) as (dec: number, out: number, max: number) => number,
+      frameLayout: module.cwrap("hevc_frame_layout", "string", []) as () => string,
     };
+    this._layout = parseFrameLayout(this._api.frameLayout());
     this._dec = this._api.create();
     if (!this._dec) throw new Error("Failed to create HEVC decoder");
   }
@@ -126,7 +132,7 @@ export class HEVCDecoder {
 
   private _extractFrame(index: number): HEVCFrame | null {
     const m = this._m;
-    const framePtr = m._malloc(52);
+    const framePtr = m._malloc(this._layout.size);
     try {
       const ret = this._api.getFrame(this._dec, index, framePtr);
       if (ret !== 0) return null;
@@ -138,7 +144,7 @@ export class HEVCDecoder {
 
   private _extractDrainedFrame(index: number): HEVCFrame | null {
     const m = this._m;
-    const framePtr = m._malloc(52);
+    const framePtr = m._malloc(this._layout.size);
     try {
       const ret = this._api.getDrainedFrame(this._dec, index, framePtr);
       if (ret !== 0) return null;
@@ -150,20 +156,21 @@ export class HEVCDecoder {
 
   private _readFrameFromPtr(framePtr: number): HEVCFrame {
     const m = this._m;
-    const yPtr    = m.getValue(framePtr, "*");
-    const cbPtr   = m.getValue(framePtr + 4, "*");
-    const crPtr   = m.getValue(framePtr + 8, "*");
-    const width   = m.getValue(framePtr + 12, "i32");
-    const height  = m.getValue(framePtr + 16, "i32");
-    const strideY = m.getValue(framePtr + 20, "i32");
-    const strideC = m.getValue(framePtr + 24, "i32");
-    const cw      = m.getValue(framePtr + 28, "i32");
-    const ch      = m.getValue(framePtr + 32, "i32");
-    const bd      = m.getValue(framePtr + 36, "i32");
-    const poc     = m.getValue(framePtr + 40, "i32");
-    const cvsId   = m.getValue(framePtr + 44, "i32");
+    const at = this._layout.offset;
+    const yPtr    = m.getValue(framePtr + at.y, "*");
+    const cbPtr   = m.getValue(framePtr + at.cb, "*");
+    const crPtr   = m.getValue(framePtr + at.cr, "*");
+    const width   = m.getValue(framePtr + at.width, "i32");
+    const height  = m.getValue(framePtr + at.height, "i32");
+    const strideY = m.getValue(framePtr + at.stride_y, "i32");
+    const strideC = m.getValue(framePtr + at.stride_c, "i32");
+    const cw      = m.getValue(framePtr + at.chroma_width, "i32");
+    const ch      = m.getValue(framePtr + at.chroma_height, "i32");
+    const bd      = m.getValue(framePtr + at.bit_depth, "i32");
+    const poc     = m.getValue(framePtr + at.poc, "i32");
+    const cvsId   = m.getValue(framePtr + at.cvs_id, "i32");
 
-    const bps     = m.getValue(framePtr + 48, "i32");
+    const bps     = m.getValue(framePtr + at.bytes_per_sample, "i32");
 
     const y  = copyPlane(m, yPtr, width, height, strideY, bps);
     const cb = copyPlane(m, cbPtr, cw, ch, strideC, bps);
@@ -251,7 +258,7 @@ export class HEVCDecoder {
       // flush() already populates the drained list, read the count
       // by checking how many frames are available
       const frames: HEVCFrame[] = [];
-      const framePtr = m._malloc(52);
+      const framePtr = m._malloc(this._layout.size);
       try {
         for (let i = 0; ; i++) {
           const r = this._api.getDrainedFrame(this._dec, i, framePtr);
