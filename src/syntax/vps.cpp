@@ -50,9 +50,6 @@ bool VPS::parse(BitstreamReader& bs) {
         uint32_t vps_num_hrd_parameters = bs.read_ue();
         for (uint32_t i = 0; i < vps_num_hrd_parameters; i++) {
             bs.read_ue();  // hrd_layer_set_idx[i]
-            if (i > 0) {
-                bs.read_flag();  // cprms_present_flag[i]
-            }
             // Skip hrd_parameters() — complex, not needed for decoding
             // For now, if HRD params are present, we just stop parsing VPS here
             // This is safe because VPS extension data is not critical

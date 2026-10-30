@@ -62,6 +62,7 @@ Cross-origin Worker and WASM loading are handled automatically. For production, 
 npm install @hevcjs/dashjs-plugin   # dash.js
 npm install @hevcjs/shaka-plugin    # Shaka Player
 npm install @hevcjs/hlsjs-plugin    # hls.js
+npm install @hevcjs/mediabunny-plugin  # Mediabunny (decoding, no player)
 ```
 
 ### Setup
@@ -135,6 +136,17 @@ hls.loadSource('https://example.com/playlist.m3u8');
 No player instance needed to attach: hls.js keeps HEVC levels in its ladder as long as the (patched) `MediaSource.isTypeSupported` accepts them. Supported today: fMP4 HLS with video-only, demuxed-audio, or muxed audio+video renditions. For muxed A/V (single `audiovideo` track) the HEVC video is transcoded and the AAC audio is passed through, re-muxed into one combined segment (main-thread path; AAC only). Validated end-to-end with a muxed test stream. See the [plugin README](packages/hlsjs-plugin/README.md) for details.
 
 ![hevc.js playing an HEVC HLS stream through hls.js — forced WASM transcoding to H.264, with the live per-segment transcode speed reported under the player](docs/assets/hlsjs-demo.gif)
+
+### Mediabunny
+
+```js
+import { registerHevcDecoder } from '@hevcjs/mediabunny-plugin';
+
+// decode-worker.js (from this package), hevc-decode.js and .wasm served side by side
+await registerHevcDecoder({ workerUrl: '/decode-worker.js' });
+```
+
+Not a player plugin: it registers a custom video decoder with [Mediabunny](https://mediabunny.dev), so reading, converting and extracting frames from HEVC files works where WebCodecs cannot decode HEVC. No transcoding to H.264 here, the decoded frames go to Mediabunny as they are. Profiles the browser decodes natively are left to WebCodecs. Decoding runs in a Web Worker, or on the page's thread without `workerUrl`. See the [plugin README](packages/mediabunny-plugin/README.md).
 
 ### How the transcoding works
 
@@ -392,7 +404,8 @@ hevc.js/
 │   ├── core/               @hevcjs/core — WASM decoder + transcoding pipeline
 │   ├── dashjs-plugin/      @hevcjs/dashjs-plugin — dash.js plugin
 │   ├── shaka-plugin/       @hevcjs/shaka-plugin — Shaka Player plugin
-│   └── hlsjs-plugin/       @hevcjs/hlsjs-plugin — hls.js plugin
+│   ├── hlsjs-plugin/       @hevcjs/hlsjs-plugin — hls.js plugin
+│   └── mediabunny-plugin/  @hevcjs/mediabunny-plugin — Mediabunny custom decoder
 │
 ├── demo/                   Browser demos (DASH + HLS)
 └── tests/                  Unit tests + oracle tests (MD5 of the decoded YUV)
@@ -408,6 +421,7 @@ hevc.js/
 | [dash.js](https://hevcjs.dev/demo/dash.html) | HEVC DASH streams via dash.js + WASM transcoding |
 | [Shaka](https://hevcjs.dev/demo/shaka.html) | HEVC DASH streams via Shaka Player + WASM transcoding |
 | [hls.js](https://hevcjs.dev/demo/hls.html) | HEVC HLS streams (ABR + audio) via hls.js + WASM transcoding |
+| [Mediabunny](https://hevcjs.dev/demo/mediabunny.html) | HEVC files (8 and 10-bit) read and decoded by Mediabunny, hevc.js as its decoder — or drop your own file |
 
 **Docs:** [dash.js plugin](https://hevcjs.dev/docs/dashjs-plugin.html) · [Shaka plugin](https://hevcjs.dev/docs/shaka-plugin.html) · [hls.js plugin](https://hevcjs.dev/docs/hlsjs-plugin.html)
 

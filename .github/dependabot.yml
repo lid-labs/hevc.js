@@ -6,9 +6,14 @@ updates:
       - /packages/core
       - /packages/dashjs-plugin
       - /packages/shaka-plugin
+      - /packages/hlsjs-plugin
+      - /packages/mediabunny-plugin
     schedule:
       interval: weekly
     open-pull-requests-limit: 10
+    # Bump the lockfile only while the new version fits the range: a published
+    # range (mp4box in core) is raised on purpose, not by a weekly bump
+    versioning-strategy: increase-if-necessary
     groups:
       # One weekly PR for all minor/patch bumps; majors stay individual
       npm-minor-patch:

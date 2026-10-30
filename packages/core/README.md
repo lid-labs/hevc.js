@@ -70,6 +70,22 @@ await transcoder.processInitSegment(initSegmentBytes);
 const h264Segment = await transcoder.processMediaSegment(hevcSegmentBytes);
 ```
 
+### Decoder only
+
+When your code demuxes the stream itself and only needs decoded frames, import from `@hevcjs/core/decoder`. It exports `HEVCDecoder` and its types, and nothing that pulls mp4box into your bundle — the main entry does, even when only `HEVCDecoder` is used.
+
+```js
+import { HEVCDecoder } from '@hevcjs/core/decoder';
+
+const decoder = await HEVCDecoder.create();
+decoder.feed(annexBAccessUnit);   // one or more complete NAL units, Annex B
+for (const frame of decoder.drain()) {
+  // frame.y / frame.cb / frame.cr, in display order
+}
+const tail = decoder.flush();     // end of stream
+decoder.destroy();
+```
+
 ### Compute-aware ABR primitives
 
 `@hevcjs/core` publishes a `SegmentPerfStat` on every successful segment transcode. Both `@hevcjs/shaka-plugin` and `@hevcjs/dashjs-plugin` consume this bus to cap variants when the device can't keep up. You can subscribe directly if you're integrating with a different player or building custom telemetry:

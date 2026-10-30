@@ -1,6 +1,6 @@
 {
   "name": "@hevcjs/hlsjs-plugin",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "description": "hls.js plugin for HEVC/H.265 playback — transparently intercepts MSE to decode HEVC streams via @hevcjs/core",
   "type": "module",
   "main": "./dist/index.js",
@@ -66,8 +66,8 @@
   },
   "devDependencies": {
     "hls.js": "^1.7.0",
-    "tsup": "^8.0.0",
+    "tsup": "^9.0.0",
     "typescript": "^7.0.2",
-    "vitest": "^4.1.10"
+    "vitest": "^5.0.5"
   }
 }

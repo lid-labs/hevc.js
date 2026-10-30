@@ -342,7 +342,6 @@ CoeffExtent decode_residual_coding(DecodingContext& ctx, int x0, int y0,
 
         // Sign hidden condition (§7.3.8.11): lastSigScanPos - firstSigScanPos > 3
         auto& pps = *ctx.pps;
-        auto& cu = ctx.cu_at(x0, y0);
         bool signHidden = false;
         if (!cu.cu_transquant_bypass && nSig > 0) {
             signHidden = pps.sign_data_hiding_enabled_flag &&

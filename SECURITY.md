@@ -37,4 +37,7 @@ This policy covers:
 
 - `@hevcjs/core` — the WASM HEVC decoder and TypeScript bindings
 - `@hevcjs/dashjs-plugin` — the dash.js integration plugin
+- `@hevcjs/shaka-plugin` — the Shaka Player integration plugin
+- `@hevcjs/hlsjs-plugin` — the hls.js integration plugin
+- `@hevcjs/mediabunny-plugin` — the Mediabunny integration plugin
 - The C++ decoder source code compiled to WebAssembly

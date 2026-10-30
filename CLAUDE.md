@@ -14,6 +14,8 @@ npm packages under the `@hevcjs` scope:
 - `packages/shaka-plugin/` → `@hevcjs/shaka-plugin` — Shaka Player plugin
   (registers a `Transmuxer` for `hev1`/`hvc1`)
 - `packages/hlsjs-plugin/` → `@hevcjs/hlsjs-plugin` — hls.js plugin
+- `packages/mediabunny-plugin/` → `@hevcjs/mediabunny-plugin` — Mediabunny
+  plugin (registers a custom video decoder; no transcoding)
 
 Each plugin consumes `@hevcjs/core` to play HEVC streams in browsers without
 native HEVC support. The HEVC decoder lives in `src/` (C++ compiled to WASM
@@ -92,7 +94,7 @@ manage versioning and publishing.
   now). Run it locally too before merging any change touching
   `mse-intercept.ts`, `segment-transcoder.ts`, `fmp4-muxer.ts`,
   `fmp4-demuxer.ts`, or the `dashjs-plugin` / `shaka-plugin` /
-  `hlsjs-plugin` glue code.
+  `hlsjs-plugin` / `mediabunny-plugin` glue code.
 - The e2e target is `E2E_BASE_URL`, defaulting to the local demo. Point it
   at a deployed URL to test that instead — `pnpm test:e2e:prod` for the
   published site. Only the local target exercises the cross-origin test.
