@@ -56,7 +56,7 @@ Options passed at `attachComputeAware` time merge on top of options passed at re
 
 ## Performance & tuning
 
-Shaka 4.x's `Transmuxer.transmux()` contract returns one `Uint8Array` per segment, so the buffered range can only grow in whole-segment jumps. On hardware where WASM transcoding runs near real time, the playback head skirts the edge of that range: playback stutters in a few-second rhythm even though the buffer is contiguous and nothing is out of spec. The dash.js plugin does not show this, because it appends transcoded chunks to MSE progressively as the encoder emits them.
+Shaka's `Transmuxer.transmux()` contract returns one `Uint8Array` per segment — in 5.x as in 4.x, where its `TransmuxerOutput` form is `{data, init}`, still one buffer — so the buffered range can only grow in whole-segment jumps. On hardware where WASM transcoding runs near real time, the playback head skirts the edge of that range: playback stutters in a few-second rhythm even though the buffer is contiguous and nothing is out of spec. The dash.js plugin does not show this, because it appends transcoded chunks to MSE progressively as the encoder emits them.
 
 A deeper buffer gives transcoding room to stay ahead:
 
