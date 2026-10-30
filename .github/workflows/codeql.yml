@@ -8,6 +8,14 @@ on:
   schedule:
     - cron: "0 6 * * 1" # Every Monday at 06:00 UTC
 
+# A new push supersedes the run it interrupts: on a pull request the older run
+# is cancelled rather than left to finish, which is most of the queue when a
+# review loop pushes several heads. Never on main, where each commit's run is
+# the record for that commit.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   security-events: write
   contents: read

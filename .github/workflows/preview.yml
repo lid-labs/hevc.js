@@ -3,6 +3,10 @@ name: PR Preview (Vercel)
 on:
   pull_request:
     branches: [main]
+    # ready_for_review is here for the e2e job below, which only runs once the
+    # pull request leaves draft: without this type, a branch that was only ever
+    # pushed while draft would never see the suite.
+    types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
   contents: read
@@ -95,8 +99,13 @@ jobs:
             --body "🔍 Preview deployed: ${{ steps.deploy.outputs.url }}"
 
   e2e:
-    name: E2E against preview
+    name: E2E against preview (${{ matrix.shard }}/4)
     needs: preview
+    # Only once the pull request is ready for review. The suite was 324 of the
+    # 420 seconds a preview run took, on every push, while a review loop pushes
+    # several heads per pull request — and it is the state that gets merged that
+    # has to be green. Shards keep that one run short.
+    if: github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -104,6 +113,10 @@ jobs:
     # duration are unmeasured. Flip to blocking once a few PRs have gone through.
     continue-on-error: true
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -128,12 +141,12 @@ jobs:
       - name: Run E2E suite
         env:
           E2E_BASE_URL: ${{ needs.preview.outputs.url }}/demo
-        run: pnpm test:e2e:fast
+        run: npx playwright test --project=local-chromium --shard=${{ matrix.shard }}/4
 
       - name: Upload report
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: playwright-report
+          name: playwright-report-${{ matrix.shard }}
           path: playwright-report/
           retention-days: 7
