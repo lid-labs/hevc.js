@@ -41,6 +41,40 @@ static const int invAngle[35] = {
 // refLeft[1..nTbS] = p[-1][0] .. p[-1][nTbS-1] (left column)
 // refLeft[nTbS+1..2*nTbS] = p[-1][nTbS] .. p[-1][2*nTbS-1] (bottom-left extension)
 
+// bx and by spread into the even bit positions, so the Z-scan address of a
+// block is one lookup per coordinate instead of the eight-step bit loop
+// §6.4.1's address derivation reads like. 8 bits each: a CTB is at most 64
+// samples wide, so 16 blocks of 4.
+struct ZScanSpread {
+    uint16_t v[256];
+};
+
+static constexpr ZScanSpread build_zscan_spread() {
+    ZScanSpread t{};
+    for (int b = 0; b < 256; b++) {
+        uint16_t z = 0;
+        for (int i = 0; i < 8; i++)
+            z = static_cast<uint16_t>(z | (((b >> i) & 1) << (2 * i)));
+        t.v[b] = z;
+    }
+    return t;
+}
+
+static constexpr ZScanSpread kZScanSpread = build_zscan_spread();
+
+// Copy n samples of one plane into the reference array: step is the stride for a
+// column of the left edge (negative, the edge is walked upwards) or 1 for a row
+// of the top edge. Picture::get() resolves the picture's sample width per
+// sample; a run resolves it once, and the row case vectorises.
+template <typename Pixel>
+static void copy_reference_run(const Pixel* src, size_t first, ptrdiff_t step,
+                               int16_t* dst, bool* avail, int n) {
+    for (int j = 0; j < n; j++) {
+        dst[j] = static_cast<int16_t>(src[first + static_cast<size_t>(j * step)]);
+        avail[j] = true;
+    }
+}
+
 static void build_reference_samples(const DecodingContext& ctx, int x0, int y0,
                                      int nTbS, int cIdx,
                                      int16_t* refTop, int16_t* refLeft) {
@@ -83,12 +117,8 @@ static void build_reference_samples(const DecodingContext& ctx, int x0, int y0,
     // Z-scan address from min-CB coordinates within a CTU
     // Interleave bits: x in even positions, y in odd positions
     auto zscan_addr = [](int bx, int by) -> uint32_t {
-        uint32_t z = 0;
-        for (int i = 0; i < 8; i++) {
-            z |= ((bx >> i) & 1) << (2 * i);
-            z |= ((by >> i) & 1) << (2 * i + 1);
-        }
-        return z;
+        return kZScanSpread.v[bx & 0xff] |
+               (static_cast<uint32_t>(kZScanSpread.v[by & 0xff]) << 1);
     };
 
     // Use min-TB granularity (4x4) for Z-scan to handle NxN sub-PU correctly
@@ -156,15 +186,23 @@ static void build_reference_samples(const DecodingContext& ctx, int x0, int y0,
     const int unit = (cIdx > 0) ? minBlkSize / sps.SubWidthC : minBlkSize;
     const int unitY = (cIdx > 0) ? minBlkSize / sps.SubHeightC : minBlkSize;
 
+    const int plStride = pic.stride[cIdx];
+    const uint8_t* const src8 = pic.eight_bit ? pic.plane<uint8_t>(cIdx) : nullptr;
+    const uint16_t* const src16 = pic.eight_bit ? nullptr : pic.plane<uint16_t>(cIdx);
+    auto copy_run = [&](size_t first, ptrdiff_t step, int dstIdx, int n) {
+        if (src8) copy_reference_run(src8, first, step, samples + dstIdx,
+                                     available + dstIdx, n);
+        else      copy_reference_run(src16, first, step, samples + dstIdx,
+                                     available + dstIdx, n);
+    };
+
     // Bottom-left to top along left edge
     for (int k = 0; k < 2 * nTbS; k += unitY) {
         int refX = xC - 1;
         if (!is_reconstructed(refX, yC + 2 * nTbS - 1 - k)) continue;
-        for (int j = k; j < k + unitY; j++) {
-            int refY = yC + 2 * nTbS - 1 - j;
-            samples[j] = static_cast<int16_t>(pic.get(cIdx, refX, refY));
-            available[j] = true;
-        }
+        const size_t first =
+            static_cast<size_t>(yC + 2 * nTbS - 1 - k) * plStride + refX;
+        copy_run(first, -plStride, k, unitY);
     }
 
     // Top-left corner
@@ -182,11 +220,8 @@ static void build_reference_samples(const DecodingContext& ctx, int x0, int y0,
     for (int k = 0; k < 2 * nTbS; k += unit) {
         int refY = yC - 1;
         if (!is_reconstructed(xC + k, refY)) continue;
-        for (int j = k; j < k + unit; j++) {
-            int idx = 2 * nTbS + 1 + j;
-            samples[idx] = static_cast<int16_t>(pic.get(cIdx, xC + j, refY));
-            available[idx] = true;
-        }
+        const size_t first = static_cast<size_t>(refY) * plStride + xC + k;
+        copy_run(first, 1, 2 * nTbS + 1 + k, unit);
     }
 
     // Substitution: replace unavailable samples
