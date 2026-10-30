@@ -258,7 +258,7 @@ export class HEVCDecoder {
       // flush() already populates the drained list, read the count
       // by checking how many frames are available
       const frames: HEVCFrame[] = [];
-      const framePtr = m._malloc(52);
+      const framePtr = m._malloc(this._layout.size);
       try {
         for (let i = 0; ; i++) {
           const r = this._api.getDrainedFrame(this._dec, i, framePtr);

@@ -19,4 +19,8 @@ not report throws rather than reading `undefined` as an offset. A unit test
 fabricates a layout with every field moved and the struct grown, and fails
 against hardcoded offsets.
 
+`flush()` allocated 52 bytes for the struct where the other paths asked the
+layout for its size; it asks too now. A field added to `HEVCFrame` would
+otherwise have had the module write past that allocation.
+
 No behaviour change for a caller of `@hevcjs/core`.
