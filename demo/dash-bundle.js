@@ -12192,6 +12192,11 @@ var HevcDash = (() => {
     /** Send an init segment (ftyp + moov) to the worker for parsing */
     async processInitSegment(data) {
       const worker = await this._workerReady;
+      this._initParsed = false;
+      this._initParsedPromise = new Promise((resolve, reject) => {
+        this._initParsedResolve = resolve;
+        this._initParsedReject = reject;
+      });
       worker.postMessage(
         { type: "initSegment", data: data.buffer },
         [data.buffer]
@@ -12673,6 +12678,7 @@ var HevcDash = (() => {
     const queue = [];
     const inFlight = [];
     let transcodesRunning = 0;
+    let initializing = false;
     let processing = false;
     let abortGeneration = 0;
     let cachedInitData = null;
@@ -12892,7 +12898,7 @@ var HevcDash = (() => {
       const lookahead = pool ? Math.max(1, poolSize) : 1;
       while (inFlight.length < lookahead && queue.length > 0) {
         const next = queue[0];
-        if (!initParsed || isInitSegment(next) || muxed) return;
+        if (initializing || !initParsed || isInitSegment(next) || muxed) return;
         const selfContained = isSelfContainedSegment(next);
         if (!selfContained && inFlight.length > 0) return;
         queue.shift();
@@ -12925,7 +12931,12 @@ var HevcDash = (() => {
               continue;
             }
             cachedInitData = new Uint8Array(initData);
-            await transcodeInit(initData);
+            initializing = true;
+            try {
+              await transcodeInit(initData);
+            } finally {
+              initializing = false;
+            }
             if (abortGeneration !== myGeneration) return;
             initParsed = true;
             initAppended = false;
