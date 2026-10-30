@@ -26,4 +26,6 @@ loaded, where cycles move by several percent between rounds and only instruction
 counts are stable.
 
 Decoded output is unchanged: 147/147 conformance streams, the 51-stream
-WASM/native diff and 220 ctest.
+WASM/native diff and 220 ctest. The WASM binary grows from 343 601 to 344 571
+bytes: `fill_grid_row` spells out four store widths where the loops it replaces
+were one.
