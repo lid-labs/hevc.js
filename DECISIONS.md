@@ -260,7 +260,7 @@ a future Main 12 need no new instance.
   in conformance risk, since both instances come from the same source
 
 **Consequence**: every templated kernel exists twice in the binary. The WASM
-decoder grows from 290 418 to 336 030 bytes, 105 730 to 116 157 with `gzip -9`.
+decoder grows from 290 418 to 336 019 bytes, 105 730 to 116 139 with `gzip -9`.
 Both instances are kept: Main 10 is a mainstream profile, not a corner case, and
 dropping its path to save the bytes would trade a profile for a download.
 A new kernel that touches samples has to be written against the storage template,

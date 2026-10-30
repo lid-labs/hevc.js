@@ -16,7 +16,7 @@ and 11-25% fewer cycles across the four reference streams; 135 → 145 fps on
 streams of the JCT-VC HEVC v1 conformance suite still match their reference MD5,
 and the WASM build decodes the 50-stream set exactly like the native one.
 
-The WASM binary grows from 290 418 to 336 030 bytes (116 157 with `gzip -9`),
+The WASM binary grows from 290 418 to 336 019 bytes (116 139 with `gzip -9`),
 the price of the two sample-type instances of each templated kernel; Main 10
 keeps its 16-bit path. `HEVCFrame` gains `bytes_per_sample` in the C struct, and
 the JS side widens an 8-bit plane into the `Uint16Array` planes it already
