@@ -76,14 +76,14 @@ bool Picture::write_yuv(const char* path) const {
 
         for (int y = crop_top[c]; y < crop_top[c] + out_height; y++) {
             if (eight_bit) {
-                const uint8_t* row8 = &planes8[c][y * stride[c] + crop_left[c]];
+                const uint8_t* row8 = &planes8[c][static_cast<size_t>(y) * stride[c] + crop_left[c]];
                 if (fwrite(row8, 1, out_width, fp) != static_cast<size_t>(out_width)) {
                     fclose(fp);
                     return false;
                 }
                 continue;
             }
-            const uint16_t* row = &planes16[c][y * stride[c]];
+            const uint16_t* row = &planes16[c][static_cast<size_t>(y) * stride[c]];
 
             if (bd[c] <= 8) {
                 // Write as 8-bit: convert row to uint8_t buffer, write once
