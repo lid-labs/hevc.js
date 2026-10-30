@@ -219,7 +219,11 @@ static void inverse_transform_2d(int log2TrafoSize, bool use_dst,
         switch (log2TrafoSize) {
             case 3: idct_pass<8>(src, dst, shift, trSize, nCols, limit); break;
             case 4: idct_pass<16>(src, dst, shift, trSize, nCols, limit); break;
-            case 5: idct_pass<32>(src, dst, shift, trSize, nCols, limit); break;
+            // log2TrafoSize is 2..5 (§7.4.9.6) and 2 returned above, so what is
+            // left is the 32-point transform. Spelt as the default rather than
+            // `case 5`: a switch that falls through writes nothing, and the
+            // transpose below would then read tmp uninitialised.
+            default: idct_pass<32>(src, dst, shift, trSize, nCols, limit); break;
         }
     };
     pass(coeff, tmp, shift1, cols, rows);
