@@ -52,7 +52,7 @@ const INIT_SEGMENT = new Uint8Array([
 
 // --- a fake worker speaking the transcode protocol -------------------------
 
-type Pending = { id: number; release: () => void };
+type Pending = { id: number; worker: number; release: () => void };
 
 class FakeTranscodeWorker {
   static instances: FakeTranscodeWorker[] = [];
@@ -95,6 +95,7 @@ class FakeTranscodeWorker {
         // Held until the test releases it, in whatever order it chooses.
         const entry: Pending = {
           id,
+          worker: FakeTranscodeWorker.instances.indexOf(this),
           release: () => {
             FakeTranscodeWorker.pending = FakeTranscodeWorker.pending.filter((p) => p !== entry);
             this._emit({
@@ -290,6 +291,32 @@ describe("TranscodePool lifecycle", () => {
   }
 
   const SEGMENT = () => mediaSegment(IDR_N_LP, 1);
+
+  it("sends an open-GOP segment to the worker that took the segment before it", async () => {
+    const p = pool(2);
+    await p.waitReady();
+    // Two self-contained segments go to two workers in parallel.
+    const a = p.processMediaSegmentStreaming(SEGMENT(), () => {}, { selfContained: true });
+    await settle();
+    const b = p.processMediaSegmentStreaming(SEGMENT(), () => {}, { selfContained: true });
+    await settle();
+    expect(FakeTranscodeWorker.pending.map((x) => x.worker)).toEqual([0, 1]);
+
+    // The predecessor of the next segment is therefore on worker 1, not on
+    // worker 0: its RASL pictures reference what worker 1 holds.
+    FakeTranscodeWorker.pending.slice().forEach((x) => x.release());
+    await settle();
+    await Promise.allSettled([a, b]);
+
+    const c = p.processMediaSegmentStreaming(SEGMENT(), () => {}, { selfContained: false });
+    await settle();
+    expect(FakeTranscodeWorker.pending).toHaveLength(1);
+    expect(FakeTranscodeWorker.pending[0]!.worker).toBe(1);
+
+    FakeTranscodeWorker.pending[0]!.release();
+    await settle();
+    await c;
+  });
 
   it("rejects a waiting segment after destroy, instead of reviving a worker", async () => {
     const p = pool(1);

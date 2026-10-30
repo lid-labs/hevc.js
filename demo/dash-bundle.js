@@ -12409,6 +12409,7 @@ var HevcDash = (() => {
       this._slots = [];
       this._initData = null;
       this._waiters = [];
+      this._lastUsed = null;
       this._epoch = 0;
       this._destroyed = false;
       this._config = config;
@@ -12490,6 +12491,7 @@ var HevcDash = (() => {
     }
     abort() {
       this._epoch++;
+      this._lastUsed = null;
       for (const slot of this._slots) {
         slot.client.abort();
         slot.busy = false;
@@ -12503,6 +12505,7 @@ var HevcDash = (() => {
       this._destroyed = true;
       for (const slot of this._slots) slot.client.destroy();
       this._slots = [];
+      this._lastUsed = null;
       this._initData = null;
       this._wakeWaiters();
     }
@@ -12515,26 +12518,25 @@ var HevcDash = (() => {
       for (; ; ) {
         if (this._destroyed) throw new Error("Transcode pool destroyed");
         if (!selfContained) {
-          if (!this._primary.busy) {
-            this._primary.busy = true;
-            return this._primary;
-          }
+          const continuity = this._lastUsed ?? this._primary;
+          if (!continuity.busy) return this._take(continuity);
         } else {
           const free = this._slots.find((s) => !s.busy);
-          if (free) {
-            free.busy = true;
-            return free;
-          }
+          if (free) return this._take(free);
           if (this._slots.length < this._maxSize) {
             const slot = this._createSlot();
             this._slots.push(slot);
-            slot.busy = true;
             log.debug(`Transcode pool grew to ${this._slots.length} workers`);
-            return slot;
+            return this._take(slot);
           }
         }
         await new Promise((resolve) => this._waiters.push(resolve));
       }
+    }
+    _take(slot) {
+      slot.busy = true;
+      this._lastUsed = slot;
+      return slot;
     }
     _release(slot, epoch) {
       if (epoch !== this._epoch) {

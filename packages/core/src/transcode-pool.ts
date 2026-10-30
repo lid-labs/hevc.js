@@ -16,7 +16,10 @@
  * CRA-led (open GOP) segment is kept on the worker that decoded its
  * predecessor, because its RASL pictures reference that predecessor, still held
  * in that instance's DPB. See `segment-random-access.ts` for why handing one to
- * another instance would produce wrong frames rather than an error.
+ * another instance would produce wrong frames rather than an error. Which
+ * worker that is cannot be assumed: once two self-contained segments have gone
+ * to two workers in parallel, the predecessor sits on whichever of them took the
+ * later one, so the pool remembers it.
  */
 
 import { log } from "./log.js";
@@ -66,6 +69,12 @@ export class TranscodePool {
   private _initData: Uint8Array | null = null;
   /** Resolvers waiting for a worker to come free. */
   private _waiters: (() => void)[] = [];
+  /**
+   * The worker that took the most recent segment. Segments are acquired in
+   * segment order, so this is the one holding the predecessor of whatever comes
+   * next — which is where a segment that is not self-contained has to go.
+   */
+  private _lastUsed: Slot | null = null;
   /**
    * Bumped by `abort()` and `destroy()`. A call that took a worker before the
    * bump must not touch the pool's state afterwards: `abort()` frees every slot
@@ -157,6 +166,9 @@ export class TranscodePool {
 
   abort(): void {
     this._epoch++;
+    // A seek drops the continuity with it: each worker re-creates its
+    // transcoder, so no DPB holds a predecessor any more.
+    this._lastUsed = null;
     for (const slot of this._slots) {
       slot.client.abort();
       slot.busy = false;
@@ -173,6 +185,7 @@ export class TranscodePool {
     this._destroyed = true;
     for (const slot of this._slots) slot.client.destroy();
     this._slots = [];
+    this._lastUsed = null;
     this._initData = null;
     // Waiters wake into a destroyed pool and reject, rather than find no slot,
     // create a worker nothing will ever destroy, and leak a WASM instance.
@@ -188,26 +201,30 @@ export class TranscodePool {
     for (;;) {
       if (this._destroyed) throw new Error("Transcode pool destroyed");
       if (!selfContained) {
-        if (!this._primary.busy) {
-          this._primary.busy = true;
-          return this._primary;
-        }
+        // The worker that decoded the predecessor, not the first worker: with
+        // two segments dispatched in parallel, the predecessor is on whichever
+        // of them took the later one. Nothing yet decoded means nothing to
+        // carry over, and the first worker will do.
+        const continuity = this._lastUsed ?? this._primary;
+        if (!continuity.busy) return this._take(continuity);
       } else {
         const free = this._slots.find((s) => !s.busy);
-        if (free) {
-          free.busy = true;
-          return free;
-        }
+        if (free) return this._take(free);
         if (this._slots.length < this._maxSize) {
           const slot = this._createSlot();
           this._slots.push(slot);
-          slot.busy = true;
           log.debug(`Transcode pool grew to ${this._slots.length} workers`);
-          return slot;
+          return this._take(slot);
         }
       }
       await new Promise<void>((resolve) => this._waiters.push(resolve));
     }
+  }
+
+  private _take(slot: Slot): Slot {
+    slot.busy = true;
+    this._lastUsed = slot;
+    return slot;
   }
 
   private _release(slot: Slot, epoch: number): void {
