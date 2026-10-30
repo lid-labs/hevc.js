@@ -1,6 +1,6 @@
 # @hevcjs/core
 
-HEVC/H.265 decoder compiled to WebAssembly, with a built-in HEVC-to-H.264 transcoding pipeline. 328 KB WASM (~113 KB gzipped), zero dependencies.
+HEVC/H.265 decoder compiled to WebAssembly, with a built-in HEVC-to-H.264 transcoding pipeline. 335 KB WASM (~115 KB gzipped), zero dependencies.
 
 Implemented per **ITU-T H.265 v8** — 716 pages of spec. Decodes all 147 bitstreams of the JCT-VC HEVC v1 conformance suite bit-exactly against the reference decoder's MD5 — see [Spec conformance](https://github.com/lid-labs/hevc.js#spec-conformance).
 
@@ -16,7 +16,7 @@ The package includes 3 static files that must be served by your web server:
 
 - `transcode-worker.js` — Web Worker (IIFE, standalone)
 - `wasm/hevc-decode.js` — Emscripten glue code
-- `wasm/hevc-decode.wasm` — WASM binary (328 KB, ~113 KB gzipped)
+- `wasm/hevc-decode.wasm` — WASM binary (335 KB, ~115 KB gzipped)
 
 Copy them from `node_modules/@hevcjs/core/dist/` to your public/static directory:
 

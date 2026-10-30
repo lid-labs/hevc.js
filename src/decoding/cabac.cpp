@@ -64,11 +64,9 @@ void CabacEngine::init_contexts(int sliceType, int SliceQpY, bool cabac_init_fla
         int preCtxState = Clip3(1, 126, ((slope * qp) >> 4) + offset);
 
         if (preCtxState <= 63) {
-            contexts_[i].pStateIdx = static_cast<uint8_t>(63 - preCtxState);
-            contexts_[i].valMps = 0;
+            contexts_[i].state = static_cast<uint8_t>((63 - preCtxState) << 1);
         } else {
-            contexts_[i].pStateIdx = static_cast<uint8_t>(preCtxState - 64);
-            contexts_[i].valMps = 1;
+            contexts_[i].state = static_cast<uint8_t>(((preCtxState - 64) << 1) | 1);
         }
     }
 

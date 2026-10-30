@@ -18,9 +18,20 @@
 namespace hevc {
 
 // Single CABAC context (AD-005)
+/**
+ * One context variable, as the combined state (pStateIdx << 1 | valMps).
+ *
+ * §9.3.2.2 keeps the two apart; holding them in one byte costs one load and one
+ * store per bin instead of two, and lets the MPS flip at pStateIdx 0 come out of
+ * a table rather than a branch. The state-indexed tables are in
+ * cabac_tables.h (kCabacState).
+ */
 struct CabacContext {
-    uint8_t pStateIdx;
-    uint8_t valMps;
+    uint8_t state;
+
+    /** The two quantities §9.3.2.2 names, for tests and for debugging. */
+    uint8_t pStateIdx() const { return static_cast<uint8_t>(state >> 1); }
+    uint8_t valMps() const { return static_cast<uint8_t>(state & 1); }
 };
 
 // CABAC arithmetic decoder engine
@@ -46,27 +57,25 @@ public:
     // §9.3.4.3.2 — Arithmetic decoding of a bin with context (inline hot path)
     inline int decode_decision(int ctxIdx) {
         auto& ctx = contexts_[ctxIdx];
-        uint8_t pStateIdx = ctx.pStateIdx;
-        uint8_t valMps    = ctx.valMps;
+        const uint8_t state = ctx.state;
 
         uint32_t range = ivlCurrRange_;
-        uint32_t ivlLpsRange = rangeTabLps[pStateIdx][(range >> 6) & 3];
+        uint32_t ivlLpsRange = kCabacState.lpsRange[state][(range >> 6) & 3];
         range -= ivlLpsRange;
         const uint64_t scaled = static_cast<uint64_t>(range) << bits_;
 
         int binVal;
         if (value_ >= scaled) {
-            // LPS path
-            binVal = 1 - valMps;
+            // LPS path. lpsNext carries the valMps swap §9.3.4.3.2 asks for at
+            // pStateIdx 0, so there is nothing to test here.
+            binVal = (state & 1) ^ 1;
             value_ -= scaled;
             range = ivlLpsRange;
-            if (pStateIdx == 0)
-                ctx.valMps = 1 - valMps;
-            ctx.pStateIdx = transIdxLps[pStateIdx];
+            ctx.state = kCabacState.lpsNext[state];
         } else {
             // MPS path
-            binVal = valMps;
-            ctx.pStateIdx = transIdxMps[pStateIdx];
+            binVal = state & 1;
+            ctx.state = kCabacState.mpsNext[state];
         }
 
         // §9.3.4.3.3 — Renormalization: the offset takes its new low bits
