@@ -148,8 +148,7 @@ DecodeStatus Decoder::decode_picture(const std::vector<NalUnit>& nals,
     motion_info_buf_.resize(modeGridW * modeGridH);
     std::fill(motion_info_buf_.begin(), motion_info_buf_.end(), PUMotionInfo{});
     // The Picture's own copy, for TMVP by future frames, is taken once the
-    // picture is decoded
-    pic->motion_info_stride = modeGridW;
+    // picture is decoded, on a 16x16 grid (see Picture::motion_info_buf)
 
     // Phase 6: filter grids at min-TB (4x4) granularity
     cbf_luma_buf_.resize(modeGridW * modeGridH, 0);
@@ -314,8 +313,21 @@ DecodeStatus Decoder::decode_picture(const std::vector<NalUnit>& nals,
     apply_deblocking(ctx);
     apply_sao(ctx);
 
-    // Store motion info in the Picture for TMVP access by future frames
-    pic->motion_info_buf = motion_info_buf_;
+    // Store motion info in the Picture for TMVP access by future frames, one
+    // entry per 16x16 block: the only entries §8.5.3.2.9 can read are those of
+    // the 16x16-masked positions, which are the top-left 4x4 block of each.
+    {
+        const int tmvpW = (static_cast<int>(sps->pic_width_in_luma_samples) + 15) / 16;
+        const int tmvpH = (static_cast<int>(sps->pic_height_in_luma_samples) + 15) / 16;
+        pic->motion_info_stride = tmvpW;
+        pic->motion_info_buf.resize(static_cast<size_t>(tmvpW) * tmvpH);
+        for (int by = 0; by < tmvpH; by++) {
+            const PUMotionInfo* src = motion_info_buf_.data() + (by * 4) * modeGridW;
+            PUMotionInfo* dst = pic->motion_info_buf.data() + by * tmvpW;
+            for (int bx = 0; bx < tmvpW; bx++)
+                dst[bx] = src[bx * 4];
+        }
+    }
     // Slice of each CTB, for TMVP to find the lists a collocated ref_idx indexes
     pic->ctb_slice_idx = slice_idx_buf_;
 

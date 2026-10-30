@@ -51,7 +51,11 @@ struct Picture {
     bool spec_output = false;
     uint32_t pic_latency_count = 0;
 
-    // Inter: per-PU motion info for TMVP (stored after decoding)
+    // Inter: motion info for TMVP by later pictures, stored once this picture is
+    // decoded. One entry per 16x16 block, not per 4x4 one: §8.5.3.2.9 masks the
+    // collocated position down to a 16x16 grid, so the other fifteen sixteenths
+    // are data no reader can reach — and at 4K they are 5.8 MB per picture of
+    // the DPB. motion_info_stride counts 16x16 columns.
     std::vector<PUMotionInfo> motion_info_buf;  // owned by this Picture
     int motion_info_stride = 0;
     // Convenience accessors

@@ -146,10 +146,11 @@ static bool derive_collocated_mv_at(const DecodingContext& ctx,
                                      Picture* colPic, int xCol, int yCol,
                                      int refIdxLX, int listX,
                                      MV& mvLXCol) {
-    int minPuSize = kGridSize;
+    // §8.5.3.2.9 masks the position to a 16x16 grid, which is the granularity
+    // colPic stores (see Picture::motion_info_buf).
     int xColQ = (xCol >> 4) << 4;
     int yColQ = (yCol >> 4) << 4;
-    int miIdx = (yColQ / minPuSize) * colPic->motion_info_stride + (xColQ / minPuSize);
+    int miIdx = (yColQ >> 4) * colPic->motion_info_stride + (xColQ >> 4);
     if (miIdx < 0 || miIdx >= static_cast<int>(colPic->motion_info_buf.size())) return false;
     const auto& colMi = colPic->motion_info_buf[miIdx];
 
