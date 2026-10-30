@@ -1,6 +1,6 @@
 # @hevcjs/core
 
-HEVC/H.265 decoder compiled to WebAssembly, with a built-in HEVC-to-H.264 transcoding pipeline. 283 KB WASM (~103 KB gzipped), zero dependencies.
+HEVC/H.265 decoder compiled to WebAssembly, with a built-in HEVC-to-H.264 transcoding pipeline. 328 KB WASM (~113 KB gzipped), zero dependencies.
 
 Implemented per **ITU-T H.265 v8** — 716 pages of spec. Decodes all 147 bitstreams of the JCT-VC HEVC v1 conformance suite bit-exactly against the reference decoder's MD5 — see [Spec conformance](https://github.com/lid-labs/hevc.js#spec-conformance).
 
@@ -16,7 +16,7 @@ The package includes 3 static files that must be served by your web server:
 
 - `transcode-worker.js` — Web Worker (IIFE, standalone)
 - `wasm/hevc-decode.js` — Emscripten glue code
-- `wasm/hevc-decode.wasm` — WASM binary (283 KB, ~103 KB gzipped)
+- `wasm/hevc-decode.wasm` — WASM binary (328 KB, ~113 KB gzipped)
 
 Copy them from `node_modules/@hevcjs/core/dist/` to your public/static directory:
 
@@ -116,13 +116,18 @@ All heavy work runs in a Web Worker. No `SharedArrayBuffer` required, no special
 
 ## Performance
 
-Single-threaded, Apple Silicon:
+Single-threaded decode on an Apple M4 Pro, measured on 2026-10-30 with
+`node tools/bench_wasm.cjs <file> packages/core/wasm` on Node 24.4.1 — the root
+README carries the streams and the method:
 
-| Resolution | WASM (Chrome) |
+| Stream | WASM |
 |---|---|
-| 1080p decode | 61 fps |
-| 4K decode | 21 fps |
-| 1080p transcode | ~2.5x realtime |
+| 1080p, SAO, WPP — `bbb1080_50f.265` | 145 fps |
+| 4K, SAO, WPP — `bbb4k_25f.265` | 32 fps |
+| 4K, SAO, no WPP — `bbb4k_singleslice.265` | 45 fps |
+
+**1080p transcode** (HEVC decode + H.264 encode, in Chromium through Playwright):
+1.8-2.0x real time, measured on 2026-10-21.
 
 ## Requirements
 
