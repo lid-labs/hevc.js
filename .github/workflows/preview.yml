@@ -99,12 +99,12 @@ jobs:
             --body "🔍 Preview deployed: ${{ steps.deploy.outputs.url }}"
 
   e2e:
-    name: E2E against preview (${{ matrix.shard }}/4)
+    name: E2E against preview
     needs: preview
     # Only once the pull request is ready for review. The suite was 324 of the
     # 420 seconds a preview run took, on every push, while a review loop pushes
     # several heads per pull request — and it is the state that gets merged that
-    # has to be green. Shards keep that one run short.
+    # has to be green.
     if: github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     permissions:
@@ -113,10 +113,6 @@ jobs:
     # duration are unmeasured. Flip to blocking once a few PRs have gone through.
     continue-on-error: true
     timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -138,15 +134,22 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       # The preview serves the site at its root, the demo pages one level down.
+      # The two compute-aware cap specs are left out: they throttle the CPU and
+      # loop until their own deadline, so each takes anywhere from one to eight
+      # minutes depending on how fast the cap converges on the runner of the
+      # day. Measured here: sharding the suite four ways put them alone in two
+      # shards of 444 and 460 seconds against 126 and 163 for the other two, so
+      # they were the critical path rather than a fourth of it. They run nightly
+      # instead, in e2e-throttled.yml, where their variance costs no one a wait.
       - name: Run E2E suite
         env:
           E2E_BASE_URL: ${{ needs.preview.outputs.url }}/demo
-        run: npx playwright test --project=local-chromium --shard=${{ matrix.shard }}/4
+        run: npx playwright test --project=local-chromium --grep-invert "Compute-aware cap"
 
       - name: Upload report
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: playwright-report-${{ matrix.shard }}
+          name: playwright-report
           path: playwright-report/
           retention-days: 7
