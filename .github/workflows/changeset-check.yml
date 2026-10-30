@@ -6,11 +6,17 @@ on:
 
 # A new push supersedes the run it interrupts: on a pull request the older run
 # is cancelled rather than left to finish, which is most of the queue when a
-# review loop pushes several heads. Never on main, where each commit's run is
-# the record for that commit.
+# review loop pushes several heads.
+#
+# Outside a pull request the group carries the run id, so every run is alone in
+# its group and none is ever cancelled. Grouping those by ref would not have
+# been enough: a group holds one running and one pending run, and a newer run
+# replaces the pending one even with cancel-in-progress false, so three quick
+# merges to main would have left the middle commit with no result at all — and
+# in CodeQL, the Monday schedule would have shared a group with a push to main.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
