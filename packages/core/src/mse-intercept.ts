@@ -12,7 +12,8 @@ import { log, setLogLevel } from "./log.js";
 import type { LogLevel } from "./log.js";
 import { SegmentTranscoder } from "./segment-transcoder.js";
 import type { SegmentTranscoderConfig } from "./segment-transcoder.js";
-import { TranscodeWorkerClient } from "./transcode-worker-client.js";
+import { isSelfContainedSegment } from "./segment-random-access.js";
+import { TranscodePool, recommendedPoolSize } from "./transcode-pool.js";
 
 const HEVC_DETECT_RE = /hev1|hvc1/i;                // Detect HEVC in a string
 // Match one HEVC codec string (hev1.2.4.L123.B0). The `[^"',]*` stops at a
@@ -81,6 +82,17 @@ export interface MSEInterceptConfig extends SegmentTranscoderConfig {
    * current segment (chunks after the first) instead of a full segment.
    */
   strictAppendProgress?: boolean;
+  /**
+   * How many transcode workers may run at once, each with its own WASM decoder
+   * and DPB. Segments are still appended in order; what overlaps is their
+   * transcoding, which is what lets a player buffer ahead on hardware that
+   * transcodes below real time. Only a segment that starts on an IDR or a BLA
+   * is handed to a second worker — an open-GOP segment stays on the worker that
+   * decoded its predecessor, whose DPB holds the pictures its leading pictures
+   * reference. Default: 2 from four hardware threads up, 1 below. 1 transcodes
+   * one segment at a time, as before this option existed.
+   */
+  poolSize?: number;
   /** Log verbosity: 'debug' | 'info' | 'warn' (default) | 'error' | 'silent'. */
   logLevel?: LogLevel;
 }
@@ -229,6 +241,20 @@ export function shouldFlushOnTimestampOffset(
  * - dash.js sees updating=true and waits, preventing segment flooding
  * - The real SourceBuffer receives H.264 data after transcoding
  */
+/** One segment handed to the pool, and the chunks it has produced so far. */
+interface InFlightSegment {
+  /** Chunks emitted by the worker and not yet appended. */
+  pending: { h264: Uint8Array; initSeg: Uint8Array | null }[];
+  /** The worker has finished with this segment, successfully or not. */
+  done: boolean;
+  error: unknown;
+  /** Resolves the appender's wait when a chunk lands or the transcode ends. */
+  wake: (() => void) | null;
+  /** The abort generation this segment belongs to. */
+  generation: number;
+  bytes: number;
+}
+
 function createTranscodingProxy(
   realSB: SourceBuffer,
   config: MSEInterceptConfig,
@@ -239,7 +265,7 @@ function createTranscodingProxy(
   // combined-segment path (processMediaSegment) is non-streaming anyway.
   // Video-only keeps the worker fast path when workerUrl is set.
   const useWorker = !!config.workerUrl && !muxed;
-  let workerClient: TranscodeWorkerClient | null = null;
+  let pool: TranscodePool | null = null;
   let transcoder: SegmentTranscoder | null = null;
 
   let initParsed = false;
@@ -247,6 +273,13 @@ function createTranscodingProxy(
   let lastInitSegment: Uint8Array | null = null; // tracks current H.264 init to detect changes
   let fakeUpdating = false;
   const queue: Uint8Array[] = [];
+  /**
+   * Segments being transcoded, in the order they must reach the SourceBuffer.
+   * The pool transcodes several at once; MSE appends stay sequential, so a
+   * segment that finishes early waits here with its chunks until its turn.
+   */
+  const inFlight: InFlightSegment[] = [];
+  let transcodesRunning = 0;
   let processing = false;
   let abortGeneration = 0; // incremented on abort — lets processNext detect stale runs
   let cachedInitData: Uint8Array | null = null; // cached for re-send after no-abort seek
@@ -256,16 +289,18 @@ function createTranscodingProxy(
   // Beyond 2, we block to avoid unbounded memory growth (especially 4K).
   const MAX_QUEUE_BEFORE_BACKPRESSURE = 2;
 
+  const poolSize = config.poolSize ?? recommendedPoolSize();
   if (useWorker) {
-    workerClient = new TranscodeWorkerClient({
+    pool = new TranscodePool({
       workerUrl: config.workerUrl!,
       wasmUrl: config.wasmUrl,
       wasmBinaryUrl: config.wasmBinaryUrl,
       fps: config.fps,
       bitrate: config.bitrate,
+      poolSize,
     });
-    workerClient.waitReady().then(() => {
-      log.info("Worker transcoder ready");
+    pool.waitReady().then(() => {
+      log.info(`Worker transcoder ready (pool of up to ${pool!.maxSize})`);
     }).catch((err) => {
       log.error("Worker init failed:", (err as Error)?.message ?? err);
     });
@@ -316,6 +351,10 @@ function createTranscodingProxy(
       const bytes = toUint8Array(data);
       log.debug(`appendBuffer(${bytes.byteLength}B) queued (queue: ${queue.length})`);
       queue.push(bytes);
+      // processNext is busy appending the segment at the head of the pool, and
+      // will not look at the queue again until that one is done. Hand this
+      // segment to a free worker now, which is where the overlap comes from.
+      dispatchMore();
 
       fakeUpdating = true;
       dispatchOnSB("updatestart");
@@ -342,7 +381,8 @@ function createTranscodingProxy(
       fakeUpdating = false;
       initParsed = false;
       initAppended = false;
-      if (workerClient) workerClient.abort();
+      inFlight.length = 0;
+      if (pool) pool.abort();
       log.debug("abort() — queue + transcoder reset (gen=" + abortGeneration + ")");
       realAbort();
     },
@@ -420,10 +460,11 @@ function createTranscodingProxy(
         log.debug(`timestampOffset changed (${old} → ${value}) — flushing queue`);
         abortGeneration++;
         queue.length = 0;
+        inFlight.length = 0;
         processing = false;
         initParsed = false;
         initAppended = false;
-        if (workerClient) workerClient.abort();
+        if (pool) pool.abort();
         if (fakeUpdating) {
           fakeUpdating = false;
           dispatchOnSB("update");
@@ -439,9 +480,9 @@ function createTranscodingProxy(
 
   // Unified transcode interface — works with both Worker and main-thread
   async function transcodeInit(segment: Uint8Array): Promise<void> {
-    if (workerClient) {
-      await workerClient.waitReady();
-      await workerClient.processInitSegment(segment);
+    if (pool) {
+      await pool.waitReady();
+      await pool.processInitSegment(segment);
     } else {
       while (!transcoder!.isInitialized) await new Promise(r => setTimeout(r, 10));
       await transcoder!.processInitSegment(segment);
@@ -450,14 +491,69 @@ function createTranscodingProxy(
 
   async function transcodeMediaStreaming(
     segment: Uint8Array,
+    selfContained: boolean,
     onPartial: (h264: Uint8Array, initSegment: Uint8Array | null, codec: string | null) => Promise<void> | void,
   ): Promise<void> {
-    if (workerClient) {
-      return workerClient.processMediaSegmentStreaming(segment, onPartial);
+    if (pool) {
+      return pool.processMediaSegmentStreaming(segment, onPartial, { selfContained });
     }
     return transcoder!.processMediaSegmentStreaming(segment, (h264, init) => {
       return onPartial(h264, init?.initSegment ?? null, init?.codec ?? null);
     });
+  }
+
+  /**
+   * Hand a segment to the pool and record its place in the append order. The
+   * transcode runs on its own; `appendHead` consumes the chunks in turn.
+   */
+  function startTranscode(segment: Uint8Array, generation: number, selfContained: boolean): void {
+    const rec: InFlightSegment = {
+      pending: [], done: false, error: null, wake: null, generation,
+      bytes: segment.byteLength,
+    };
+    inFlight.push(rec);
+    // The callbacks bracket transcoding as a whole, not each segment: with
+    // several in flight, a player told to resume at the first completion would
+    // resume while the others are still running.
+    if (transcodesRunning++ === 0) config.onTranscodeStart?.();
+    log.debug(`Transcoding segment (${segment.byteLength}B) [streaming${selfContained ? "" : ", open GOP"}]...`);
+    const wake = () => { const w = rec.wake; rec.wake = null; w?.(); };
+    transcodeMediaStreaming(segment, selfContained, (h264, initSeg) => {
+      rec.pending.push({ h264, initSeg });
+      wake();
+    }).then(() => { rec.done = true; }, (err) => { rec.error = err; rec.done = true; })
+      .then(() => {
+        if (--transcodesRunning === 0) config.onTranscodeEnd?.();
+        wake();
+      });
+  }
+
+  /**
+   * Fill the pool from the queue. Stops at an init segment, which is a barrier:
+   * it re-initialises the workers, so the segments in flight — belonging to the
+   * previous representation — have to be appended first.
+   */
+  function dispatchMore(): void {
+    // Without the pool, transcoding runs on one main-thread SegmentTranscoder,
+    // which holds one decoder and one encoder: two overlapping calls would
+    // interleave on the same state. One segment at a time there.
+    const lookahead = pool ? Math.max(1, poolSize) : 1;
+    while (inFlight.length < lookahead && queue.length > 0) {
+      const next = queue[0]!;
+      if (!initParsed || isInitSegment(next) || muxed) return;
+      // Read before the buffer is transferred to the worker.
+      const selfContained = isSelfContainedSegment(next);
+      // An open-GOP segment has to be decoded by the worker that decoded its
+      // predecessor, whose DPB holds the pictures its leading pictures
+      // reference. Dispatching it alongside others would leave which worker
+      // takes it to the order the pool happens to hand slots out, so it is a
+      // barrier both ways: it waits for the segments in flight, and nothing is
+      // dispatched after it until it is done.
+      if (!selfContained && inFlight.length > 0) return;
+      queue.shift();
+      startTranscode(next, abortGeneration, selfContained);
+      if (!selfContained) return;
+    }
   }
 
   async function processNext(target: SourceBuffer): Promise<void> {
@@ -466,9 +562,21 @@ function createTranscodingProxy(
     const myGeneration = abortGeneration;
 
     try {
-      while (queue.length > 0) {
+      while (queue.length > 0 || inFlight.length > 0) {
         if (abortGeneration !== myGeneration) return; // aborted — exit silently
 
+        // Keep the pool fed before appending, so the next segments transcode
+        // while the current one is being appended.
+        dispatchMore();
+
+        // A segment in flight owns the next append slot.
+        if (inFlight.length > 0) {
+          await appendHead(target, myGeneration);
+          continue;
+        }
+
+        // Nothing in flight: what is at the head of the queue needs the serial
+        // path — an init segment, or muxed A/V on the main-thread transcoder.
         const segment = queue.shift()!;
 
         // Wait for real SB to be ready
@@ -508,7 +616,12 @@ function createTranscodingProxy(
             }
             continue;
           }
-          // Fall through: initParsed is now true, process this segment as media below
+          // initParsed is now true: this segment is media, and goes through
+          // the pool like any other.
+          if (!muxed) {
+            startTranscode(segment, myGeneration, isSelfContainedSegment(segment));
+            continue;
+          }
         }
 
         // Muxed A/V: non-streaming path — the main-thread transcoder returns
@@ -550,69 +663,9 @@ function createTranscodingProxy(
           continue;
         }
 
-        // Media segment: streaming transcode (partial chunks emitted incrementally)
-        log.debug(`Transcoding segment (${segment.byteLength}B) [streaming]...`);
-        config.onTranscodeStart?.();
-        let chunkCount = 0;
-        let firstChunkEmitted = false;
-
-        await transcodeMediaStreaming(segment, async (h264, initSeg, _codec) => {
-          if (abortGeneration !== myGeneration) return;
-
-          // Append init segment on first chunk that carries it
-          if (initSeg && !initAppended) {
-            initAppended = true;
-            lastInitSegment = initSeg;
-            if (updatingGetter.call(realSB)) await waitForRealUpdateEnd();
-            if (abortGeneration !== myGeneration) return;
-            realAppend(initSeg.buffer as ArrayBuffer);
-            await waitForRealUpdateEnd();
-            if (abortGeneration !== myGeneration) return;
-            log.debug("H.264 init segment appended [streaming]");
-          }
-
-          // Append partial H.264 segment
-          if (updatingGetter.call(realSB)) await waitForRealUpdateEnd();
-          if (abortGeneration !== myGeneration) return;
-          realAppend(h264.buffer as ArrayBuffer);
-          await waitForRealUpdateEnd();
-          chunkCount++;
-
-          // Release backpressure after first chunk (player sees content
-          // faster). In strict mode this is THE acknowledgment of the
-          // current segment's append — data from this very segment is now
-          // buffered, so the player's progress watchdog is satisfied —
-          // and it fires regardless of queue depth.
-          if (!firstChunkEmitted) {
-            firstChunkEmitted = true;
-            if (fakeUpdating &&
-                (config.strictAppendProgress || queue.length < MAX_QUEUE_BEFORE_BACKPRESSURE)) {
-              fakeUpdating = false;
-              dispatchOnSB("update");
-              dispatchOnSB("updateend");
-            }
-          }
-        });
-
-        config.onTranscodeEnd?.();
-        if (abortGeneration !== myGeneration) return;
-
-        const buffered = target.buffered;
-        const end = buffered.length ? buffered.end(buffered.length - 1).toFixed(2) : "0";
-        log.debug(`Streaming done (${chunkCount} chunks), buffered: ${end}s`);
-
-        // Release backpressure if queue dropped below threshold.
-        // Guard: fakeUpdating may already be false (released in appendBuffer).
-        // Skipped in strict mode: a pending fakeUpdating here belongs to the
-        // NEXT queued segment — acknowledging it off the back of THIS
-        // segment's completion is exactly the misaligned updateend the mode
-        // exists to prevent. Its ack comes from its own first chunk.
-        if (fakeUpdating && !config.strictAppendProgress &&
-            queue.length < MAX_QUEUE_BEFORE_BACKPRESSURE) {
-          fakeUpdating = false;
-          dispatchOnSB("update");
-          dispatchOnSB("updateend");
-        }
+        // Media segment with the pool available: dispatch it and let the
+        // appender take it in turn.
+        startTranscode(segment, myGeneration, isSelfContainedSegment(segment));
       }
     } catch (err) {
       if (abortGeneration !== myGeneration) return; // aborted — swallow error
@@ -630,6 +683,88 @@ function createTranscodingProxy(
           dispatchOnSB("updateend");
         }
       }
+    }
+  }
+
+  /**
+   * Append the chunks of the segment whose turn it is, as the worker emits
+   * them, and wait on it until it is finished. Chunks of the segments behind it
+   * pile up in their own records meanwhile; this is what keeps the SourceBuffer
+   * in segment order while several transcodes overlap.
+   */
+  async function appendHead(target: SourceBuffer, myGeneration: number): Promise<void> {
+    const rec = inFlight[0]!;
+    let chunkCount = 0;
+    let firstChunkEmitted = false;
+
+    for (;;) {
+      if (abortGeneration !== myGeneration) return;
+      if (rec.pending.length === 0) {
+        if (rec.done) break;
+        // The producer resolves this when a chunk lands or it finishes. Setting
+        // the resolver happens synchronously after the emptiness check, so no
+        // chunk can slip in between the two.
+        await new Promise<void>((resolve) => { rec.wake = resolve; });
+        continue;
+      }
+
+      const { h264, initSeg } = rec.pending.shift()!;
+
+      // Append init segment on first chunk that carries it
+      if (initSeg && !initAppended) {
+        initAppended = true;
+        lastInitSegment = initSeg;
+        if (updatingGetter.call(realSB)) await waitForRealUpdateEnd();
+        if (abortGeneration !== myGeneration) return;
+        realAppend(initSeg.buffer as ArrayBuffer);
+        await waitForRealUpdateEnd();
+        if (abortGeneration !== myGeneration) return;
+        log.debug("H.264 init segment appended [streaming]");
+      }
+
+      // Append partial H.264 segment
+      if (updatingGetter.call(realSB)) await waitForRealUpdateEnd();
+      if (abortGeneration !== myGeneration) return;
+      realAppend(h264.buffer as ArrayBuffer);
+      await waitForRealUpdateEnd();
+      chunkCount++;
+
+      // Release backpressure after first chunk (player sees content faster).
+      // In strict mode this is THE acknowledgment of the current segment's
+      // append — data from this very segment is now buffered, so the player's
+      // progress watchdog is satisfied — and it fires regardless of queue depth.
+      if (!firstChunkEmitted) {
+        firstChunkEmitted = true;
+        if (fakeUpdating &&
+            (config.strictAppendProgress || queue.length < MAX_QUEUE_BEFORE_BACKPRESSURE)) {
+          fakeUpdating = false;
+          dispatchOnSB("update");
+          dispatchOnSB("updateend");
+        }
+      }
+    }
+
+    inFlight.shift();
+    if (abortGeneration !== myGeneration) return;
+    // The transcode failed: raise it where the serial path used to, so the
+    // handler that dispatches "error" on the SourceBuffer still sees it.
+    if (rec.error) throw rec.error;
+
+    const buffered = target.buffered;
+    const end = buffered.length ? buffered.end(buffered.length - 1).toFixed(2) : "0";
+    log.debug(`Streaming done (${chunkCount} chunks, ${rec.bytes}B in), buffered: ${end}s, in flight: ${inFlight.length}`);
+
+        // Release backpressure if queue dropped below threshold.
+        // Guard: fakeUpdating may already be false (released in appendBuffer).
+        // Skipped in strict mode: a pending fakeUpdating here belongs to the
+        // NEXT queued segment — acknowledging it off the back of THIS
+        // segment's completion is exactly the misaligned updateend the mode
+        // exists to prevent. Its ack comes from its own first chunk.
+    if (fakeUpdating && !config.strictAppendProgress &&
+        queue.length < MAX_QUEUE_BEFORE_BACKPRESSURE) {
+      fakeUpdating = false;
+      dispatchOnSB("update");
+      dispatchOnSB("updateend");
     }
   }
 
