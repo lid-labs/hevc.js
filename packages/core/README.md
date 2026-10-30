@@ -57,6 +57,30 @@ installMSEIntercept({
 </script>
 ```
 
+### Transcoding several segments at once
+
+```js
+installMSEIntercept({
+  workerUrl: '/transcode-worker.js',
+  poolSize: 2,   // default: 2 from four hardware threads up, 1 below
+});
+```
+
+Each worker holds its own WASM decoder, so `poolSize` segments transcode in
+parallel while the SourceBuffer is still fed in segment order. It raises
+sustained throughput, which is what lets a player buffer ahead when transcoding
+runs near real time; it does not shorten the first segment's latency. The cost
+is one decoder and one DPB per worker, tens of megabytes at 1080p, so the value
+is a bound and not a target: workers are created only as parallel work turns up.
+
+A segment is handed to a second worker only when it starts on an IDR or a BLA
+picture, which resets the decoder by itself. A segment whose first picture is a
+CRA — an open GOP — stays on the worker that decoded the previous segment,
+because its leading pictures reference that segment. DASH and HLS are usually
+segmented on IDRs, so this is the common case; where it is not, `poolSize` has
+no effect rather than a wrong one. `poolSize: 1` transcodes one segment at a
+time.
+
 `wasmBinaryUrl` is required when assets live on a different origin than the page (Emscripten otherwise fails to resolve the `.wasm` relative to the worker's `blob:` URL). Cross-origin worker loading is handled transparently — the plugin fetches the script and wraps it in a same-origin blob URL since classic Workers refuse cross-origin scripts even with CORS headers.
 
 ### Segment transcoder (manual control)
