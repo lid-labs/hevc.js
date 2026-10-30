@@ -130,13 +130,24 @@ async function loadMPD(presetUrl) {
   // adaptiveCompute is ON by default — pass ?adaptiveCompute=off to opt out.
   const adaptiveOff = qp.get('adaptiveCompute') === 'off';
   const workerUrl = hevcDemo.safeAssetUrl(qp.get('workerUrl'), 'workerUrl') || './transcode-worker.js';
+  // ?poolSize=N — how many segments may transcode at once. Left out, the core
+  // picks 2 from four hardware threads up, 1 below.
+  const poolSizeParam = Number(qp.get('poolSize'));
+  const poolSize = Number.isFinite(poolSizeParam) && poolSizeParam >= 1
+    ? Math.floor(poolSizeParam)
+    : undefined;
   console.log('[demo] forceTranscode =', forceTranscode);
   console.log('[demo] workerUrl =', workerUrl);
+  console.log('[demo] poolSize =', poolSize ?? '(default)');
   console.log('[demo] adaptiveCompute =', adaptiveOff ? 'off' : 'on (default)');
   console.log('[demo] attachHevcSupport');
   try {
     cleanup = await HevcDash.attachHevcSupport(player, {
       workerUrl,
+      poolSize,
+      // ?logLevel=debug surfaces the core's per-segment traces in the log box,
+      // as the HLS demo page already allowed.
+      logLevel: qp.get('logLevel') || undefined,
       wasmUrl: hevcDemo.safeAssetUrl(qp.get('wasmUrl'), 'wasmUrl'),
       wasmBinaryUrl: hevcDemo.safeAssetUrl(qp.get('wasmBinaryUrl'), 'wasmBinaryUrl'),
       forceTranscode,

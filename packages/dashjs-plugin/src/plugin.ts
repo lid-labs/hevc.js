@@ -143,6 +143,10 @@ export async function attachHevcSupport(
     fps: config.fps,
     bitrate: config.bitrate,
     workerUrl: config.workerUrl,
+    poolSize: config.poolSize,
+    // Forwarded like the rest: without it the documented option did nothing on
+    // this plugin, while the hls.js one passes its whole config through.
+    logLevel: config.logLevel,
   });
 
   // Tell dash.js to accept all representations (including HEVC, which it would normally reject)
