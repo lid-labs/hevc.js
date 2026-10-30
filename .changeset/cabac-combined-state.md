@@ -18,6 +18,6 @@ latter, while the 4K cycle reading moved within its noise. Decoded output is
 unchanged: 147/147 conformance streams, the 50-stream WASM/native diff, and the
 219 unit tests.
 
-The WASM binary grows from 336 019 to 343 134 bytes (117 442 with `gzip -9`),
-768 of which are the new tables; the docs restate it as 335 KB, ~115 KB
+The WASM binary grows from 336 019 to 343 610 bytes (117 830 with `gzip -9`),
+768 of which are the new tables; the docs restate it as 336 KB, ~115 KB
 gzip-compressed.
