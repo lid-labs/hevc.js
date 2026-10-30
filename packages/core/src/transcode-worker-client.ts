@@ -183,7 +183,12 @@ export class TranscodeWorkerClient {
       reject(new Error("Aborted"));
     }
     this._pendingPrepareInit.clear();
-    this._segmentId = 0;
+    // The segment id is NOT reset. The worker answers a streaming segment with
+    // messages carrying its id, and it can still be inside one when the abort
+    // reaches it: restarting the count let a late `streamingDone` from the
+    // abandoned segment match the handler of a new segment with the same id and
+    // resolve it before its data had arrived. Ids stay monotonic, so a late
+    // message matches nothing.
 
     // Reset ready state — worker will destroy + re-create transcoder (async init)
     // waitReady() must block until the worker sends "aborted" (= re-init done)
