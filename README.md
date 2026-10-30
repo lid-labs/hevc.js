@@ -297,16 +297,23 @@ int hevc_decoder_get_frame(HEVCDecoder* dec, int index, HEVCFrame* frame);
 // rather than truncate if `max` is too small.
 int hevc_decoder_get_suppressed_picture_count(HEVCDecoder* dec);
 int hevc_decoder_take_suppressed_pictures(HEVCDecoder* dec, int32_t* out, int max);
+
+// Byte offsets of HEVCFrame's fields, as "name:offset,...,_size:N" — for a
+// caller that reads a frame out of the module's memory rather than through the
+// struct, as the JavaScript wrappers do.
+const char* hevc_frame_layout(void);
 ```
 
 | HEVCFrame field | Type | Description |
 |---|---|---|
-| `y`, `cb`, `cr` | `const uint16_t*` | YUV plane pointers |
+| `y`, `cb`, `cr` | `const void*` | YUV plane pointers — `uint8_t` or `uint16_t` samples, see `bytes_per_sample` |
 | `width`, `height` | `int` | Luma dimensions (conformance window applied) |
 | `stride_y`, `stride_c` | `int` | Plane strides in samples |
+| `chroma_width`, `chroma_height` | `int` | Chroma plane dimensions |
 | `bit_depth` | `int` | 8 or 10 |
 | `poc` | `int` | Picture Order Count — display order within one CVS |
 | `cvs_id` | `int` | Coded video sequence; POC restarts at each IDR/BLA, so display order is `(cvs_id, poc)` |
+| `bytes_per_sample` | `int` | 1 when luma and chroma are both 8-bit, else 2 |
 
 ### Build
 
@@ -315,7 +322,7 @@ int hevc_decoder_take_suppressed_pictures(HEVCDecoder* dec, int32_t* out, int ma
 ```bash
 cmake -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
-cd build && ctest --output-on-failure    # 160 tests
+cd build && ctest --output-on-failure    # 220 tests
 ```
 
 #### WebAssembly
