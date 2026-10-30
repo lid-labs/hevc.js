@@ -5,6 +5,7 @@
 #include "common/types.h"
 #include "common/simd.h"
 
+#include <cassert>
 #include <cstring>
 #include <vector>
 
@@ -23,7 +24,10 @@ static const int eo_dy[4][2] = {{0, 0}, {-1, 1}, {-1, 1}, {-1, 1}};
 // so no per-sample cross-boundary test of §8.7.3.2 can fire inside this CTB.
 static bool sao_ctb_neighbourhood_uniform(const DecodingContext& ctx, const PPS& pps,
                                           const SPS& sps, int rx, int ry) {
-    if (!ctx.slice_idx) return true;
+    // decode_picture() always assigns slice_idx, and the edge-offset slow path this
+    // gates reads it unconditionally. Returning "uniform" on a null pointer would
+    // have waived the tile test too, which does not depend on slice data.
+    assert(ctx.slice_idx);
 
     const int w = sps.PicWidthInCtbsY;
     const int h = sps.PicHeightInCtbsY;

@@ -331,6 +331,14 @@ if(BUILD_TESTS AND NOT BUILD_WASM)
     set_tests_properties(oracle_dblk_d_vixs_2 PROPERTIES LABELS "oracle;phase10;conformance"
         SKIP_RETURN_CODE 2)
 
+    # 3x3 tiles with loop_filter_across_tiles_enabled_flag = 0 and SAO on: the
+    # only combination in the v1 suite that reaches SAO's tile boundary tests (#233).
+    add_test(NAME oracle_dblk_e_vixs_2
+        COMMAND ${ORACLE_SCRIPT} ${FIXTURES_DIR}/DBLK_E_VIXS_2.265 1280 720
+            1f94d56d9e462967cad73284ed0f43f9 $<TARGET_FILE:hevc-decode>)
+    set_tests_properties(oracle_dblk_e_vixs_2 PROPERTIES LABELS "oracle;phase10;conformance"
+        SKIP_RETURN_CODE 2)
+
     # PCM coding units: sample bit depths, alignment, contexts, loop filtering (#315).
     add_test(NAME oracle_ipcm_b_nec_3
         COMMAND ${ORACLE_SCRIPT} ${FIXTURES_DIR}/ipcm_B_NEC_3.265 416 240

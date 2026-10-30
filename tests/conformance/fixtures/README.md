@@ -129,6 +129,7 @@ and ffmpeg versions, so regenerating may give a stream that no longer does.
 | `WPP_A_ericsson_MAIN_2.265` | 66K | 416x240 | 48 | WPP with independent and dependent slice segments down to one CTB | `cd7e815eb47e8138fec2185d4de84304` |
 | `WPP_D_ericsson_MAIN_2.265` | 22K | 64x240 | 48 | the same, one CTB wide | `f710612103f386c415be3e6300693451` |
 | `DBLK_D_VIXS_2.265` | 17K | 1280x720 | 8 | slices and dependent slice segments over 4x3 tiles, no loop filtering across slices | `f6f3075edca573f5dfe4e352d26170f1` |
+| `DBLK_E_VIXS_2.265` | 26K | 1280x720 | 8 | SAO and deblocking over 3x3 tiles, one slice per tile row, no loop filtering across tiles | `1f94d56d9e462967cad73284ed0f43f9` |
 | `ipcm_B_NEC_3.265` | 6K | 416x240 | 1 | PCM samples on 6 bits | `23a3b7024fd9bc64b946b9961ab0f51e` |
 | `ipcm_C_NEC_3.265` | 6K | 416x240 | 1 | `pcm_loop_filter_disabled_flag` = 1 | `c3e74c399b73a5ab2dbd20523f583464` |
 | `ipcm_D_NEC_3.265` | 6K | 416x240 | 1 | PCM with `cu_transquant_bypass_flag` | `aa64a16240064bc2a90fadf979a62a7b` |
@@ -156,8 +157,18 @@ before #301 (transform skip shift, scaling list coefficient order); with #301 an
 The `TILES` streams failed before #233's fix: the decoder started each tile at the next
 byte boundary instead of at its entry point, and kept the CABAC contexts of the previous
 tile. They also cover the deblocking filter's exclusion of tile boundaries when
-`loop_filter_across_tiles_enabled_flag` is 0. Neither enables SAO, so its tile boundary
-check stays unexercised.
+`loop_filter_across_tiles_enabled_flag` is 0. Neither enables SAO.
+
+`DBLK_E_VIXS_2` is the one stream of the 147 that enables SAO with tiles and
+`loop_filter_across_tiles_enabled_flag` = 0, so it is what reaches SAO's tile boundary
+tests (#233). Two mutations, each put back on its own, make it mismatch: dropping the
+cross-tile test of the per-sample edge-offset path (`sao.cpp`, §8.7.3.2), and dropping
+the tile half of the per-CTB uniformity test that gates that path. Its three slices each
+span one row of three tiles, and its PPS leaves `loop_filter_across_slices_enabled_flag`
+at 1, so the slice tests cannot fire and the tile ones are what the MD5 pins down.
+`DBLK_G_VIXS_2` ships the same bytes upstream (same MD5 for the bitstream), despite a
+description announcing the mirror case of a tile covering several slices, so adding it
+would cover nothing more.
 
 `WPP_A`, `WPP_D` and `DBLK_D` failed before #312's fix, which made dependent slice
 segments decode: their header was cut short before its entry points, they took the
@@ -165,7 +176,10 @@ independent segment's entry points, SAO merging and §6.4.1 availability treated
 previous segment of the same slice as another slice, WPP rows synced from another
 slice's contexts, and the QP predictor restarted at every segment. `WPP_D` also hung
 the parallel WPP path, which now only takes single-segment pictures at least two CTBs
-wide. Each of these causes, put back on its own, makes at least one of the three fail.
+wide. Each of these causes, put back on its own, makes at least one of the three fail. `DBLK_D`
+also carries dependent slice segments whose first CTB opens a tile, so it pins down the
+§9.3 context initialisation of that case: skipping it for a dependent segment makes
+`DBLK_D` fail.
 
 The `ipcm` streams failed before #315's fix. Four causes, each failing at least one of
 them when put back on its own: PCM samples coded on fewer bits than the bit depth were
