@@ -27,8 +27,8 @@ TEST(CabacContextInit, InitValueFormula) {
     engine.init_contexts(2, 26, false); // I-slice (SliceType::I=2), QP=26
 
     auto ctx = engine.context(CTX_SPLIT_CU_FLAG);
-    EXPECT_EQ(ctx.pStateIdx, 0);
-    EXPECT_EQ(ctx.valMps, 0);
+    EXPECT_EQ(ctx.pStateIdx(), 0);
+    EXPECT_EQ(ctx.valMps(), 0);
 }
 
 TEST(CabacContextInit, AllContextsInRange) {
@@ -39,9 +39,9 @@ TEST(CabacContextInit, AllContextsInRange) {
         for (int qp = 0; qp <= 51; qp++) {
             engine.init_contexts(st, qp, false);
             for (int i = 0; i < NUM_CABAC_CONTEXTS; i++) {
-                EXPECT_LT(engine.context(i).pStateIdx, 64)
+                EXPECT_LT(engine.context(i).pStateIdx(), 64)
                     << "sliceType=" << st << " QP=" << qp << " ctxIdx=" << i;
-                EXPECT_LE(engine.context(i).valMps, 1)
+                EXPECT_LE(engine.context(i).valMps(), 1)
                     << "sliceType=" << st << " QP=" << qp << " ctxIdx=" << i;
             }
         }
@@ -59,10 +59,10 @@ TEST(CabacContextInit, CabacInitFlagPermutation) {
 
     // The swapped P should match normal B
     for (int i = 0; i < NUM_CABAC_CONTEXTS; i++) {
-        EXPECT_EQ(engine_p_swapped.context(i).pStateIdx,
-                  engine_b_normal.context(i).pStateIdx) << "ctxIdx=" << i;
-        EXPECT_EQ(engine_p_swapped.context(i).valMps,
-                  engine_b_normal.context(i).valMps) << "ctxIdx=" << i;
+        EXPECT_EQ(engine_p_swapped.context(i).pStateIdx(),
+                  engine_b_normal.context(i).pStateIdx()) << "ctxIdx=" << i;
+        EXPECT_EQ(engine_p_swapped.context(i).valMps(),
+                  engine_b_normal.context(i).valMps()) << "ctxIdx=" << i;
     }
 }
 
@@ -95,9 +95,9 @@ TEST(CabacContextInit, PSliceInitQP22) {
         { 30, 19, 1, "CBF_LUMA[1]" },
     };
     for (auto& t : tests) {
-        EXPECT_EQ(engine.context(t.ctxIdx).pStateIdx, t.pStateIdx)
+        EXPECT_EQ(engine.context(t.ctxIdx).pStateIdx(), t.pStateIdx)
             << t.name << " (ctxIdx=" << t.ctxIdx << ") pStateIdx";
-        EXPECT_EQ(engine.context(t.ctxIdx).valMps, t.valMps)
+        EXPECT_EQ(engine.context(t.ctxIdx).valMps(), t.valMps)
             << t.name << " (ctxIdx=" << t.ctxIdx << ") valMps";
     }
 }
@@ -118,9 +118,9 @@ TEST(CabacContextInit, BSliceInitQP22) {
         { 18, 12, 1, "INTER_PRED_IDC[0]" },   // initValue=95
     };
     for (auto& t : tests) {
-        EXPECT_EQ(engine.context(t.ctxIdx).pStateIdx, t.pStateIdx)
+        EXPECT_EQ(engine.context(t.ctxIdx).pStateIdx(), t.pStateIdx)
             << t.name << " (ctxIdx=" << t.ctxIdx << ") pStateIdx";
-        EXPECT_EQ(engine.context(t.ctxIdx).valMps, t.valMps)
+        EXPECT_EQ(engine.context(t.ctxIdx).valMps(), t.valMps)
             << t.name << " (ctxIdx=" << t.ctxIdx << ") valMps";
     }
 }
@@ -140,9 +140,9 @@ TEST(CabacContextInit, PSliceAllContextsMatchSpec) {
         uint8_t expectedPS = (preCtxState <= 63) ? (63 - preCtxState) : (preCtxState - 64);
         uint8_t expectedVM = (preCtxState <= 63) ? 0 : 1;
 
-        EXPECT_EQ(engine.context(i).pStateIdx, expectedPS)
+        EXPECT_EQ(engine.context(i).pStateIdx(), expectedPS)
             << "P-slice ctxIdx=" << i << " initValue=" << (int)initValue;
-        EXPECT_EQ(engine.context(i).valMps, expectedVM)
+        EXPECT_EQ(engine.context(i).valMps(), expectedVM)
             << "P-slice ctxIdx=" << i << " initValue=" << (int)initValue;
     }
 }
@@ -161,9 +161,9 @@ TEST(CabacContextInit, BSliceAllContextsMatchSpec) {
         uint8_t expectedPS = (preCtxState <= 63) ? (63 - preCtxState) : (preCtxState - 64);
         uint8_t expectedVM = (preCtxState <= 63) ? 0 : 1;
 
-        EXPECT_EQ(engine.context(i).pStateIdx, expectedPS)
+        EXPECT_EQ(engine.context(i).pStateIdx(), expectedPS)
             << "B-slice ctxIdx=" << i << " initValue=" << (int)initValue;
-        EXPECT_EQ(engine.context(i).valMps, expectedVM)
+        EXPECT_EQ(engine.context(i).valMps(), expectedVM)
             << "B-slice ctxIdx=" << i << " initValue=" << (int)initValue;
     }
 }
@@ -235,7 +235,7 @@ TEST(CabacDecode, DecodeDecision_MPS) {
     // Decode a decision — with offset=0, we always hit MPS
     int ctxIdx = CTX_SPLIT_CU_FLAG;
     int bin = engine.decode_decision(ctxIdx);
-    EXPECT_EQ(bin, engine.context(ctxIdx).valMps);
+    EXPECT_EQ(bin, engine.context(ctxIdx).valMps());
 }
 
 TEST(CabacDecode, SaveRestoreContexts) {
@@ -245,13 +245,12 @@ TEST(CabacDecode, SaveRestoreContexts) {
     CabacContext saved[NUM_CABAC_CONTEXTS];
     engine.save_contexts(saved);
 
-    // Modify a context
-    engine.context(0).pStateIdx = 42;
-    engine.context(0).valMps = 0;
+    // Modify a context: pStateIdx 42, valMps 0, as the combined state holds them
+    engine.context(0).state = 42 << 1;
 
     // Restore
     engine.load_contexts(saved);
-    EXPECT_NE(engine.context(0).pStateIdx, 42);
+    EXPECT_NE(engine.context(0).pStateIdx(), 42);
 }
 
 // A non-conforming stream can start the arithmetic decoder with ivlOffset 511,

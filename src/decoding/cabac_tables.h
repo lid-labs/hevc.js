@@ -9,7 +9,7 @@ namespace hevc {
 
 // Table 9-48 — rangeTabLps[64][4]
 // Index: [pStateIdx][qRangeIdx] where qRangeIdx = (ivlCurrRange >> 6) & 3
-static const uint8_t rangeTabLps[64][4] = {
+static constexpr uint8_t rangeTabLps[64][4] = {
     { 128, 176, 208, 240 },
     { 128, 167, 197, 227 },
     { 128, 158, 187, 216 },
@@ -76,8 +76,24 @@ static const uint8_t rangeTabLps[64][4] = {
     {   2,   2,   2,   2 },
 };
 
+/**
+ * The same three tables, indexed by the combined state (pStateIdx << 1 | valMps).
+ *
+ * One byte of context instead of two: one load and one store per bin, and the
+ * MPS flip §9.3.4.3.2 prescribes at pStateIdx 0 folds into the LPS transition
+ * instead of costing a branch and a second store. Built here from Tables 9-48
+ * to 9-50 so they stay the single source of truth.
+ */
+struct CabacStateTables {
+    uint8_t lpsRange[128][4];
+    uint8_t mpsNext[128];
+    uint8_t lpsNext[128];
+};
+
+constexpr CabacStateTables make_cabac_state_tables();
+
 // Table 9-49 — transIdxMps[64]
-static const uint8_t transIdxMps[64] = {
+static constexpr uint8_t transIdxMps[64] = {
      1,  2,  3,  4,  5,  6,  7,  8,  9, 10,
     11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
     21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
@@ -88,7 +104,7 @@ static const uint8_t transIdxMps[64] = {
 };
 
 // Table 9-50 — transIdxLps[64]
-static const uint8_t transIdxLps[64] = {
+static constexpr uint8_t transIdxLps[64] = {
      0,  0,  1,  2,  2,  4,  4,  5,  6,  7,
      8,  9,  9, 11, 11, 12, 13, 13, 15, 15,
     16, 16, 18, 18, 19, 19, 21, 21, 22, 22,
@@ -283,5 +299,23 @@ static const int8_t qpChromaTable[58] = {
 
 // Level scale table for dequantization (spec §8.6.3)
 static const int16_t levelScale[6] = { 40, 45, 51, 57, 64, 72 };
+
+/** Definition sits after Tables 9-48 to 9-50, which it reads. */
+constexpr CabacStateTables make_cabac_state_tables() {
+    CabacStateTables t{};
+    for (int state = 0; state < 128; state++) {
+        const int pStateIdx = state >> 1;
+        const int valMps = state & 1;
+        for (int qRangeIdx = 0; qRangeIdx < 4; qRangeIdx++)
+            t.lpsRange[state][qRangeIdx] = rangeTabLps[pStateIdx][qRangeIdx];
+        t.mpsNext[state] = static_cast<uint8_t>((transIdxMps[pStateIdx] << 1) | valMps);
+        // §9.3.4.3.2: an LPS at pStateIdx 0 swaps the meaning of valMps.
+        t.lpsNext[state] = static_cast<uint8_t>(
+            (transIdxLps[pStateIdx] << 1) | (pStateIdx == 0 ? 1 - valMps : valMps));
+    }
+    return t;
+}
+
+inline constexpr CabacStateTables kCabacState = make_cabac_state_tables();
 
 } // namespace hevc
