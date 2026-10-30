@@ -212,14 +212,27 @@ static int derive_bs(const DecodingContext& ctx, int xP, int yP, int xQ, int yQ,
 // Edge detection: check stored edge flags (set during decoding)
 // §8.7.2.2 (TU boundaries) + §8.7.2.3 (PU boundaries)
 // ============================================================
-static bool has_edge(const DecodingContext& ctx, int x, int y, EdgeType edgeType) {
-    int stride = ctx.filter_grid_stride;
-    int gx = x >> 2, gy = y >> 2;
-    if (edgeType == EDGE_VER) {
-        return ctx.edge_flags_v[gy * stride + gx] != 0;
-    } else {
-        return ctx.edge_flags_h[gy * stride + gx] != 0;
-    }
+/**
+ * Edge flags of eight grid columns, as one word.
+ *
+ * The grid holds one byte per 4x4 block, while the filter walks edges on the
+ * 8x8 grid: of the 130k segment positions a 1080p picture offers, most carry no
+ * edge at all, and for a vertical edge only every other byte is on the grid the
+ * filter walks — the others mark 4-pixel-aligned transform boundaries, which
+ * §8.7.2 does not filter. One word therefore answers "is any of the next few
+ * positions worth visiting" for eight columns at a time.
+ *
+ * The mask is built from a byte array rather than written as a literal, so it
+ * selects bytes 0, 2, 4 and 6 of the word whatever the host's byte order.
+ */
+static uint64_t even_column_mask() {
+    static const uint64_t mask = [] {
+        const uint8_t bytes[8] = { 0xFF, 0, 0xFF, 0, 0xFF, 0, 0xFF, 0 };
+        uint64_t m;
+        std::memcpy(&m, bytes, sizeof(m));
+        return m;
+    }();
+    return mask;
 }
 
 // ============================================================
@@ -336,11 +349,26 @@ static void deblock_edges(DecodingContext& ctx) {
     // 4-sample segments of the edges on the 8x8 grid, the picture edge excluded:
     // vertical edges at x = 8, 16, ..., horizontal ones at y = 8, 16, ...
     constexpr bool ver = (edgeType == EDGE_VER);
+    const uint8_t* const edgeFlags = ver ? ctx.edge_flags_v : ctx.edge_flags_h;
+    const int gridStride = ctx.filter_grid_stride;
+    const int xStep = ver ? 8 : 4;
+    const uint64_t evenMask = even_column_mask();
     for (int y = ver ? 0 : 8; y < picH; y += ver ? 4 : 8) {
-        for (int x = ver ? 8 : 0; x < picW; x += ver ? 8 : 4) {
-            // Check if there's an edge here
-            bool hasE = has_edge(ctx, x, y, edgeType);
-            if (!hasE) continue;
+        const uint8_t* const flagRow = edgeFlags + (y >> 2) * gridStride;
+        for (int x = ver ? 8 : 0; x < picW; x += xStep) {
+            // Skip a run of empty positions a word at a time (see
+            // even_column_mask). Eight grid columns span 32 pixels, and x is a
+            // multiple of xStep, which divides 32, so the stride stays aligned.
+            if ((x >> 2) + 8 <= gridStride) {
+                uint64_t flagWord;
+                std::memcpy(&flagWord, flagRow + (x >> 2), sizeof(flagWord));
+                if (ver) flagWord &= evenMask;
+                if (flagWord == 0) {
+                    x += 32 - xStep;
+                    continue;
+                }
+            }
+            if (flagRow[x >> 2] == 0) continue;
 
             // Boundary exclusions (§8.7.2.1): a slice with deblocking
             // disabled, and tile and slice edges, which can only lie on a
