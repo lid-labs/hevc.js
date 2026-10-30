@@ -4,6 +4,7 @@
 #include "decoding/decoder.h"
 #include "common/types.h"
 
+#include <cstddef>
 #include <cstring>
 #include <vector>
 
@@ -15,11 +16,37 @@ struct HEVCDecoder {
     const hevc::SPS* last_sps = nullptr;
 };
 
-// The JS wrapper reads HEVCFrame by hardcoded byte offsets and allocates 48
-// bytes for it (decoder.ts, worker.ts). Under wasm32 that is exactly its size,
-// so a field added here without updating those offsets would corrupt the read.
+// Five JS readers walk HEVCFrame by hardcoded byte offsets and allocate 52 bytes
+// for it: packages/core/src/decoder.ts, packages/core/src/worker.ts,
+// src/wasm/hevc_decoder.js, src/wasm/worker.js and tools/wasm_decode.cjs. Only
+// two of them can share code — the other three ship unbundled — so the offsets
+// are duplicated by construction and the compiler is what keeps them honest.
+// Asserting the size alone is not enough: swapping two int fields keeps it at 52
+// and every reader then misreads silently, so each offset is asserted too.
+// wasm32 only, where a pointer is 4 bytes; a native 64-bit build lays the same
+// struct out differently and no JS reads it there.
 #ifdef __EMSCRIPTEN__
-static_assert(sizeof(HEVCFrame) == 52, "HEVCFrame layout changed — update decoder.ts and worker.ts");
+#define HEVC_FRAME_OFFSET(field, bytes) \
+    static_assert(offsetof(HEVCFrame, field) == (bytes), \
+                  "HEVCFrame::" #field " moved — update decoder.ts, worker.ts, " \
+                  "hevc_decoder.js, worker.js and wasm_decode.cjs")
+static_assert(sizeof(HEVCFrame) == 52,
+              "HEVCFrame grew or shrank — update decoder.ts, worker.ts, "
+              "hevc_decoder.js, worker.js and wasm_decode.cjs");
+HEVC_FRAME_OFFSET(y, 0);
+HEVC_FRAME_OFFSET(cb, 4);
+HEVC_FRAME_OFFSET(cr, 8);
+HEVC_FRAME_OFFSET(width, 12);
+HEVC_FRAME_OFFSET(height, 16);
+HEVC_FRAME_OFFSET(stride_y, 20);
+HEVC_FRAME_OFFSET(stride_c, 24);
+HEVC_FRAME_OFFSET(chroma_width, 28);
+HEVC_FRAME_OFFSET(chroma_height, 32);
+HEVC_FRAME_OFFSET(bit_depth, 36);
+HEVC_FRAME_OFFSET(poc, 40);
+HEVC_FRAME_OFFSET(cvs_id, 44);
+HEVC_FRAME_OFFSET(bytes_per_sample, 48);
+#undef HEVC_FRAME_OFFSET
 #endif
 
 extern "C" {
