@@ -164,6 +164,12 @@ async function loadM3U8(presetUrl) {
     wasmBinaryUrl: hevcDemo.safeAssetUrl(qp.get('wasmBinaryUrl'), 'wasmBinaryUrl'),
     workerUrl,
     forceTranscode,
+    // ?poolSize=N — how many segments may transcode at once (default: 2 from
+    // four hardware threads up, 1 below).
+    poolSize: (() => {
+      const n = Number(qp.get('poolSize'));
+      return Number.isFinite(n) && n >= 1 ? Math.floor(n) : undefined;
+    })(),
     logLevel: qp.get('logLevel') || undefined,
   });
 

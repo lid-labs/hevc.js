@@ -5,6 +5,8 @@ import {
   loadPreset,
   assertNoWasmCrash,
   assertStatus,
+  assertContiguousBuffer,
+  getBufferedRanges,
   getLog,
   enableForceTranscode,
   hasAudioSourceBuffer,
@@ -189,6 +191,57 @@ test.describe('DASH Player — cross-origin asset loading', () => {
     const t1 = await page.evaluate(() => document.querySelector<HTMLVideoElement>('#player')!.currentTime);
     expect(t1).toBeGreaterThan(t0 + 0.5);
 
+    assertNoWasmCrash(errors);
+  });
+});
+
+test.describe('DASH Player — transcode worker pool', () => {
+  // Two segments transcode at once while appends stay in segment order. The
+  // measurement that justifies the pool is in the PR; what has to hold on every
+  // run is that the second worker is actually used and the buffer it feeds has
+  // no gap and no out-of-order data — a segment appended out of turn shows up
+  // as a gap or as a decode error, not as a slow run.
+  test('a second worker joins and the buffer stays contiguous', async ({ page }) => {
+    const errors = collectConsoleErrors(page);
+    await loadDemoPage(page, 'dash.html?poolSize=2&logLevel=debug&adaptiveCompute=off');
+    await assertStatus(page, /Ready/);
+    await enableForceTranscode(page);
+    await loadPreset(page, 'ABR 480p/720p/1080p + audio (30s)');
+
+    const outcome = await page.waitForFunction(
+      () => {
+        const v = document.querySelector<HTMLVideoElement>('#player');
+        const log = document.querySelector<HTMLTextAreaElement>('#log');
+        if (v && v.currentTime > 0.5 && !v.paused) return 'playing';
+        if (log && (
+          log.value.includes('Encoder creation error') ||
+          log.value.includes('H.264 encoding not supported') ||
+          log.value.includes('not available')
+        )) return 'no_encoder';
+        return false;
+      },
+      { timeout: 45_000 },
+    );
+    if (await outcome.jsonValue() === 'no_encoder') {
+      test.skip(true, 'no H.264 encoder in this browser');
+      return;
+    }
+
+    // 10s of media is five segments of the preset: enough for the pool to have
+    // grown, which it only does when a second segment arrives while the first
+    // is still being transcoded.
+    await page.waitForFunction(
+      () => {
+        const v = document.querySelector<HTMLVideoElement>('#player');
+        return !!(v && v.buffered.length > 0 && v.buffered.end(v.buffered.length - 1) >= 10);
+      },
+      { timeout: 60_000 },
+    );
+
+    const log = await getLog(page);
+    expect(log).toContain('Transcode pool grew to 2 workers');
+
+    assertContiguousBuffer(await getBufferedRanges(page));
     assertNoWasmCrash(errors);
   });
 });

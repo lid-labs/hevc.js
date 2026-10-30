@@ -12112,6 +12112,11 @@ var HevcShaka = (() => {
     /** Send an init segment (ftyp + moov) to the worker for parsing */
     async processInitSegment(data) {
       const worker = await this._workerReady;
+      this._initParsed = false;
+      this._initParsedPromise = new Promise((resolve, reject) => {
+        this._initParsedResolve = resolve;
+        this._initParsedReject = reject;
+      });
       worker.postMessage(
         { type: "initSegment", data: data.buffer },
         [data.buffer]
@@ -12207,7 +12212,6 @@ var HevcShaka = (() => {
         reject(new Error("Aborted"));
       }
       this._pendingPrepareInit.clear();
-      this._segmentId = 0;
       this._ready = false;
       this._readyPromise = new Promise((resolve) => {
         this._readyResolve = resolve;

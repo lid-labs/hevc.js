@@ -85,8 +85,21 @@ const cleanup = await attachHevcSupport(player, {
   bitrate: 4_000_000,                         // H.264 encode bitrate (optional)
   forceTranscode: false,                      // Bypass native HEVC detection (optional)
   adaptiveCompute: true,                      // Compute-aware ABR (default true; pass false to opt out)
+  poolSize: 2,                                // Segments transcoding at once (default: 2 from 4 threads up, else 1)
+  logLevel: 'warn',                           // 'debug' | 'info' | 'warn' | 'error' | 'silent'
 });
+```
 
+`poolSize` workers, each with its own WASM decoder, transcode that many
+segments in parallel; the SourceBuffer is still fed in segment order. It raises
+sustained throughput — what lets the player buffer ahead when transcoding runs
+near real time — at the cost of one decoder per worker, tens of megabytes at
+1080p. A segment only goes to a second worker when it starts on an IDR or a BLA
+picture; an open-GOP segment stays on the worker holding its predecessor, so on
+such a stream the option has no effect rather than a wrong one. `poolSize: 1`
+transcodes one segment at a time.
+
+```ts
 // Remove patches when done (also detaches the compute-aware listener)
 cleanup();
 ```

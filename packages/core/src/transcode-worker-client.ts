@@ -76,6 +76,17 @@ export class TranscodeWorkerClient {
   /** Send an init segment (ftyp + moov) to the worker for parsing */
   async processInitSegment(data: Uint8Array): Promise<void> {
     const worker = await this._workerReady;
+    // Each init segment gets its own promise. Returning the one a previous init
+    // had already resolved — which is what an ABR switch runs into — made this
+    // call come back before the worker had even seen the message, so a caller
+    // that awaited it was told the new parameter sets were parsed when they
+    // were not. The worker answers every initSegment with initParsed or with an
+    // error carrying id -1, so this promise always settles.
+    this._initParsed = false;
+    this._initParsedPromise = new Promise<void>((resolve, reject) => {
+      this._initParsedResolve = resolve;
+      this._initParsedReject = reject;
+    });
     worker.postMessage(
       { type: "initSegment", data: data.buffer },
       [data.buffer],
@@ -183,7 +194,12 @@ export class TranscodeWorkerClient {
       reject(new Error("Aborted"));
     }
     this._pendingPrepareInit.clear();
-    this._segmentId = 0;
+    // The segment id is NOT reset. The worker answers a streaming segment with
+    // messages carrying its id, and it can still be inside one when the abort
+    // reaches it: restarting the count let a late `streamingDone` from the
+    // abandoned segment match the handler of a new segment with the same id and
+    // resolve it before its data had arrived. Ids stay monotonic, so a late
+    // message matches nothing.
 
     // Reset ready state — worker will destroy + re-create transcoder (async init)
     // waitReady() must block until the worker sends "aborted" (= re-init done)
