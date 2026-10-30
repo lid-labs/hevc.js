@@ -24,7 +24,17 @@ would decode them against unrelated pictures — wrong frames rather than an
 error. Where a stream is segmented that way, the pool therefore has no effect
 rather than a wrong one.
 
-Two fixes found while building it:
+Fixes found while building it:
+
+- Nothing is dispatched while an init segment is being parsed. `initParsed` only
+  flips when the parse finishes, so on a re-sent init — an ABR switch — the
+  dispatch could hand a media segment to a transcoder in the middle of parsing
+  other parameter sets; on the main-thread path that is a reentrant call on the
+  one instance parsing them.
+- `TranscodeWorkerClient.processInitSegment()` waits for the init segment it was
+  given. It returned the promise a previous init had already resolved, so a
+  re-sent init came back before the worker had seen the message, and a caller
+  that awaited it was told the new parameter sets were parsed when they were not.
 
 - `TranscodeWorkerClient.abort()` no longer restarts its segment id count. The
   worker can still be inside a streaming segment when the abort reaches it, and

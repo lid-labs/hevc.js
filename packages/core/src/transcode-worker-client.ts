@@ -76,6 +76,17 @@ export class TranscodeWorkerClient {
   /** Send an init segment (ftyp + moov) to the worker for parsing */
   async processInitSegment(data: Uint8Array): Promise<void> {
     const worker = await this._workerReady;
+    // Each init segment gets its own promise. Returning the one a previous init
+    // had already resolved — which is what an ABR switch runs into — made this
+    // call come back before the worker had even seen the message, so a caller
+    // that awaited it was told the new parameter sets were parsed when they
+    // were not. The worker answers every initSegment with initParsed or with an
+    // error carrying id -1, so this promise always settles.
+    this._initParsed = false;
+    this._initParsedPromise = new Promise<void>((resolve, reject) => {
+      this._initParsedResolve = resolve;
+      this._initParsedReject = reject;
+    });
     worker.postMessage(
       { type: "initSegment", data: data.buffer },
       [data.buffer],

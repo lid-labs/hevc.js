@@ -56,6 +56,9 @@ type Pending = { id: number; worker: number; release: () => void };
 
 class FakeTranscodeWorker {
   static instances: FakeTranscodeWorker[] = [];
+  /** When set, an init segment is only acknowledged once the test says so. */
+  static deferInit = false;
+  static pendingInit: (() => void)[] = [];
   /**
    * Segments handed to a worker and not yet completed, newest last. Releasing
    * one takes it out: the list is what is in flight, which is what the tests
@@ -88,7 +91,11 @@ class FakeTranscodeWorker {
         this._emit({ type: "ready" });
         break;
       case "initSegment":
-        this._emit({ type: "initParsed" });
+        if (FakeTranscodeWorker.deferInit) {
+          FakeTranscodeWorker.pendingInit.push(() => this._emit({ type: "initParsed" }));
+        } else {
+          this._emit({ type: "initParsed" });
+        }
         break;
       case "mediaSegmentStreaming": {
         const id = msg.id as number;
@@ -158,6 +165,8 @@ class FakeMediaSource {
 function setup(poolSize: number): FakeSourceBuffer {
   FakeTranscodeWorker.instances = [];
   FakeTranscodeWorker.pending = [];
+  FakeTranscodeWorker.deferInit = false;
+  FakeTranscodeWorker.pendingInit = [];
   vi.stubGlobal("MediaSource", FakeMediaSource);
   vi.stubGlobal("SourceBuffer", FakeSourceBuffer);
   vi.stubGlobal("Worker", FakeTranscodeWorker);
@@ -263,6 +272,40 @@ describe("ordered appends with a worker pool", () => {
     await waitForPending(1);
     expect(FakeTranscodeWorker.pending).toHaveLength(1);
     expect(FakeTranscodeWorker.instances).toHaveLength(1);
+  });
+
+  it("dispatches nothing while a re-sent init segment is being parsed", async () => {
+    const sb = setup(2);
+    // First init: parsed straight away, so initParsed becomes true.
+    sb.appendBuffer(INIT_SEGMENT.buffer as ArrayBuffer);
+    await settle();
+
+    // An ABR switch re-sends an init segment. `initParsed` is already true and
+    // only flips back when the new one is parsed, so this is the window where a
+    // dispatch would hand a media segment to a transcoder that is in the middle
+    // of parsing other parameter sets — and on the main-thread path, where
+    // there is a single transcoder, that is a reentrant call on it.
+    FakeTranscodeWorker.deferInit = true;
+    sb.appendBuffer(INIT_SEGMENT.buffer as ArrayBuffer);
+    await settle();
+    expect(FakeTranscodeWorker.pendingInit).toHaveLength(1);
+
+    sb.appendBuffer(mediaSegment(IDR_N_LP, 1).buffer as ArrayBuffer);
+    sb.appendBuffer(mediaSegment(IDR_N_LP, 2).buffer as ArrayBuffer);
+    await settle();
+    expect(FakeTranscodeWorker.pending).toHaveLength(0);
+    // Still the one init parse in flight. A segment dispatched here would have
+    // been handed to a worker the new init had just un-initialised, which the
+    // pool answers with a second init parse — so a second entry here is the
+    // dispatch that should not have happened.
+    expect(FakeTranscodeWorker.pendingInit).toHaveLength(1);
+
+    // From here a worker created later parses the init without being held.
+    FakeTranscodeWorker.deferInit = false;
+    FakeTranscodeWorker.pendingInit.shift()!();
+    await settle();
+    await waitForPending(2);
+    expect(FakeTranscodeWorker.pending).toHaveLength(2);
   });
 
   it("parses the init segment on a worker created later", async () => {

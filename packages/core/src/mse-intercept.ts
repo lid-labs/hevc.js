@@ -280,6 +280,14 @@ function createTranscodingProxy(
    */
   const inFlight: InFlightSegment[] = [];
   let transcodesRunning = 0;
+  /**
+   * An init segment is being parsed. `initParsed` only flips once that finishes,
+   * so without this flag the dispatch from `appendBuffer` would hand a media
+   * segment to a transcoder mid-initialisation — and on the main-thread path
+   * there is one transcoder, so that is a reentrant call on the instance that is
+   * parsing the parameter sets.
+   */
+  let initializing = false;
   let processing = false;
   let abortGeneration = 0; // incremented on abort — lets processNext detect stale runs
   let cachedInitData: Uint8Array | null = null; // cached for re-send after no-abort seek
@@ -540,7 +548,7 @@ function createTranscodingProxy(
     const lookahead = pool ? Math.max(1, poolSize) : 1;
     while (inFlight.length < lookahead && queue.length > 0) {
       const next = queue[0]!;
-      if (!initParsed || isInitSegment(next) || muxed) return;
+      if (initializing || !initParsed || isInitSegment(next) || muxed) return;
       // Read before the buffer is transferred to the worker.
       const selfContained = isSelfContainedSegment(next);
       // An open-GOP segment has to be decoded by the worker that decoded its
@@ -600,7 +608,12 @@ function createTranscodingProxy(
           cachedInitData = new Uint8Array(initData);
 
           // (Re-)parse init segment in worker/transcoder
-          await transcodeInit(initData);
+          initializing = true;
+          try {
+            await transcodeInit(initData);
+          } finally {
+            initializing = false;
+          }
           if (abortGeneration !== myGeneration) return;
           initParsed = true;
           // Reset initAppended — after a new init, we need a fresh H.264 init
