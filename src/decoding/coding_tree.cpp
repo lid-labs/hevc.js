@@ -361,13 +361,34 @@ static int derive_qp_y(DecodingContext& ctx, int xCb, int yCb) {
 // Reconstruction: pred + residual, clipping (§8.6.5)
 // ============================================================
 
+// The rows of reconstruct_block, for the plane's sample type P
+template <typename P>
+static void reconstruct_rows(P* out, ptrdiff_t stride, int w, int h, int size,
+                             int maxVal, const int16_t* pred, const int16_t* residual) {
+    using namespace simd;
+    const i32x4 zero = splat(0), vmax = splat(maxVal);
+    for (int j = 0; j < h; j++, out += stride) {
+        const int16_t* p = pred ? pred + j * size : nullptr;
+        const int16_t* r = residual ? residual + j * size : nullptr;
+        int i = 0;
+        for (; i + 4 <= w; i += 4) {
+            i32x4 v = p ? load4(p + i) : load4(out + i);
+            if (r) v += load4(r + i);
+            store4(out + i, clip3(zero, vmax, v));
+        }
+        for (; i < w; i++) {
+            int val = (p ? p[i] : out[i]) + (r ? r[i] : 0);
+            out[i] = static_cast<P>(Clip3(0, maxVal, val));
+        }
+    }
+}
+
 // Writes Clip3(0, maxVal, pred + residual) into the picture. pred == nullptr
 // takes the prediction from the picture itself (inter: written by the PU-level
 // motion compensation); residual == nullptr adds nothing.
 static void reconstruct_block(DecodingContext& ctx, int x0, int y0,
                                int log2Size, int cIdx,
                                const int16_t* pred, const int16_t* residual) {
-    using namespace simd;
     int size = 1 << log2Size;
     int bitDepth = (cIdx == 0) ? ctx.sps->BitDepthY : ctx.sps->BitDepthC;
     int maxVal = (1 << bitDepth) - 1;
@@ -384,23 +405,11 @@ static void reconstruct_block(DecodingContext& ctx, int x0, int y0,
     const int w = std::min(size, picW - xC);
     const int h = std::min(size, picH - yC);
     const ptrdiff_t stride = pic.stride[cIdx];
-    uint16_t* out = pic.planes[cIdx].data() + yC * stride + xC;
-    const i32x4 zero = splat(0), vmax = splat(maxVal);
-
-    for (int j = 0; j < h; j++, out += stride) {
-        const int16_t* p = pred ? pred + j * size : nullptr;
-        const int16_t* r = residual ? residual + j * size : nullptr;
-        int i = 0;
-        for (; i + 4 <= w; i += 4) {
-            i32x4 v = p ? load4(p + i) : load4(out + i);
-            if (r) v += load4(r + i);
-            store4(out + i, clip3(zero, vmax, v));
-        }
-        for (; i < w; i++) {
-            int val = (p ? p[i] : out[i]) + (r ? r[i] : 0);
-            out[i] = static_cast<uint16_t>(Clip3(0, maxVal, val));
-        }
-    }
+    const ptrdiff_t at = yC * stride + xC;
+    if (pic.eight_bit)
+        reconstruct_rows(pic.plane<uint8_t>(cIdx) + at, stride, w, h, size, maxVal, pred, residual);
+    else
+        reconstruct_rows(pic.plane<uint16_t>(cIdx) + at, stride, w, h, size, maxVal, pred, residual);
 }
 
 // ============================================================
@@ -830,10 +839,16 @@ static void write_inter_prediction(DecodingContext& ctx, int xPb, int yPb,
         const int x = c ? xPb / sps.SubWidthC : xPb;
         const int y = c ? yPb / sps.SubHeightC : yPb;
         const ptrdiff_t stride = pic.stride[c];
-        perform_inter_prediction(ctx, xPb, yPb, nPbW, nPbH, c,
-            mi.mv[0], mi.mv[1], mi.ref_idx[0], mi.ref_idx[1],
-            mi.pred_flag[0], mi.pred_flag[1],
-            pic.planes[c].data() + y * stride + x, stride);
+        if (pic.eight_bit)
+            perform_inter_prediction(ctx, xPb, yPb, nPbW, nPbH, c,
+                mi.mv[0], mi.mv[1], mi.ref_idx[0], mi.ref_idx[1],
+                mi.pred_flag[0], mi.pred_flag[1],
+                pic.plane<uint8_t>(c) + y * stride + x, stride);
+        else
+            perform_inter_prediction(ctx, xPb, yPb, nPbW, nPbH, c,
+                mi.mv[0], mi.mv[1], mi.ref_idx[0], mi.ref_idx[1],
+                mi.pred_flag[0], mi.pred_flag[1],
+                pic.plane<uint16_t>(c) + y * stride + x, stride);
     }
 }
 
@@ -1452,7 +1467,7 @@ void decode_pcm_samples(DecodingContext& ctx, int x0, int y0, int log2CbSize) {
         int x = i % cbSize;
         // §8.4.4.1: PCM samples are stored on PcmBitDepth bits, shifted up
         uint16_t val = static_cast<uint16_t>(bs->read_bits(lumaBits) << (sps.BitDepthY - lumaBits));
-        ctx.pic->sample(0, x0 + x, y0 + y) = val;
+        ctx.pic->set(0, x0 + x, y0 + y, val);
     }
 
     // Read chroma samples
@@ -1469,7 +1484,7 @@ void decode_pcm_samples(DecodingContext& ctx, int x0, int y0, int log2CbSize) {
                 int y = i / chromaW;
                 int x = i % chromaW;
                 uint16_t val = static_cast<uint16_t>(bs->read_bits(chromaBits) << (sps.BitDepthC - chromaBits));
-                ctx.pic->sample(cIdx, xC + x, yC + y) = val;
+                ctx.pic->set(cIdx, xC + x, yC + y, val);
             }
         }
     }

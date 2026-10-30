@@ -307,8 +307,12 @@ int main(int argc, char* argv[]) {
                     int cropBottom = pic->conf_win_bottom  / cSubH;
 
                     for (int y = cropTop; y < pic->height[c] - cropBottom; y++) {
-                        const uint16_t* row = &pic->planes[c][y * pic->stride[c]];
                         int outW = pic->width[c] - cropLeft - cropRight;
+                        if (pic->eight_bit) {
+                            fwrite(pic->plane<uint8_t>(c) + y * pic->stride[c] + cropLeft, 1, outW, f);
+                            continue;
+                        }
+                        const uint16_t* row = pic->plane<uint16_t>(c) + y * pic->stride[c];
 
                         if (bd[c] <= 8) {
                             for (int x = 0; x < outW; x++) {

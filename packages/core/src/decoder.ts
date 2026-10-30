@@ -126,7 +126,7 @@ export class HEVCDecoder {
 
   private _extractFrame(index: number): HEVCFrame | null {
     const m = this._m;
-    const framePtr = m._malloc(48);
+    const framePtr = m._malloc(52);
     try {
       const ret = this._api.getFrame(this._dec, index, framePtr);
       if (ret !== 0) return null;
@@ -138,7 +138,7 @@ export class HEVCDecoder {
 
   private _extractDrainedFrame(index: number): HEVCFrame | null {
     const m = this._m;
-    const framePtr = m._malloc(48);
+    const framePtr = m._malloc(52);
     try {
       const ret = this._api.getDrainedFrame(this._dec, index, framePtr);
       if (ret !== 0) return null;
@@ -163,9 +163,11 @@ export class HEVCDecoder {
     const poc     = m.getValue(framePtr + 40, "i32");
     const cvsId   = m.getValue(framePtr + 44, "i32");
 
-    const y  = copyPlane(m, yPtr, width, height, strideY);
-    const cb = copyPlane(m, cbPtr, cw, ch, strideC);
-    const cr = copyPlane(m, crPtr, cw, ch, strideC);
+    const bps     = m.getValue(framePtr + 48, "i32");
+
+    const y  = copyPlane(m, yPtr, width, height, strideY, bps);
+    const cb = copyPlane(m, cbPtr, cw, ch, strideC, bps);
+    const cr = copyPlane(m, crPtr, cw, ch, strideC, bps);
 
     return { y, cb, cr, width, height, chromaWidth: cw, chromaHeight: ch, bitDepth: bd, poc, cvsId };
   }
@@ -249,7 +251,7 @@ export class HEVCDecoder {
       // flush() already populates the drained list, read the count
       // by checking how many frames are available
       const frames: HEVCFrame[] = [];
-      const framePtr = m._malloc(48);
+      const framePtr = m._malloc(52);
       try {
         for (let i = 0; ; i++) {
           const r = this._api.getDrainedFrame(this._dec, i, framePtr);
@@ -308,12 +310,18 @@ export class HEVCDecoder {
   }
 }
 
-/** Copy a YUV plane from WASM HEAPU16, handling stride != width */
-function copyPlane(m: EmscriptenModule, ptr: number, width: number, height: number, stride: number): Uint16Array {
+/**
+ * Copy a YUV plane out of the WASM heap, handling stride != width. 8-bit
+ * pictures are stored one byte per sample (bytesPerSample 1): set() widens each
+ * byte into the Uint16Array.
+ */
+function copyPlane(m: EmscriptenModule, ptr: number, width: number, height: number, stride: number,
+                   bytesPerSample: number): Uint16Array {
   const out = new Uint16Array(width * height);
-  const base = ptr >> 1;
+  const heap = bytesPerSample === 1 ? m.HEAPU8 : m.HEAPU16;
+  const base = bytesPerSample === 1 ? ptr : ptr >> 1;
   for (let y = 0; y < height; y++) {
-    out.set(m.HEAPU16.subarray(base + y * stride, base + y * stride + width), y * width);
+    out.set(heap.subarray(base + y * stride, base + y * stride + width), y * width);
   }
   return out;
 }

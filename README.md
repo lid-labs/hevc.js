@@ -18,7 +18,7 @@ A from-scratch HEVC decoder written in C++17, compiled to WebAssembly, with drop
 
 **Decodes all 147 bitstreams of the official HEVC v1 conformance suite bit-exactly** — [details](#spec-conformance).
 
-1080p @ 60fps. 283 KB WASM, ~103 KB gzip-compressed. Zero dependencies. No special server headers required. Compute-aware quality control caps the player's ABR ceiling when the device can't transcode at real-time, so the buffer never starves — automatic with the dash.js plugin, one call away with hls.js and Shaka.
+1080p @ 60fps. 328 KB WASM, ~113 KB gzip-compressed. Zero dependencies. No special server headers required. Compute-aware quality control caps the player's ABR ceiling when the device can't transcode at real-time, so the buffer never starves — automatic with the dash.js plugin, one call away with hls.js and Shaka.
 
 Built in 8 days by one developer, assisted by AI — [read the story](https://www.developpement.ai/blog/hevcjs-decodeur-h265-navigateur-wasm).
 
@@ -71,7 +71,7 @@ The plugin relies on 3 static files from `@hevcjs/core` (installed as a transiti
 
 - `transcode-worker.js` — Web Worker (IIFE, standalone)
 - `wasm/hevc-decode.js` — Emscripten glue code
-- `wasm/hevc-decode.wasm` — WASM binary (283 KB, ~103 KB gzipped)
+- `wasm/hevc-decode.wasm` — WASM binary (328 KB, ~113 KB gzipped)
 
 Copy them from `node_modules/@hevcjs/core/dist/` to your public directory:
 
@@ -245,7 +245,7 @@ No `Cross-Origin-Embedder-Policy` or `Cross-Origin-Opener-Policy` headers needed
 
 This implementation targets a different niche on three axes:
 
-- **Size** — 283 KB WASM (~103 KB gzipped) vs ~2 MB for libde265 compiled to WASM. 7× smaller — which matters when shipping to a browser, a microVM, or a sandboxed runtime.
+- **Size** — 328 KB WASM (~113 KB gzipped) vs ~2 MB for libde265 compiled to WASM. 6× smaller — which matters when shipping to a browser, a microVM, or a sandboxed runtime.
 - **Modernity & license** — C++17 throughout (`std::optional`, `std::shared_ptr`, `std::array`, `constexpr`), zero dependencies, **MIT-licensed** (vs LGPL for libde265 — relevant for static linking in commercial products).
 - **Spec traceability** — function names mirror ITU-T H.265 section numbers, and [`docs/cross-reference.md`](docs/cross-reference.md) maps every spec section to its source file and test. Useful if you want to *understand* HEVC, not just decode it (universities, codec research, contributors).
 
@@ -322,7 +322,7 @@ cd build && ctest --output-on-failure    # 160 tests
 
 ```bash
 pnpm build:wasm
-# Output: build-wasm/hevc-decode.js + hevc-decode.wasm (283 KB, ~103 KB gzipped),
+# Output: build-wasm/hevc-decode.js + hevc-decode.wasm (328 KB, ~113 KB gzipped),
 # copied into packages/core/wasm/
 ```
 
@@ -334,23 +334,25 @@ when an SDK is available.
 
 ### Performance
 
-Decode speed on an Apple M4 Pro (10 performance + 4 efficiency cores), the 1-thread and WASM columns measured on 2026-10-25, the WPP-threads column and the transcode on 2026-10-21:
+Decode speed on an Apple M4 Pro (10 performance + 4 efficiency cores), the three decode columns measured on 2026-10-30, the transcode on 2026-10-21:
 
 | Stream | Native C++, 1 thread | Native C++, WPP threads | WASM (Node 24, V8) |
 |---|---|---|---|
-| **1080p**, SAO, WPP — `bbb1080_50f.265` | 167 fps | 256 fps | 135 fps |
-| **4K**, SAO, WPP — `bbb4k_25f.265` | 35 fps | 47 fps | 30 fps |
-| **4K**, SAO, no WPP — `bbb4k_singleslice.265` | 47 fps | — | 40 fps |
+| **1080p**, SAO, WPP — `bbb1080_50f.265` | 203 fps | 507 fps | 145 fps |
+| **4K**, SAO, WPP — `bbb4k_25f.265` | 41 fps | 94 fps | 32 fps |
+| **4K**, SAO, no WPP — `bbb4k_singleslice.265` | 58 fps | — | 45 fps |
 
 **1080p transcode** (HEVC decode + H.264 encode, in Chromium through Playwright 1.62, Shaka demo, `ABR 480p/720p/1080p` preset, 1080p variant (SAO) active in every run): 1.8–2.0x real time.
 
-The WASM build has no threads, so the single-threaded native column is the one to compare it with: WASM runs at 81% of native at 1080p and 86% at 4K. The native decoder parallelises WPP rows on a pool sized to the core count, which is the third column; a stream without WPP decodes on one thread either way.
+The WASM build has no threads, so the single-threaded native column is the one to compare it with: WASM runs at 71% of native at 1080p and 77-78% at 4K. The native decoder parallelises WPP rows on a pool sized to the core count, which is the third column; a stream without WPP decodes on one thread either way.
 
 How these were measured, to reproduce or re-run:
 
 - Streams: `tests/conformance/fixtures/` and `demo/`, all with SAO enabled — check with `hevc-decode <file> --dump-headers`.
-- Native: Release build, Apple clang 17.0.0, `hevc-decode <file> -o /dev/null`, median of 5 runs of the decode time it prints. The 1-thread column runs with `HEVC_THREADS=1`. The WPP-threads column predates the SIMD and entropy-decoding work of #232 and understates the current decoder: it was not re-measured because the machine was loaded on 2026-10-25, which skews a multi-threaded run but not a single-threaded one — `main` before that work, measured alongside as a control, landed within 4% of its 2026-10-21 single-threaded figures.
-- WASM: the shipped `packages/core/wasm/hevc-decode.wasm` (emsdk 6.0.8), `node tools/bench_wasm.cjs <file> packages/core/wasm` on Node 24.4.1, median of 5 runs of its best-of-3. V8 is Chrome's engine, but this is not a measurement inside Chrome.
+- Native: Release build, Apple clang 17.0.0, `hevc-bench <file> -n 7`, best of three such rounds. The 1-thread column runs with `HEVC_THREADS=1`, the WPP-threads column with the pool at the core count.
+- `hevc-bench` times the decode and nothing else. The figures published before 2026-10-30 came from `hevc-decode <file> -o /dev/null`, whose reported time also covers writing the frames out and runs about 20% slower on the same binary — 320 ms against 264 ms on `bbb1080_50f.265`, same machine and day — so this table is not comparable with the earlier one.
+- The machine was running other work that day, so each figure is the best of many runs rather than a median: other load can only make a run slower, which makes these lower bounds. Between rounds the single-threaded figures moved by under 4%; the multi-threaded 4K figure moved by up to 2x until the machine quietened, after which five consecutive rounds landed within 5%, and that is the figure above.
+- WASM: the shipped `packages/core/wasm/hevc-decode.wasm` (emsdk 6.0.8), `node tools/bench_wasm.cjs <file> packages/core/wasm` on Node 24.4.1, best of three runs of its best-of-3. V8 is Chrome's engine, but this is not a measurement inside Chrome.
 - Transcode: `speedX` (segment duration over transcode time) printed by the unthrottled case of `tests/e2e/compute-cap.spec.ts`, three runs, six segments of 2s.
 
 ### Spec conformance

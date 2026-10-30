@@ -30,11 +30,16 @@ void Picture::allocate(int w, int h, ChromaFormat fmt, int bd_luma, int bd_chrom
         stride[1] = stride[2] = w / sub_w;
     }
 
+    eight_bit = (bd_luma == 8 && bd_chroma == 8);
     for (int c = 0; c < 3; c++) {
-        if (width[c] > 0 && height[c] > 0) {
-            planes[c].resize(static_cast<size_t>(stride[c]) * height[c], 0);
+        const size_t n = (width[c] > 0 && height[c] > 0)
+            ? static_cast<size_t>(stride[c]) * height[c] : 0;
+        if (eight_bit) {
+            planes8[c].resize(n, 0);
+            planes16[c].clear();
         } else {
-            planes[c].clear();
+            planes16[c].resize(n, 0);
+            planes8[c].clear();
         }
     }
 }
@@ -70,7 +75,15 @@ bool Picture::write_yuv(const char* path) const {
         }
 
         for (int y = crop_top[c]; y < crop_top[c] + out_height; y++) {
-            const uint16_t* row = &planes[c][y * stride[c]];
+            if (eight_bit) {
+                const uint8_t* row8 = &planes8[c][static_cast<size_t>(y) * stride[c] + crop_left[c]];
+                if (fwrite(row8, 1, out_width, fp) != static_cast<size_t>(out_width)) {
+                    fclose(fp);
+                    return false;
+                }
+                continue;
+            }
+            const uint16_t* row = &planes16[c][static_cast<size_t>(y) * stride[c]];
 
             if (bd[c] <= 8) {
                 // Write as 8-bit: convert row to uint8_t buffer, write once

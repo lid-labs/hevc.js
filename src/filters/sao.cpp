@@ -47,7 +47,9 @@ static bool sao_ctb_neighbourhood_uniform(const DecodingContext& ctx, const PPS&
     return true;
 }
 
-void apply_sao(DecodingContext& ctx) {
+// Pixel: the picture's sample type; backup: the decoder's copy buffers of that type
+template <typename Pixel>
+static void sao_picture(DecodingContext& ctx, std::vector<Pixel>* backup_planes) {
     auto& sps = *ctx.sps;
     auto& pps = *ctx.pps;
     auto* pic = ctx.pic;
@@ -70,12 +72,12 @@ void apply_sao(DecodingContext& ctx) {
 
     // §8.7.3.1: SAO operates on a copy of the deblocked picture
     // Use persistent backup buffers (avoids heap allocation per frame)
-    auto* origPlane = ctx.sao_backup;
+    auto* origPlane = backup_planes;
     for (int c = 0; c < numComp; c++) {
-        auto& plane = pic->planes[c];
+        const size_t n = pic->plane_size(c);
         auto& backup = origPlane[c];
-        backup.resize(plane.size());
-        std::memcpy(backup.data(), plane.data(), plane.size() * sizeof(uint16_t));
+        backup.resize(n);
+        std::memcpy(backup.data(), pic->template plane<Pixel>(c), n * sizeof(Pixel));
     }
 
     // Process each CTU
@@ -148,8 +150,8 @@ void apply_sao(DecodingContext& ctx) {
                 // multi-tile streams onto the slow loop for nothing.
                 bool fastPathBand = !ctbHasPcmOrBypass;
 
-                const uint16_t* origData = origPlane[cIdx].data();
-                uint16_t* destData = pic->planes[cIdx].data();
+                const Pixel* origData = origPlane[cIdx].data();
+                Pixel* destData = pic->template plane<Pixel>(cIdx);
 
                 if (sao.sao_type_idx[cIdx] == 2) {
                     // Edge offset — §8.7.3.2
@@ -184,8 +186,8 @@ void apply_sao(DecodingContext& ctx) {
                         const i16x8 zero = splat8(0), vmax = splat8(static_cast<int16_t>(maxVal));
                         const i16x8 m2 = splat8(-2), m1 = splat8(-1), p1 = splat8(1), p2 = splat8(2);
                         for (int y = yLo; y < yHi; y++) {
-                            const uint16_t* srcRow = origData + (ptrdiff_t)y * stride;
-                            uint16_t* dstRow = destData + (ptrdiff_t)y * stride;
+                            const Pixel* srcRow = origData + (ptrdiff_t)y * stride;
+                            Pixel* dstRow = destData + (ptrdiff_t)y * stride;
                             int x = xLo;
                             for (; vec && x + 8 <= xHi; x += 8) {
                                 i16x8 c = load8(srcRow + x);
@@ -207,7 +209,7 @@ void apply_sao(DecodingContext& ctx) {
                                 // and the offset != 0 branch can be dropped.
                                 int edgeIdx = 2 + ((c_val > a) - (c_val < a))
                                                 + ((c_val > b) - (c_val < b));
-                                dstRow[x] = static_cast<uint16_t>(
+                                dstRow[x] = static_cast<Pixel>(
                                     Clip3(0, maxVal, c_val + offs[edgeIdx]));
                             }
                         }
@@ -301,7 +303,7 @@ void apply_sao(DecodingContext& ctx) {
                             int offset = sao.sao_offset_val[cIdx][edgeIdx];
                             if (offset != 0) {
                                 destData[ySj * stride + xSi] =
-                                    static_cast<uint16_t>(Clip3(0, maxVal, c_val + offset));
+                                    static_cast<Pixel>(Clip3(0, maxVal, c_val + offset));
                             }
                         }
                     }
@@ -336,8 +338,8 @@ void apply_sao(DecodingContext& ctx) {
                         const i16x8 zero = splat8(0), vmax = splat8(static_cast<int16_t>(maxVal));
                         const i16x8 k1 = splat8(1), k2 = splat8(2), k3 = splat8(3);
                         for (int y = yCtb; y < yHi; y++) {
-                            const uint16_t* srcRow = origData + (ptrdiff_t)y * stride;
-                            uint16_t* dstRow = destData + (ptrdiff_t)y * stride;
+                            const Pixel* srcRow = origData + (ptrdiff_t)y * stride;
+                            Pixel* dstRow = destData + (ptrdiff_t)y * stride;
                             int x = xCtb;
                             for (; vec && x + 8 <= xHi; x += 8) {
                                 i16x8 c = load8(srcRow + x);
@@ -351,7 +353,7 @@ void apply_sao(DecodingContext& ctx) {
                                 // & 31 is a no-op while sample <= maxVal, which the
                                 // decoder guarantees; it keeps a corrupt plane or an
                                 // inconsistent bit depth from indexing past the table.
-                                dstRow[x] = static_cast<uint16_t>(
+                                dstRow[x] = static_cast<Pixel>(
                                     Clip3(0, maxVal, sample + bandOffs[(sample >> bandShift) & 31]));
                             }
                         }
@@ -380,7 +382,7 @@ void apply_sao(DecodingContext& ctx) {
                                 int offset = sao.sao_offset_val[cIdx][bandIdx];
                                 if (offset != 0) {
                                     destData[ySj * stride + xSi] =
-                                        static_cast<uint16_t>(Clip3(0, maxVal, sample + offset));
+                                        static_cast<Pixel>(Clip3(0, maxVal, sample + offset));
                                 }
                             }
                         }
@@ -389,6 +391,11 @@ void apply_sao(DecodingContext& ctx) {
             }
         }
     }
+}
+
+void apply_sao(DecodingContext& ctx) {
+    if (ctx.pic->eight_bit) sao_picture<uint8_t>(ctx, ctx.sao_backup8);
+    else sao_picture<uint16_t>(ctx, ctx.sao_backup);
 }
 
 } // namespace hevc

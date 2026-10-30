@@ -12,14 +12,14 @@ TEST(Picture, Allocate420) {
     EXPECT_EQ(pic.width[0], 64);
     EXPECT_EQ(pic.height[0], 64);
     EXPECT_EQ(pic.stride[0], 64);
-    EXPECT_EQ(pic.planes[0].size(), 64u * 64);
+    EXPECT_EQ(pic.plane_size(0), 64u * 64);
 
     // Chroma is half in both dimensions for 4:2:0
     EXPECT_EQ(pic.width[1], 32);
     EXPECT_EQ(pic.height[1], 32);
     EXPECT_EQ(pic.stride[1], 32);
-    EXPECT_EQ(pic.planes[1].size(), 32u * 32);
-    EXPECT_EQ(pic.planes[2].size(), 32u * 32);
+    EXPECT_EQ(pic.plane_size(1), 32u * 32);
+    EXPECT_EQ(pic.plane_size(2), 32u * 32);
 }
 
 TEST(Picture, Allocate422) {
@@ -42,31 +42,47 @@ TEST(Picture, AllocateMonochrome) {
     Picture pic;
     pic.allocate(64, 64, ChromaFormat::MONOCHROME, 8, 8);
 
-    EXPECT_EQ(pic.planes[0].size(), 64u * 64);
-    EXPECT_TRUE(pic.planes[1].empty());
-    EXPECT_TRUE(pic.planes[2].empty());
+    EXPECT_EQ(pic.plane_size(0), 64u * 64);
+    EXPECT_EQ(pic.plane_size(1), 0u);
+    EXPECT_EQ(pic.plane_size(2), 0u);
+}
+
+// 8-bit luma and chroma take one byte per sample; any other depth two.
+TEST(Picture, StorageFollowsBitDepth) {
+    Picture p8, p10, mixed;
+    p8.allocate(16, 16, ChromaFormat::YUV420, 8, 8);
+    p10.allocate(16, 16, ChromaFormat::YUV420, 10, 10);
+    mixed.allocate(16, 16, ChromaFormat::YUV420, 8, 10);
+    EXPECT_TRUE(p8.eight_bit);
+    EXPECT_EQ(p8.planes8[0].size(), 16u * 16);
+    EXPECT_TRUE(p8.planes16[0].empty());
+    EXPECT_FALSE(p10.eight_bit);
+    EXPECT_EQ(p10.planes16[0].size(), 16u * 16);
+    EXPECT_TRUE(p10.planes8[0].empty());
+    EXPECT_FALSE(mixed.eight_bit);
+    p10.set(0, 3, 2, 1023);
+    EXPECT_EQ(p10.get(0, 3, 2), 1023);
 }
 
 TEST(Picture, SampleAccess) {
     Picture pic;
     pic.allocate(16, 16, ChromaFormat::YUV420, 8, 8);
 
-    pic.sample(0, 5, 3) = 128;
-    EXPECT_EQ(pic.sample(0, 5, 3), 128);
+    pic.set(0, 5, 3, 128);
+    EXPECT_EQ(pic.get(0, 5, 3), 128);
 
-    pic.sample(1, 2, 1) = 200;
-    EXPECT_EQ(pic.sample(1, 2, 1), 200);
+    pic.set(1, 2, 1, 200);
+    EXPECT_EQ(pic.get(1, 2, 1), 200);
 }
 
 TEST(Picture, ZeroInitialized) {
     Picture pic;
     pic.allocate(16, 16, ChromaFormat::YUV420, 8, 8);
 
-    for (int c = 0; c < 3; c++) {
-        for (auto val : pic.planes[c]) {
-            EXPECT_EQ(val, 0);
-        }
-    }
+    for (int c = 0; c < 3; c++)
+        for (int y = 0; y < pic.height[c]; y++)
+            for (int x = 0; x < pic.width[c]; x++)
+                EXPECT_EQ(pic.get(c, x, y), 0);
 }
 
 TEST(Picture, WriteYuv8bit) {
@@ -76,13 +92,13 @@ TEST(Picture, WriteYuv8bit) {
     // Fill luma with gradient
     for (int y = 0; y < 4; y++)
         for (int x = 0; x < 4; x++)
-            pic.sample(0, x, y) = static_cast<uint16_t>(y * 4 + x);
+            pic.set(0, x, y, y * 4 + x);
 
     // Fill chroma with constants
     for (int y = 0; y < 2; y++)
         for (int x = 0; x < 2; x++) {
-            pic.sample(1, x, y) = 128;
-            pic.sample(2, x, y) = 64;
+            pic.set(1, x, y, 128);
+            pic.set(2, x, y, 64);
         }
 
     const char* path = "/tmp/test_picture.yuv";

@@ -118,6 +118,19 @@ static int derive_bs(const DecodingContext& ctx, int xP, int yP, int xQ, int yQ,
     auto& miP = ctx.motion_info[(yP >> kGridLog2) * miStride + (xP >> kGridLog2)];
     auto& miQ = ctx.motion_info[(yQ >> kGridLog2) * miStride + (xQ >> kGridLog2)];
 
+    // Same motion, field for field, in the same slice: same reference pictures
+    // and no motion vector difference, so every test below gives 0. Inside a
+    // PU, and between skipped blocks that share their motion, this is most edges.
+    // Fields the prediction does not use may differ; the full test then runs.
+    static_assert(sizeof(PUMotionInfo) == 12, "PUMotionInfo has no padding to compare");
+    if (std::memcmp(&miP, &miQ, sizeof(PUMotionInfo)) == 0) {
+        const int log2CtbS = sps.CtbLog2SizeY;
+        if (!ctx.slice_idx ||
+            ctx.slice_idx[(yP >> log2CtbS) * sps.PicWidthInCtbsY + (xP >> log2CtbS)] ==
+            ctx.slice_idx[(yQ >> log2CtbS) * sps.PicWidthInCtbsY + (xQ >> log2CtbS)])
+            return 0;
+    }
+
     int nRefP = (miP.pred_flag[0] ? 1 : 0) + (miP.pred_flag[1] ? 1 : 0);
     int nRefQ = (miQ.pred_flag[0] ? 1 : 0) + (miQ.pred_flag[1] ? 1 : 0);
 
@@ -294,7 +307,11 @@ static void filter_chroma_sample(int p[2], int q[2], int tC, int bitDepth,
 // ============================================================
 // Main deblocking entry point — §8.7.2.1
 // ============================================================
-void apply_deblocking(DecodingContext& ctx) {
+// The edges of one direction E, Pixel: the picture's sample type, uint8_t or
+// uint16_t. Edges of one direction are 8 samples apart and a filter changes at
+// most 3 on each side, so they are independent and the scan order is free.
+template <typename Pixel, EdgeType edgeType>
+static void deblock_edges(DecodingContext& ctx) {
     auto& sps = *ctx.sps;
     auto& pps = *ctx.pps;
     auto* pic = ctx.pic;
@@ -308,270 +325,250 @@ void apply_deblocking(DecodingContext& ctx) {
     int subH = sps.SubHeightC;
 
     // Pre-compute plane pointers and strides for direct access
-    uint16_t* lumaPlane = pic->planes[0].data();
+    Pixel* lumaPlane = pic->template plane<Pixel>(0);
     int lumaStride = pic->stride[0];
-    uint16_t* chromaPlane[3] = { nullptr,
-                                  pic->planes[1].data(),
-                                  pic->planes[2].data() };
+    Pixel* chromaPlane[3] = { nullptr,
+                           pic->template plane<Pixel>(1),
+                           pic->template plane<Pixel>(2) };
     int chromaStride[3] = { 0, pic->stride[1], pic->stride[2] };
 
 
-    // §8.7.2.1: Process vertical edges first, then horizontal
-    for (int pass = 0; pass < 2; pass++) {
-        EdgeType edgeType = (pass == 0) ? EDGE_VER : EDGE_HOR;
+    // 4-sample segments of the edges on the 8x8 grid, the picture edge excluded:
+    // vertical edges at x = 8, 16, ..., horizontal ones at y = 8, 16, ...
+    constexpr bool ver = (edgeType == EDGE_VER);
+    for (int y = ver ? 0 : 8; y < picH; y += ver ? 4 : 8) {
+        for (int x = ver ? 8 : 0; x < picW; x += ver ? 8 : 4) {
+            // Check if there's an edge here
+            bool hasE = has_edge(ctx, x, y, edgeType);
+            if (!hasE) continue;
 
-        // Iterate over all 8-pixel-aligned edge positions
-        for (int yE = 0; yE < picH; yE += 8) {
-            for (int xE = 0; xE < picW; xE += 8) {
-                // For each 8-pixel edge position, process 4-sample segments
-                // Vertical: edge at x=xE, segments at y = yE, yE+4
-                // Horizontal: edge at y=yE, segments at x = xE, xE+4
-                for (int seg = 0; seg < 2; seg++) {
-                    int x, y;
-                    if (edgeType == EDGE_VER) {
-                        x = xE;
-                        y = yE + seg * 4;
-                    } else {
-                        x = xE + seg * 4;
-                        y = yE;
+            // Boundary exclusions (§8.7.2.1): a slice with deblocking
+            // disabled, and tile and slice edges, which can only lie on a
+            // CTB boundary (the loops leave out the picture edge)
+            int xP, yP, xQ, yQ;
+            if (edgeType == EDGE_VER) {
+                xP = x - 1; yP = y; xQ = x; yQ = y;
+            } else {
+                xP = x; yP = y - 1; xQ = x; yQ = y;
+            }
+            const int ctbLog2F = sps.CtbLog2SizeY;
+            int addrQ = (yQ >> ctbLog2F) * sps.PicWidthInCtbsY + (xQ >> ctbLog2F);
+            auto& sh_filt = ctx.sh_at_ctb(addrQ);
+            if (sh_filt.slice_deblocking_filter_disabled_flag) continue;
+            int addrP = (yP >> ctbLog2F) * sps.PicWidthInCtbsY + (xP >> ctbLog2F);
+            if (addrP != addrQ && excluded_across_ctbs(ctx, sh_filt, addrQ, addrP))
+                continue;
+
+            // Derive Bs
+            auto& cuP = ctx.cu_at(xP, yP);
+            auto& cuQ = ctx.cu_at(xQ, yQ);
+            int bS = derive_bs(ctx, xP, yP, xQ, yQ, cuP, cuQ);
+            if (bS == 0) continue;
+
+            // Get QP for both sides
+            bool pcmP = cuP.is_pcm;
+            bool pcmQ = cuQ.is_pcm;
+            bool bypassP = cuP.cu_transquant_bypass;
+            bool bypassQ = cuQ.cu_transquant_bypass;
+
+            // §8.7.2.5.3: slice parameters for the slice containing q0,0 — sh_filt
+
+
+            // ---- LUMA ----
+            {
+                int QpP = cuP.qp_y;
+                int QpQ = cuQ.qp_y;
+                int qPL = ((QpQ + QpP + 1) >> 1); // eq 8-347
+
+                int Q_beta = Clip3(0, 51, qPL + (sh_filt.slice_beta_offset_div2 << 1));
+                int betaPrime = beta_table[Q_beta];
+                int beta = betaPrime * (1 << (bitDepthY - 8)); // eq 8-349
+
+                int Q_tc = Clip3(0, 53, qPL + 2*(bS - 1) + (sh_filt.slice_tc_offset_div2 << 1));
+                int tcPrime = tc_table[Q_tc];
+                int tC = tcPrime * (1 << (bitDepthY - 8)); // eq 8-351
+
+
+                // Decision process — §8.7.2.5.3. P[i] / Q[i] hold p_i / q_i of
+                // the 4 lines, lane k for line k.
+                using namespace simd;
+                i32x4 P[4], Q[4];
+                // The transpose loads int16 lanes: samples below 2^15
+                const bool transpose = bitDepthY <= 15;
+                if (edgeType == EDGE_VER && !transpose) {
+                    const Pixel* r0 = lumaPlane + yQ * lumaStride + xQ;
+                    const Pixel* r1 = r0 + lumaStride;
+                    const Pixel* r2 = r1 + lumaStride;
+                    const Pixel* r3 = r2 + lumaStride;
+                    for (int i = 0; i < 4; i++) {
+                        Q[i] = i32x4{r0[i], r1[i], r2[i], r3[i]};
+                        P[i] = i32x4{r0[-i - 1], r1[-i - 1], r2[-i - 1], r3[-i - 1]};
                     }
-
-                    if (x >= picW || y >= picH) continue;
-
-                    // Check if there's an edge here
-                    bool hasE = has_edge(ctx, x, y, edgeType);
-                    if (!hasE) continue;
-
-                    // Boundary exclusions (§8.7.2.1): the picture edge, a slice with
-                    // deblocking disabled, and tile and slice edges, which can only
-                    // lie on a CTB boundary
-                    if (edgeType == EDGE_VER ? x == 0 : y == 0) continue;
-                    int xP, yP, xQ, yQ;
-                    if (edgeType == EDGE_VER) {
-                        xP = x - 1; yP = y; xQ = x; yQ = y;
-                    } else {
-                        xP = x; yP = y - 1; xQ = x; yQ = y;
+                } else if (edgeType == EDGE_VER) {
+                    // Rows of p3..q3, transposed into columns: 16-bit then
+                    // 32-bit interleaves
+                    const Pixel* r0 = lumaPlane + yQ * lumaStride + xQ - 4;
+                    const i16x8 a0 = load8(r0), a1 = load8(r0 + lumaStride);
+                    const i16x8 a2 = load8(r0 + 2 * lumaStride);
+                    const i16x8 a3 = load8(r0 + 3 * lumaStride);
+                    const i16x8 b0 = HEVC_SHUFFLE16(a0, a1, 0, 8, 1, 9, 2, 10, 3, 11);
+                    const i16x8 b1 = HEVC_SHUFFLE16(a0, a1, 4, 12, 5, 13, 6, 14, 7, 15);
+                    const i16x8 b2 = HEVC_SHUFFLE16(a2, a3, 0, 8, 1, 9, 2, 10, 3, 11);
+                    const i16x8 b3 = HEVC_SHUFFLE16(a2, a3, 4, 12, 5, 13, 6, 14, 7, 15);
+                    // Two columns each, lines 0-3: (p3, p2) (p1, p0) (q0, q1) (q2, q3)
+                    const i16x8 c0 = HEVC_SHUFFLE16(b0, b2, 0, 1, 8, 9, 2, 3, 10, 11);
+                    const i16x8 c1 = HEVC_SHUFFLE16(b0, b2, 4, 5, 12, 13, 6, 7, 14, 15);
+                    const i16x8 c2 = HEVC_SHUFFLE16(b1, b3, 0, 1, 8, 9, 2, 3, 10, 11);
+                    const i16x8 c3 = HEVC_SHUFFLE16(b1, b3, 4, 5, 12, 13, 6, 7, 14, 15);
+                    P[3] = widen_lo(c0); P[2] = widen_hi(c0);
+                    P[1] = widen_lo(c1); P[0] = widen_hi(c1);
+                    Q[0] = widen_lo(c2); Q[1] = widen_hi(c2);
+                    Q[2] = widen_lo(c3); Q[3] = widen_hi(c3);
+                } else {
+                    const Pixel* c = lumaPlane + yQ * lumaStride + xQ;
+                    for (int i = 0; i < 4; i++) {
+                        Q[i] = load4(c + i * lumaStride);
+                        P[i] = load4(c - (i + 1) * lumaStride);
                     }
-                    const int ctbLog2F = sps.CtbLog2SizeY;
-                    int addrQ = (yQ >> ctbLog2F) * sps.PicWidthInCtbsY + (xQ >> ctbLog2F);
-                    auto& sh_filt = ctx.sh_at_ctb(addrQ);
-                    if (sh_filt.slice_deblocking_filter_disabled_flag) continue;
-                    int addrP = (yP >> ctbLog2F) * sps.PicWidthInCtbsY + (xP >> ctbLog2F);
-                    if (addrP != addrQ && excluded_across_ctbs(ctx, sh_filt, addrQ, addrP))
-                        continue;
+                }
 
-                    // Derive Bs
-                    auto& cuP = ctx.cu_at(xP, yP);
-                    auto& cuQ = ctx.cu_at(xQ, yQ);
-                    int bS = derive_bs(ctx, xP, yP, xQ, yQ, cuP, cuQ);
-                    if (bS == 0) continue;
+                // dp, dq, d (eq 8-352 to 8-360 / 8-361 to 8-369), lines 0 and 3
+                const i32x4 dpv = abs(P[2] - 2 * P[1] + P[0]);
+                const i32x4 dqv = abs(Q[2] - 2 * Q[1] + Q[0]);
+                int dp0 = dpv[0], dp3 = dpv[3];
+                int dq0 = dqv[0], dq3 = dqv[3];
+                int dpq0 = dp0 + dq0;
+                int dpq3 = dp3 + dq3;
+                int dp = dp0 + dp3;
+                int dq = dq0 + dq3;
+                int d = dpq0 + dpq3;
 
-                    // Get QP for both sides
-                    bool pcmP = cuP.is_pcm;
-                    bool pcmQ = cuQ.is_pcm;
-                    bool bypassP = cuP.cu_transquant_bypass;
-                    bool bypassQ = cuQ.cu_transquant_bypass;
+                int dE = 0, dEp = 0, dEq = 0;
+                if (d < beta) {
+                    // §8.7.2.5.6 for line 0
+                    int dSam0 = decision_luma_sample(
+                        P[0][0], P[3][0], Q[0][0], Q[3][0], 2 * dpq0, beta, tC);
+                    // §8.7.2.5.6 for line 3
+                    int dSam3 = decision_luma_sample(
+                        P[0][3], P[3][3], Q[0][3], Q[3][3], 2 * dpq3, beta, tC);
 
-                    // §8.7.2.5.3: slice parameters for the slice containing q0,0 — sh_filt
+                    dE = 1;
+                    if (dSam0 == 1 && dSam3 == 1) dE = 2;
+                    if (dp < ((beta + (beta >> 1)) >> 3)) dEp = 1;
+                    if (dq < ((beta + (beta >> 1)) >> 3)) dEq = 1;
+                }
 
-
-                    // ---- LUMA ----
-                    {
-                        int QpP = cuP.qp_y;
-                        int QpQ = cuQ.qp_y;
-                        int qPL = ((QpQ + QpP + 1) >> 1); // eq 8-347
-
-                        int Q_beta = Clip3(0, 51, qPL + (sh_filt.slice_beta_offset_div2 << 1));
-                        int betaPrime = beta_table[Q_beta];
-                        int beta = betaPrime * (1 << (bitDepthY - 8)); // eq 8-349
-
-                        int Q_tc = Clip3(0, 53, qPL + 2*(bS - 1) + (sh_filt.slice_tc_offset_div2 << 1));
-                        int tcPrime = tc_table[Q_tc];
-                        int tC = tcPrime * (1 << (bitDepthY - 8)); // eq 8-351
-
-
-                        // Decision process — §8.7.2.5.3. P[i] / Q[i] hold p_i / q_i of
-                        // the 4 lines, lane k for line k.
-                        using namespace simd;
-                        i32x4 P[4], Q[4];
-                        // The transpose loads int16 lanes: samples below 2^15
-                        const bool transpose = bitDepthY <= 15;
-                        if (edgeType == EDGE_VER && !transpose) {
-                            const uint16_t* r0 = lumaPlane + yQ * lumaStride + xQ;
-                            const uint16_t* r1 = r0 + lumaStride;
-                            const uint16_t* r2 = r1 + lumaStride;
-                            const uint16_t* r3 = r2 + lumaStride;
-                            for (int i = 0; i < 4; i++) {
-                                Q[i] = i32x4{r0[i], r1[i], r2[i], r3[i]};
-                                P[i] = i32x4{r0[-i - 1], r1[-i - 1], r2[-i - 1], r3[-i - 1]};
+                // §8.7.2.5.4: Filter all 4 luma lines (only if dE > 0)
+                const bool keepP = (pcmFilterDisabled && pcmP) || bypassP;
+                const bool keepQ = (pcmFilterDisabled && pcmQ) || bypassQ;
+                if (dE > 0 && !(keepP && keepQ)) {
+                    filter_luma_lines(P, Q, dE, dEp, dEq, tC, (1 << bitDepthY) - 1,
+                                      keepP, keepQ);
+                    // Write back p0..p2, q0..q2: lanes left unfiltered still hold
+                    // their own sample.
+                    if (edgeType == EDGE_VER && !transpose) {
+                        Pixel* row = lumaPlane + yQ * lumaStride + xQ;
+                        for (int k = 0; k < 4; k++, row += lumaStride)
+                            for (int i = 0; i < 3; i++) {
+                                row[-i - 1] = static_cast<Pixel>(P[i][k]);
+                                row[i] = static_cast<Pixel>(Q[i][k]);
                             }
-                        } else if (edgeType == EDGE_VER) {
-                            // Rows of p3..q3, transposed into columns: 16-bit then
-                            // 32-bit interleaves
-                            const uint16_t* r0 = lumaPlane + yQ * lumaStride + xQ - 4;
-                            const i16x8 a0 = load8(r0), a1 = load8(r0 + lumaStride);
-                            const i16x8 a2 = load8(r0 + 2 * lumaStride);
-                            const i16x8 a3 = load8(r0 + 3 * lumaStride);
-                            const i16x8 b0 = HEVC_SHUFFLE16(a0, a1, 0, 8, 1, 9, 2, 10, 3, 11);
-                            const i16x8 b1 = HEVC_SHUFFLE16(a0, a1, 4, 12, 5, 13, 6, 14, 7, 15);
-                            const i16x8 b2 = HEVC_SHUFFLE16(a2, a3, 0, 8, 1, 9, 2, 10, 3, 11);
-                            const i16x8 b3 = HEVC_SHUFFLE16(a2, a3, 4, 12, 5, 13, 6, 14, 7, 15);
-                            // Two columns each, lines 0-3: (p3, p2) (p1, p0) (q0, q1) (q2, q3)
-                            const i16x8 c0 = HEVC_SHUFFLE16(b0, b2, 0, 1, 8, 9, 2, 3, 10, 11);
-                            const i16x8 c1 = HEVC_SHUFFLE16(b0, b2, 4, 5, 12, 13, 6, 7, 14, 15);
-                            const i16x8 c2 = HEVC_SHUFFLE16(b1, b3, 0, 1, 8, 9, 2, 3, 10, 11);
-                            const i16x8 c3 = HEVC_SHUFFLE16(b1, b3, 4, 5, 12, 13, 6, 7, 14, 15);
-                            P[3] = widen_lo(c0); P[2] = widen_hi(c0);
-                            P[1] = widen_lo(c1); P[0] = widen_hi(c1);
-                            Q[0] = widen_lo(c2); Q[1] = widen_hi(c2);
-                            Q[2] = widen_lo(c3); Q[3] = widen_hi(c3);
+                    } else if (edgeType == EDGE_VER) {
+                        // Columns back into rows, p3 and q3 unchanged
+                        const i16x8 e = pack(P[3], P[2]), f = pack(P[1], P[0]);
+                        const i16x8 g = pack(Q[0], Q[1]), h = pack(Q[2], Q[3]);
+                        // Lines 0 and 1, then 2 and 3, four columns of each
+                        const i16x8 ef01 = HEVC_SHUFFLE16(e, f, 0, 4, 8, 12, 1, 5, 9, 13);
+                        const i16x8 gh01 = HEVC_SHUFFLE16(g, h, 0, 4, 8, 12, 1, 5, 9, 13);
+                        const i16x8 ef23 = HEVC_SHUFFLE16(e, f, 2, 6, 10, 14, 3, 7, 11, 15);
+                        const i16x8 gh23 = HEVC_SHUFFLE16(g, h, 2, 6, 10, 14, 3, 7, 11, 15);
+                        Pixel* row = lumaPlane + yQ * lumaStride + xQ - 4;
+                        store8(row, HEVC_SHUFFLE16(ef01, gh01, 0, 1, 2, 3, 8, 9, 10, 11));
+                        store8(row + lumaStride,
+                               HEVC_SHUFFLE16(ef01, gh01, 4, 5, 6, 7, 12, 13, 14, 15));
+                        store8(row + 2 * lumaStride,
+                               HEVC_SHUFFLE16(ef23, gh23, 0, 1, 2, 3, 8, 9, 10, 11));
+                        store8(row + 3 * lumaStride,
+                               HEVC_SHUFFLE16(ef23, gh23, 4, 5, 6, 7, 12, 13, 14, 15));
+                    } else {
+                        Pixel* c = lumaPlane + yQ * lumaStride + xQ;
+                        for (int i = 0; i < 3; i++) {
+                            store4(c - (i + 1) * lumaStride, P[i]);
+                            store4(c + i * lumaStride, Q[i]);
+                        }
+                    }
+                }
+            }
+
+            // ---- CHROMA ----
+            // §8.7.2.5.1/5.2: chroma filtered only when Bs == 2 and edge is on 8-sample chroma grid
+            if (bS == 2 && sps.ChromaArrayType != 0) {
+                // Check 8-sample grid alignment in chroma space
+                int chromaX = (edgeType == EDGE_VER) ? x / subW : x / subW;
+                int chromaY = (edgeType == EDGE_HOR) ? y / subH : y / subH;
+                bool chromaAligned;
+                if (edgeType == EDGE_VER)
+                    chromaAligned = ((chromaX >> 3) << 3) == chromaX;
+                else
+                    chromaAligned = ((chromaY >> 3) << 3) == chromaY;
+
+                if (chromaAligned) {
+                    int QpP = cuP.qp_y;
+                    int QpQ = cuQ.qp_y;
+
+                    for (int cIdx = 1; cIdx <= 2; cIdx++) {
+                        int cQpPicOffset = (cIdx == 1) ? pps.pps_cb_qp_offset
+                                                       : pps.pps_cr_qp_offset;
+                        int qPi = ((QpQ + QpP + 1) >> 1) + cQpPicOffset;
+
+                        // §8.7.2.5.5: QpC from Table 8-10
+                        int QpC;
+                        if (sps.ChromaArrayType == 1) {
+                            QpC = qpc_table[Clip3(0, 57, qPi)];
                         } else {
-                            const uint16_t* c = lumaPlane + yQ * lumaStride + xQ;
-                            for (int i = 0; i < 4; i++) {
-                                Q[i] = load4(c + i * lumaStride);
-                                P[i] = load4(c - (i + 1) * lumaStride);
-                            }
+                            QpC = std::min(qPi, 51);
                         }
 
-                        // dp, dq, d (eq 8-352 to 8-360 / 8-361 to 8-369), lines 0 and 3
-                        const i32x4 dpv = abs(P[2] - 2 * P[1] + P[0]);
-                        const i32x4 dqv = abs(Q[2] - 2 * Q[1] + Q[0]);
-                        int dp0 = dpv[0], dp3 = dpv[3];
-                        int dq0 = dqv[0], dq3 = dqv[3];
-                        int dpq0 = dp0 + dq0;
-                        int dpq3 = dp3 + dq3;
-                        int dp = dp0 + dp3;
-                        int dq = dq0 + dq3;
-                        int d = dpq0 + dpq3;
+                        int Q_tc = Clip3(0, 53, QpC + 2 + (sh_filt.slice_tc_offset_div2 << 1));
+                        int tcPrime = tc_table[Q_tc];
+                        int tC = tcPrime * (1 << (bitDepthC - 8));
 
-                        int dE = 0, dEp = 0, dEq = 0;
-                        if (d < beta) {
-                            // §8.7.2.5.6 for line 0
-                            int dSam0 = decision_luma_sample(
-                                P[0][0], P[3][0], Q[0][0], Q[3][0], 2 * dpq0, beta, tC);
-                            // §8.7.2.5.6 for line 3
-                            int dSam3 = decision_luma_sample(
-                                P[0][3], P[3][3], Q[0][3], Q[3][3], 2 * dpq3, beta, tC);
-
-                            dE = 1;
-                            if (dSam0 == 1 && dSam3 == 1) dE = 2;
-                            if (dp < ((beta + (beta >> 1)) >> 3)) dEp = 1;
-                            if (dq < ((beta + (beta >> 1)) >> 3)) dEq = 1;
-                        }
-
-                        // §8.7.2.5.4: Filter all 4 luma lines (only if dE > 0)
-                        const bool keepP = (pcmFilterDisabled && pcmP) || bypassP;
-                        const bool keepQ = (pcmFilterDisabled && pcmQ) || bypassQ;
-                        if (dE > 0 && !(keepP && keepQ)) {
-                            filter_luma_lines(P, Q, dE, dEp, dEq, tC, (1 << bitDepthY) - 1,
-                                              keepP, keepQ);
-                            // Write back p0..p2, q0..q2: lanes left unfiltered still hold
-                            // their own sample.
-                            if (edgeType == EDGE_VER && !transpose) {
-                                uint16_t* row = lumaPlane + yQ * lumaStride + xQ;
-                                for (int k = 0; k < 4; k++, row += lumaStride)
-                                    for (int i = 0; i < 3; i++) {
-                                        row[-i - 1] = static_cast<uint16_t>(P[i][k]);
-                                        row[i] = static_cast<uint16_t>(Q[i][k]);
-                                    }
-                            } else if (edgeType == EDGE_VER) {
-                                // Columns back into rows, p3 and q3 unchanged
-                                const i16x8 e = pack(P[3], P[2]), f = pack(P[1], P[0]);
-                                const i16x8 g = pack(Q[0], Q[1]), h = pack(Q[2], Q[3]);
-                                // Lines 0 and 1, then 2 and 3, four columns of each
-                                const i16x8 ef01 = HEVC_SHUFFLE16(e, f, 0, 4, 8, 12, 1, 5, 9, 13);
-                                const i16x8 gh01 = HEVC_SHUFFLE16(g, h, 0, 4, 8, 12, 1, 5, 9, 13);
-                                const i16x8 ef23 = HEVC_SHUFFLE16(e, f, 2, 6, 10, 14, 3, 7, 11, 15);
-                                const i16x8 gh23 = HEVC_SHUFFLE16(g, h, 2, 6, 10, 14, 3, 7, 11, 15);
-                                uint16_t* row = lumaPlane + yQ * lumaStride + xQ - 4;
-                                store8(row, HEVC_SHUFFLE16(ef01, gh01, 0, 1, 2, 3, 8, 9, 10, 11));
-                                store8(row + lumaStride,
-                                       HEVC_SHUFFLE16(ef01, gh01, 4, 5, 6, 7, 12, 13, 14, 15));
-                                store8(row + 2 * lumaStride,
-                                       HEVC_SHUFFLE16(ef23, gh23, 0, 1, 2, 3, 8, 9, 10, 11));
-                                store8(row + 3 * lumaStride,
-                                       HEVC_SHUFFLE16(ef23, gh23, 4, 5, 6, 7, 12, 13, 14, 15));
+                        // Filter 4 chroma lines along the edge
+                        int chromaSegs = (edgeType == EDGE_VER) ? (4 / subH) : (4 / subW);
+                        Pixel* cPlane = chromaPlane[cIdx];
+                        int cStride = chromaStride[cIdx];
+                        for (int k = 0; k < chromaSegs; k++) {
+                            int pC[2], qC[2];
+                            int cx, cy;
+                            if (edgeType == EDGE_VER) {
+                                cx = x / subW;
+                                cy = y / subH + k;
+                                Pixel* crow = cPlane + cy * cStride;
+                                qC[0] = crow[cx]; qC[1] = crow[cx + 1];
+                                pC[0] = crow[cx - 1]; pC[1] = crow[cx - 2];
                             } else {
-                                uint16_t* c = lumaPlane + yQ * lumaStride + xQ;
-                                for (int i = 0; i < 3; i++) {
-                                    store4(c - (i + 1) * lumaStride, P[i]);
-                                    store4(c + i * lumaStride, Q[i]);
-                                }
+                                cx = x / subW + k;
+                                cy = y / subH;
+                                qC[0] = cPlane[cy * cStride + cx];
+                                qC[1] = cPlane[(cy + 1) * cStride + cx];
+                                pC[0] = cPlane[(cy - 1) * cStride + cx];
+                                pC[1] = cPlane[(cy - 2) * cStride + cx];
                             }
-                        }
-                    }
 
-                    // ---- CHROMA ----
-                    // §8.7.2.5.1/5.2: chroma filtered only when Bs == 2 and edge is on 8-sample chroma grid
-                    if (bS == 2 && sps.ChromaArrayType != 0) {
-                        // Check 8-sample grid alignment in chroma space
-                        int chromaX = (edgeType == EDGE_VER) ? x / subW : x / subW;
-                        int chromaY = (edgeType == EDGE_HOR) ? y / subH : y / subH;
-                        bool chromaAligned;
-                        if (edgeType == EDGE_VER)
-                            chromaAligned = ((chromaX >> 3) << 3) == chromaX;
-                        else
-                            chromaAligned = ((chromaY >> 3) << 3) == chromaY;
+                            int p0Out, q0Out;
+                            filter_chroma_sample(pC, qC, tC, bitDepthC,
+                                                 cuP.is_pcm, cuQ.is_pcm,
+                                                 bypassP, bypassQ,
+                                                 pcmFilterDisabled,
+                                                 &p0Out, &q0Out);
 
-                        if (chromaAligned) {
-                            int QpP = cuP.qp_y;
-                            int QpQ = cuQ.qp_y;
-
-                            for (int cIdx = 1; cIdx <= 2; cIdx++) {
-                                int cQpPicOffset = (cIdx == 1) ? pps.pps_cb_qp_offset
-                                                               : pps.pps_cr_qp_offset;
-                                int qPi = ((QpQ + QpP + 1) >> 1) + cQpPicOffset;
-
-                                // §8.7.2.5.5: QpC from Table 8-10
-                                int QpC;
-                                if (sps.ChromaArrayType == 1) {
-                                    QpC = qpc_table[Clip3(0, 57, qPi)];
-                                } else {
-                                    QpC = std::min(qPi, 51);
-                                }
-
-                                int Q_tc = Clip3(0, 53, QpC + 2 + (sh_filt.slice_tc_offset_div2 << 1));
-                                int tcPrime = tc_table[Q_tc];
-                                int tC = tcPrime * (1 << (bitDepthC - 8));
-
-                                // Filter 4 chroma lines along the edge
-                                int chromaSegs = (edgeType == EDGE_VER) ? (4 / subH) : (4 / subW);
-                                uint16_t* cPlane = chromaPlane[cIdx];
-                                int cStride = chromaStride[cIdx];
-                                for (int k = 0; k < chromaSegs; k++) {
-                                    int pC[2], qC[2];
-                                    int cx, cy;
-                                    if (edgeType == EDGE_VER) {
-                                        cx = x / subW;
-                                        cy = y / subH + k;
-                                        uint16_t* crow = cPlane + cy * cStride;
-                                        qC[0] = crow[cx]; qC[1] = crow[cx + 1];
-                                        pC[0] = crow[cx - 1]; pC[1] = crow[cx - 2];
-                                    } else {
-                                        cx = x / subW + k;
-                                        cy = y / subH;
-                                        qC[0] = cPlane[cy * cStride + cx];
-                                        qC[1] = cPlane[(cy + 1) * cStride + cx];
-                                        pC[0] = cPlane[(cy - 1) * cStride + cx];
-                                        pC[1] = cPlane[(cy - 2) * cStride + cx];
-                                    }
-
-                                    int p0Out, q0Out;
-                                    filter_chroma_sample(pC, qC, tC, bitDepthC,
-                                                         cuP.is_pcm, cuQ.is_pcm,
-                                                         bypassP, bypassQ,
-                                                         pcmFilterDisabled,
-                                                         &p0Out, &q0Out);
-
-                                    if (edgeType == EDGE_VER) {
-                                        uint16_t* crow = cPlane + cy * cStride;
-                                        crow[cx - 1] = static_cast<uint16_t>(p0Out);
-                                        crow[cx]     = static_cast<uint16_t>(q0Out);
-                                    } else {
-                                        cPlane[(cy - 1) * cStride + cx] = static_cast<uint16_t>(p0Out);
-                                        cPlane[cy * cStride + cx]       = static_cast<uint16_t>(q0Out);
-                                    }
-                                }
+                            if (edgeType == EDGE_VER) {
+                                Pixel* crow = cPlane + cy * cStride;
+                                crow[cx - 1] = static_cast<Pixel>(p0Out);
+                                crow[cx]     = static_cast<Pixel>(q0Out);
+                            } else {
+                                cPlane[(cy - 1) * cStride + cx] = static_cast<Pixel>(p0Out);
+                                cPlane[cy * cStride + cx]       = static_cast<Pixel>(q0Out);
                             }
                         }
                     }
@@ -579,6 +576,18 @@ void apply_deblocking(DecodingContext& ctx) {
             }
         }
     }
+}
+
+// §8.7.2.1: vertical edges of the whole picture first, then horizontal ones
+template <typename Pixel>
+static void deblock_picture(DecodingContext& ctx) {
+    deblock_edges<Pixel, EDGE_VER>(ctx);
+    deblock_edges<Pixel, EDGE_HOR>(ctx);
+}
+
+void apply_deblocking(DecodingContext& ctx) {
+    if (ctx.pic->eight_bit) deblock_picture<uint8_t>(ctx);
+    else deblock_picture<uint16_t>(ctx);
 }
 
 } // namespace hevc

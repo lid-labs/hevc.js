@@ -1,6 +1,6 @@
 "use strict";
 (() => {
-  // packages/core/dist/chunk-BK7YKMXO.js
+  // packages/core/dist/chunk-VSR3TVES.js
   var HEVCDecoder = class _HEVCDecoder {
     constructor(module) {
       this._m = module;
@@ -76,7 +76,7 @@
     }
     _extractFrame(index) {
       const m = this._m;
-      const framePtr = m._malloc(48);
+      const framePtr = m._malloc(52);
       try {
         const ret = this._api.getFrame(this._dec, index, framePtr);
         if (ret !== 0) return null;
@@ -87,7 +87,7 @@
     }
     _extractDrainedFrame(index) {
       const m = this._m;
-      const framePtr = m._malloc(48);
+      const framePtr = m._malloc(52);
       try {
         const ret = this._api.getDrainedFrame(this._dec, index, framePtr);
         if (ret !== 0) return null;
@@ -110,9 +110,10 @@
       const bd = m.getValue(framePtr + 36, "i32");
       const poc = m.getValue(framePtr + 40, "i32");
       const cvsId = m.getValue(framePtr + 44, "i32");
-      const y = copyPlane(m, yPtr, width, height, strideY);
-      const cb = copyPlane(m, cbPtr, cw, ch, strideC);
-      const cr = copyPlane(m, crPtr, cw, ch, strideC);
+      const bps = m.getValue(framePtr + 48, "i32");
+      const y = copyPlane(m, yPtr, width, height, strideY, bps);
+      const cb = copyPlane(m, cbPtr, cw, ch, strideC, bps);
+      const cr = copyPlane(m, crPtr, cw, ch, strideC, bps);
       return { y, cb, cr, width, height, chromaWidth: cw, chromaHeight: ch, bitDepth: bd, poc, cvsId };
     }
     _extractInfo() {
@@ -187,7 +188,7 @@
       const countPtr = m._malloc(4);
       try {
         const frames = [];
-        const framePtr = m._malloc(48);
+        const framePtr = m._malloc(52);
         try {
           for (let i = 0; ; i++) {
             const r = this._api.getDrainedFrame(this._dec, i, framePtr);
@@ -241,11 +242,12 @@
       }
     }
   };
-  function copyPlane(m, ptr, width, height, stride) {
+  function copyPlane(m, ptr, width, height, stride, bytesPerSample) {
     const out = new Uint16Array(width * height);
-    const base = ptr >> 1;
+    const heap = bytesPerSample === 1 ? m.HEAPU8 : m.HEAPU16;
+    const base = bytesPerSample === 1 ? ptr : ptr >> 1;
     for (let y = 0; y < height; y++) {
-      out.set(m.HEAPU16.subarray(base + y * stride, base + y * stride + width), y * width);
+      out.set(heap.subarray(base + y * stride, base + y * stride + width), y * width);
     }
     return out;
   }

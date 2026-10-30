@@ -85,7 +85,7 @@
     }
     _extractFrame(index) {
       const m = this._m;
-      const framePtr = m._malloc(48);
+      const framePtr = m._malloc(52);
       try {
         const ret = this._api.getFrame(this._dec, index, framePtr);
         if (ret !== 0) return null;
@@ -96,7 +96,7 @@
     }
     _extractDrainedFrame(index) {
       const m = this._m;
-      const framePtr = m._malloc(48);
+      const framePtr = m._malloc(52);
       try {
         const ret = this._api.getDrainedFrame(this._dec, index, framePtr);
         if (ret !== 0) return null;
@@ -119,9 +119,10 @@
       const bd = m.getValue(framePtr + 36, "i32");
       const poc = m.getValue(framePtr + 40, "i32");
       const cvsId = m.getValue(framePtr + 44, "i32");
-      const y = copyPlane(m, yPtr, width, height, strideY);
-      const cb = copyPlane(m, cbPtr, cw, ch, strideC);
-      const cr = copyPlane(m, crPtr, cw, ch, strideC);
+      const bps = m.getValue(framePtr + 48, "i32");
+      const y = copyPlane(m, yPtr, width, height, strideY, bps);
+      const cb = copyPlane(m, cbPtr, cw, ch, strideC, bps);
+      const cr = copyPlane(m, crPtr, cw, ch, strideC, bps);
       return { y, cb, cr, width, height, chromaWidth: cw, chromaHeight: ch, bitDepth: bd, poc, cvsId };
     }
     _extractInfo() {
@@ -196,7 +197,7 @@
       const countPtr = m._malloc(4);
       try {
         const frames = [];
-        const framePtr = m._malloc(48);
+        const framePtr = m._malloc(52);
         try {
           for (let i = 0; ; i++) {
             const r = this._api.getDrainedFrame(this._dec, i, framePtr);
@@ -250,16 +251,17 @@
       }
     }
   };
-  function copyPlane(m, ptr, width, height, stride) {
+  function copyPlane(m, ptr, width, height, stride, bytesPerSample) {
     const out = new Uint16Array(width * height);
-    const base = ptr >> 1;
+    const heap = bytesPerSample === 1 ? m.HEAPU8 : m.HEAPU16;
+    const base = bytesPerSample === 1 ? ptr : ptr >> 1;
     for (let y = 0; y < height; y++) {
-      out.set(m.HEAPU16.subarray(base + y * stride, base + y * stride + width), y * width);
+      out.set(heap.subarray(base + y * stride, base + y * stride + width), y * width);
     }
     return out;
   }
 
-  // node_modules/.pnpm/mp4box@2.4.1/node_modules/mp4box/dist/rolldown-runtime-w6R9maHv.mjs
+  // node_modules/.pnpm/mp4box@2.5.0/node_modules/mp4box/dist/rolldown-runtime-CNh9ExCG.mjs
   var __defProp = Object.defineProperty;
   var __exportAll = (all, no_symbols) => {
     let target = {};
@@ -275,7 +277,7 @@
     return target;
   };
 
-  // node_modules/.pnpm/mp4box@2.4.1/node_modules/mp4box/dist/styp-9TIZZDLN.mjs
+  // node_modules/.pnpm/mp4box@2.5.0/node_modules/mp4box/dist/styp-BV5G3FS-.mjs
   var MAX_SIZE = Math.pow(2, 32);
   var MAX_UINT32 = Math.pow(2, 32) - 1;
   var TFHD_FLAG_DEFAULT_BASE_IS_MOOF = 131072;
@@ -294,7 +296,7 @@
       return mp4BoxBuffer;
     }
   };
-  var _DataStream_instances, isTupleType_fn, _a;
+  var _DataStream_instances, checkBitAccess_fn, advanceBits_fn, checkUnalignedEndianness_fn, isTupleType_fn, _a;
   var DataStream = (_a = class {
     /**
     * DataStream reads scalars, arrays and structs of data from an ArrayBuffer.
@@ -306,6 +308,8 @@
     */
     constructor(arrayBuffer, byteOffset, endianness) {
       __privateAdd(this, _DataStream_instances);
+      this.bitModeDepth = 0;
+      this.bitOffset = 0;
       this._byteLength = 0;
       this.failurePosition = 0;
       this._dynamicSize = 1;
@@ -411,6 +415,7 @@
     *   @return
     */
     seek(pos) {
+      this.assertByteAligned("seek");
       const npos = Math.max(0, Math.min(this.byteLength, pos));
       this.position = isNaN(npos) || !isFinite(npos) ? 0 : npos;
     }
@@ -424,6 +429,124 @@
       return this.position >= this._byteLength;
     }
     /**
+    * Enters bit mode, allowing bit-level reads and writes (readBits, writeBits, ...).
+    * While in bit mode, the scalar integer methods (readUint16, writeUint32, ...) also work
+    * at positions that are not byte aligned, reading or writing their bits big-endian.
+    * Calls can be nested: only the outermost exitBitMode() realigns the stream on a byte boundary.
+    */
+    enterBitMode() {
+      this.bitModeDepth++;
+    }
+    /**
+    * Leaves bit mode. When leaving the outermost bit mode, the remaining bits of a partially
+    * read or written byte are skipped so that the stream is byte aligned again.
+    * @param strict Throw if the skipped padding bits are not all zeros (default: true).
+    */
+    exitBitMode(strict = true) {
+      if (this.bitModeDepth === 0) throw new Error("DataStream.exitBitMode: Not in bit mode.");
+      let padding = 0;
+      if (this.bitModeDepth === 1 && this.bitOffset !== 0) padding = this.readBits(8 - this.bitOffset);
+      this.bitModeDepth--;
+      if (strict && padding !== 0) throw new Error("DataStream.exitBitMode: Padding bits were not all set to zero.");
+    }
+    /**
+    * True if the stream is in bit mode.
+    */
+    get inBitMode() {
+      return this.bitModeDepth > 0;
+    }
+    /**
+    * True if the read position in the stream is byte aligned
+    */
+    isByteAligned() {
+      return this.bitOffset % 8 === 0;
+    }
+    /**
+    * skip some bits - often used as a marker or padding
+    */
+    skipBits(numBits) {
+      __privateMethod(this, _DataStream_instances, checkBitAccess_fn).call(this, "skipBits", numBits);
+      this.readBits(numBits);
+    }
+    /**
+    * Reads bits with or without byte alignment and potentially across multiple bytes.
+    * The bits are read in the earliest byte first, and most significant bits in a byte first.
+    * @param numBits Number of bits to read, up to 32.
+    * @return An unsigned integer whose binary representation is the big-endian read bits.
+    */
+    readBits(numBits) {
+      __privateMethod(this, _DataStream_instances, checkBitAccess_fn).call(this, "readBits", numBits);
+      let value = 0;
+      let remaining = numBits;
+      while (remaining > 0) {
+        const n = Math.min(8 - this.bitOffset, remaining);
+        const bits = this._dataView.getUint8(this.position) >> 8 - this.bitOffset - n & (1 << n) - 1;
+        value = value * (1 << n) + bits;
+        remaining -= n;
+        __privateMethod(this, _DataStream_instances, advanceBits_fn).call(this, n);
+      }
+      return value;
+    }
+    /**
+    * Reads bits without moving the read position.
+    * @param numBits Number of bits to read, up to 32.
+    * @return An unsigned integer whose binary representation is the big-endian read bits.
+    */
+    peekBits(numBits) {
+      const position = this.position;
+      const bitOffset = this.bitOffset;
+      try {
+        return this.readBits(numBits);
+      } finally {
+        this.position = position;
+        this.bitOffset = bitOffset;
+      }
+    }
+    /**
+    * Reads one bit.
+    * @return The read bit.
+    */
+    readFlag() {
+      return this.readBits(1) === 1;
+    }
+    /**
+    * Writes bits with or without byte alignment and potentially across multiple bytes.
+    * The bits are written in the earliest byte first, and most significant bits in a byte first.
+    * @param value Unsigned integer whose numBits least significant bits are written.
+    * @param numBits Number of bits to write, up to 32.
+    * @bundle DataStream-write.js
+    */
+    writeBits(value, numBits) {
+      __privateMethod(this, _DataStream_instances, checkBitAccess_fn).call(this, "writeBits", numBits);
+      let remaining = numBits;
+      while (remaining > 0) {
+        if (this.bitOffset === 0) {
+          this._realloc(1);
+          this._dataView.setUint8(this.position, 0);
+        }
+        const n = Math.min(8 - this.bitOffset, remaining);
+        remaining -= n;
+        const bits = Math.floor(value / 2 ** remaining) & (1 << n) - 1;
+        const byte = this._dataView.getUint8(this.position);
+        this._dataView.setUint8(this.position, byte | bits << 8 - this.bitOffset - n);
+        __privateMethod(this, _DataStream_instances, advanceBits_fn).call(this, n);
+      }
+    }
+    /**
+    * Writes one bit.
+    * @param flag The bit to write.
+    * @bundle DataStream-write.js
+    */
+    writeFlag(flag) {
+      this.writeBits(flag ? 1 : 0, 1);
+    }
+    /**
+    * Throws if the stream is in the middle of a byte. Used by operations that only work on bytes.
+    */
+    assertByteAligned(name) {
+      if (this.bitOffset !== 0) throw new Error(`DataStream.${name}: Not byte aligned.`);
+    }
+    /**
     * Maps a Uint8Array into the DataStream buffer.
     *
     * Nice for quickly reading in data.
@@ -433,6 +556,7 @@
     * @return Uint8Array to the DataStream backing buffer.
     */
     mapUint8Array(length) {
+      this.assertByteAligned("mapUint8Array");
       this._realloc(length * 1);
       const arr = new Uint8Array(this._buffer, this.byteOffset + this.position, length);
       this.position += length * 1;
@@ -520,6 +644,7 @@
     * @return The read Uint8Array.
     */
     readUint8Array(length) {
+      this.assertByteAligned("readUint8Array");
       length = length === void 0 ? this.byteLength - this.position : length;
       const arr = new Uint8Array(length);
       _a.memcpy(arr.buffer, 0, this.buffer, this.byteOffset + this.position, length * arr.BYTES_PER_ELEMENT);
@@ -563,6 +688,10 @@
     * @return The read number.
     */
     readInt32(endianness) {
+      if (this.bitOffset !== 0) {
+        __privateMethod(this, _DataStream_instances, checkUnalignedEndianness_fn).call(this, "readInt32", endianness);
+        return this.readBits(32) | 0;
+      }
       const v = this._dataView.getInt32(this.position, (endianness ?? this.endianness) === 2);
       this.position += 4;
       return v;
@@ -574,6 +703,10 @@
     * @return The read number.
     */
     readInt16(endianness) {
+      if (this.bitOffset !== 0) {
+        __privateMethod(this, _DataStream_instances, checkUnalignedEndianness_fn).call(this, "readInt16", endianness);
+        return this.readBits(16) << 16 >> 16;
+      }
       const v = this._dataView.getInt16(this.position, (endianness ?? this.endianness) === 2);
       this.position += 2;
       return v;
@@ -584,6 +717,7 @@
     * @return The read number.
     */
     readInt8() {
+      if (this.bitOffset !== 0) return this.readBits(8) << 24 >> 24;
       const v = this._dataView.getInt8(this.position);
       this.position += 1;
       return v;
@@ -595,6 +729,10 @@
     * @return The read number.
     */
     readUint32(endianness) {
+      if (this.bitOffset !== 0) {
+        __privateMethod(this, _DataStream_instances, checkUnalignedEndianness_fn).call(this, "readUint32", endianness);
+        return this.readBits(32);
+      }
       const v = this._dataView.getUint32(this.position, (endianness ?? this.endianness) === 2);
       this.position += 4;
       return v;
@@ -606,6 +744,10 @@
     * @return The read number.
     */
     readUint16(endianness) {
+      if (this.bitOffset !== 0) {
+        __privateMethod(this, _DataStream_instances, checkUnalignedEndianness_fn).call(this, "readUint16", endianness);
+        return this.readBits(16);
+      }
       const v = this._dataView.getUint16(this.position, (endianness ?? this.endianness) === 2);
       this.position += 2;
       return v;
@@ -616,9 +758,27 @@
     * @return The read number.
     */
     readUint8() {
+      if (this.bitOffset !== 0) return this.readBits(8);
       const v = this._dataView.getUint8(this.position);
       this.position += 1;
       return v;
+    }
+    /**
+    * Read a variable length value [Expontntial-Golomb codec] wthe number of leading zero bits indicates
+    * the length in bits of the value
+    * see https://en.wikipedia.org/wiki/Exponential-Golomb_coding
+    *
+    * @return The read unsigned number.
+    */
+    readUE() {
+      __privateMethod(this, _DataStream_instances, checkBitAccess_fn).call(this, "readUE");
+      if (this.readBits(1) === 1) return 0;
+      let zero_count = 1;
+      while (this.peekBits(1) === 0) {
+        this.readBits(1);
+        zero_count++;
+      }
+      return this.readBits(zero_count + 1) - 1;
     }
     /**
     * Reads a 32-bit float from the DataStream with the desired endianness.
@@ -627,6 +787,7 @@
     * @return The read number.
     */
     readFloat32(endianness) {
+      this.assertByteAligned("readFloat32");
       const value = this._dataView.getFloat32(this.position, (endianness ?? this.endianness) === 2);
       this.position += 4;
       return value;
@@ -638,6 +799,7 @@
     * @return The read number.
     */
     readFloat64(endianness) {
+      this.assertByteAligned("readFloat64");
       const value = this._dataView.getFloat64(this.position, (endianness ?? this.endianness) === 2);
       this.position += 8;
       return value;
@@ -705,8 +867,13 @@
     * @return The read string.
     */
     readString(length, encoding) {
-      if (encoding === void 0 || encoding === "ASCII") return fromCharCodeUint8(this.mapUint8Array(length === void 0 ? this.byteLength - this.position : length));
-      else return new TextDecoder(encoding).decode(this.mapUint8Array(length));
+      let bytes;
+      if (this.bitOffset !== 0) {
+        length = length === void 0 ? this.byteLength - this.position - 1 : length;
+        bytes = Uint8Array.from({ length }, () => this.readBits(8));
+      } else bytes = this.mapUint8Array(length === void 0 ? this.byteLength - this.position : length);
+      if (encoding === void 0 || encoding === "ASCII") return fromCharCodeUint8(bytes);
+      else return new TextDecoder(encoding).decode(bytes);
     }
     /**
     * Read null-terminated string of desired length from the DataStream. Truncates
@@ -745,17 +912,19 @@
     */
     save(filename) {
       const blob = new Blob([this.buffer]);
-      if (typeof window !== "undefined" && typeof document !== "undefined") if (window.URL && URL.createObjectURL) {
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        document.body.appendChild(a);
-        a.setAttribute("href", url);
-        a.setAttribute("download", filename);
-        a.setAttribute("target", "_self");
-        a.click();
-        window.URL.revokeObjectURL(url);
-        document.body.removeChild(a);
-      } else throw new Error("DataStream.save: Can't create object URL.");
+      if (typeof window !== "undefined" && typeof document !== "undefined") {
+        if (window.URL && URL.createObjectURL) {
+          const url = window.URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          document.body.appendChild(a);
+          a.setAttribute("href", url);
+          a.setAttribute("download", filename);
+          a.setAttribute("target", "_self");
+          a.click();
+          window.URL.revokeObjectURL(url);
+          document.body.removeChild(a);
+        } else throw new Error("DataStream.save: Can't create object URL.");
+      }
       return blob;
     }
     /** @bundle DataStream-write.js */
@@ -858,6 +1027,7 @@
     * @bundle DataStream-write.js
     */
     writeUint8Array(array) {
+      this.assertByteAligned("writeUint8Array");
       this._realloc(array.length * 1);
       if (array instanceof Uint8Array && this.byteOffset + this.position % array.BYTES_PER_ELEMENT === 0) {
         _a.memcpy(this._buffer, this.byteOffset + this.position, array.buffer, 0, array.byteLength);
@@ -900,6 +1070,7 @@
     * @bundle DataStream-write.js
     */
     writeInt64(value, endianness) {
+      this.assertByteAligned("writeInt64");
       this._realloc(8);
       this._dataView.setBigInt64(this.position, BigInt(value), (endianness ?? this.endianness) === 2);
       this.position += 8;
@@ -912,6 +1083,10 @@
     * @bundle DataStream-write.js
     */
     writeInt32(value, endianness) {
+      if (this.bitOffset !== 0) {
+        __privateMethod(this, _DataStream_instances, checkUnalignedEndianness_fn).call(this, "writeInt32", endianness);
+        return this.writeBits(value >>> 0, 32);
+      }
       this._realloc(4);
       this._dataView.setInt32(this.position, value, (endianness ?? this.endianness) === 2);
       this.position += 4;
@@ -924,6 +1099,10 @@
     * @bundle DataStream-write.js
     */
     writeInt16(value, endianness) {
+      if (this.bitOffset !== 0) {
+        __privateMethod(this, _DataStream_instances, checkUnalignedEndianness_fn).call(this, "writeInt16", endianness);
+        return this.writeBits(value & 65535, 16);
+      }
       this._realloc(2);
       this._dataView.setInt16(this.position, value, (endianness ?? this.endianness) === 2);
       this.position += 2;
@@ -935,6 +1114,7 @@
     * @bundle DataStream-write.js
     */
     writeInt8(value) {
+      if (this.bitOffset !== 0) return this.writeBits(value & 255, 8);
       this._realloc(1);
       this._dataView.setInt8(this.position, value);
       this.position += 1;
@@ -947,6 +1127,10 @@
     * @bundle DataStream-write.js
     */
     writeUint32(value, endianness) {
+      if (this.bitOffset !== 0) {
+        __privateMethod(this, _DataStream_instances, checkUnalignedEndianness_fn).call(this, "writeUint32", endianness);
+        return this.writeBits(value >>> 0, 32);
+      }
       this._realloc(4);
       this._dataView.setUint32(this.position, value, (endianness ?? this.endianness) === 2);
       this.position += 4;
@@ -959,6 +1143,10 @@
     * @bundle DataStream-write.js
     */
     writeUint16(value, endianness) {
+      if (this.bitOffset !== 0) {
+        __privateMethod(this, _DataStream_instances, checkUnalignedEndianness_fn).call(this, "writeUint16", endianness);
+        return this.writeBits(value & 65535, 16);
+      }
       this._realloc(2);
       this._dataView.setUint16(this.position, value, (endianness ?? this.endianness) === 2);
       this.position += 2;
@@ -970,6 +1158,7 @@
     * @bundle DataStream-write.js
     */
     writeUint8(value) {
+      if (this.bitOffset !== 0) return this.writeBits(value & 255, 8);
       this._realloc(1);
       this._dataView.setUint8(this.position, value);
       this.position += 1;
@@ -982,6 +1171,7 @@
     * @bundle DataStream-write.js
     */
     writeFloat32(value, endianness) {
+      this.assertByteAligned("writeFloat32");
       this._realloc(4);
       this._dataView.setFloat32(this.position, value, (endianness ?? this.endianness) === 2);
       this.position += 4;
@@ -994,6 +1184,7 @@
     * @bundle DataStream-write.js
     */
     writeFloat64(value, endianness) {
+      this.assertByteAligned("writeFloat64");
       this._realloc(8);
       this._dataView.setFloat64(this.position, value, (endianness ?? this.endianness) === 2);
       this.position += 8;
@@ -1011,8 +1202,8 @@
     */
     writeUCS2String(value, endianness, lengthOverride) {
       if (lengthOverride === void 0) lengthOverride = value.length;
-      let i;
-      for (i = 0; i < value.length && i < lengthOverride; i++) this.writeUint16(value.charCodeAt(i), endianness);
+      let i = 0;
+      for (; i < value.length && i < lengthOverride; i++) this.writeUint16(value.charCodeAt(i), endianness);
       for (; i < lengthOverride; i++) this.writeUint16(0);
     }
     /**
@@ -1025,13 +1216,14 @@
     * @bundle DataStream-write.js
     */
     writeString(value, encoding, length) {
-      let i = 0;
-      if (encoding === void 0 || encoding === "ASCII") if (length !== void 0) {
-        const len = Math.min(value.length, length);
-        for (i = 0; i < len; i++) this.writeUint8(value.charCodeAt(i));
-        for (; i < length; i++) this.writeUint8(0);
-      } else for (i = 0; i < value.length; i++) this.writeUint8(value.charCodeAt(i));
-      else this.writeUint8Array(new TextEncoder(encoding).encode(value.substring(0, length)));
+      let i;
+      if (encoding === void 0 || encoding === "ASCII") {
+        if (length !== void 0) {
+          const len = Math.min(value.length, length);
+          for (i = 0; i < len; i++) this.writeUint8(value.charCodeAt(i));
+          for (; i < length; i++) this.writeUint8(0);
+        } else for (i = 0; i < value.length; i++) this.writeUint8(value.charCodeAt(i));
+      } else this.writeUint8Array(new TextEncoder(encoding).encode(value.substring(0, length)));
     }
     /**
     * Writes a null-terminated string to DataStream and zero-pads it to length
@@ -1044,7 +1236,7 @@
     * @bundle DataStream-write.js
     */
     writeCString(value, length) {
-      let i = 0;
+      let i;
       if (length !== void 0) {
         const len = Math.min(value.length, length);
         for (i = 0; i < len; i++) this.writeUint8(value.charCodeAt(i));
@@ -1198,6 +1390,20 @@
       this.writeUint8((value & 16711680) >> 16);
       this.writeUint8((value & 65280) >> 8);
       this.writeUint8(value & 255);
+    }
+    /** @bundle DataStream-write.js */
+    adjustUint8(position, value) {
+      const pos = this.position;
+      this.seek(position);
+      this.writeUint8(value);
+      this.seek(pos);
+    }
+    /** @bundle DataStream-write.js */
+    adjustUint16(position, value) {
+      const pos = this.position;
+      this.seek(position);
+      this.writeUint16(value);
+      this.seek(pos);
     }
     /** @bundle DataStream-write.js */
     adjustUint32(position, value) {
@@ -1465,7 +1671,6 @@
                     value = new Array(length);
                     for (let i = 0; i < length; i++) value[i] = this.readType(ta, struct);
                   }
-                  break;
               }
             } else if (!length) {
               value = [];
@@ -1633,7 +1838,23 @@
       this.position += length * 4;
       return arr;
     }
-  }, _DataStream_instances = new WeakSet(), isTupleType_fn = function(type) {
+  }, _DataStream_instances = new WeakSet(), checkBitAccess_fn = function(name, numBits) {
+    if (this.bitModeDepth === 0) throw new Error(`DataStream.${name}: Not in bit mode, call enterBitMode() first.`);
+    if (numBits === void 0) return;
+    if (!Number.isInteger(numBits) || numBits < 0 || numBits > 32) throw new Error(`DataStream.${name}: Unsupported number of bits.`);
+  }, advanceBits_fn = function(numBits) {
+    this.bitOffset += numBits;
+    if (this.bitOffset === 8) {
+      this.position++;
+      this.bitOffset = 0;
+    }
+  }, /**
+  * Checks that a scalar can be read or written at the current, unaligned, bit position.
+  * Bit-level fields are always big-endian.
+  */
+  checkUnalignedEndianness_fn = function(name, endianness) {
+    if ((endianness ?? this.endianness) === 2) throw new Error(`DataStream.${name}: Little-endian is not supported when not byte aligned.`);
+  }, isTupleType_fn = function(type) {
     return Array.isArray(type) && type.length === 3 && type[0] === "[]";
   }, _a.ENDIANNESS = new Int8Array(new Int16Array([1]).buffer)[0] > 0 ? 2 : 1, _a);
   function fromCharCodeUint8(uint8arr) {
@@ -1773,12 +1994,13 @@
       for (; i < this.buffers.length; i++) {
         const b = this.buffers[i];
         if (ab.fileStart <= b.fileStart) {
-          if (ab.fileStart === b.fileStart) if (ab.byteLength > b.byteLength) {
-            this.buffers.splice(i, 1);
-            i--;
-            continue;
-          } else Log.warn("MultiBufferStream", "Buffer (fileStart: " + ab.fileStart + " - Length: " + ab.byteLength + ") already appended, ignoring");
-          else {
+          if (ab.fileStart === b.fileStart) {
+            if (ab.byteLength > b.byteLength) {
+              this.buffers.splice(i, 1);
+              i--;
+              continue;
+            } else Log.warn("MultiBufferStream", "Buffer (fileStart: " + ab.fileStart + " - Length: " + ab.byteLength + ") already appended, ignoring");
+          } else {
             if (ab.fileStart + ab.byteLength <= b.fileStart) {
             } else ab = this.reduceBuffer(ab, 0, b.fileStart - ab.fileStart);
             Log.debug("MultiBufferStream", "Appending new buffer (fileStart: " + ab.fileStart + " - Length: " + ab.byteLength + ")");
@@ -1801,6 +2023,34 @@
         Log.debug("MultiBufferStream", "Appending new buffer (fileStart: " + ab.fileStart + " - Length: " + ab.byteLength + ")");
         this.buffers.push(ab);
         if (i === 0) this.buffer = ab;
+      }
+    }
+    /**
+    * Removes a range of bytes from the buffers
+    * @param  {number} start start position of the range to remove
+    * @param  {number} [end] end position of the range to remove (optional)
+    */
+    removeRange(start2, end) {
+      if (end !== void 0 && end <= start2) return;
+      for (let i = 0; i < this.buffers.length; i++) {
+        const buffer = this.buffers[i];
+        const bufferEnd = buffer.fileStart + buffer.byteLength;
+        if (start2 >= bufferEnd) continue;
+        if (end !== void 0 && end <= buffer.fileStart) break;
+        if (start2 <= buffer.fileStart && (end === void 0 || end >= bufferEnd)) {
+          this.buffers.splice(i, 1);
+          i--;
+        } else {
+          const offset = Math.max(start2 - buffer.fileStart, 0);
+          const newLength = Math.min(end ?? bufferEnd, bufferEnd) - buffer.fileStart - offset;
+          if (newLength > 0) {
+            const newBuffer = this.reduceBuffer(buffer, offset, newLength);
+            this.buffers[i] = newBuffer;
+          } else {
+            this.buffers.splice(i, 1);
+            i--;
+          }
+        }
       }
     }
     /**
@@ -1961,6 +2211,7 @@
     * @return {Boolean}              true if the seek succeeded, false otherwise
     */
     seek(filePosition, fromStart, markAsUsed) {
+      this.assertByteAligned("seek");
       const index = this.findPosition(fromStart, filePosition, markAsUsed);
       if (index !== -1) {
         this.buffer = this.buffers[index];
@@ -2361,7 +2612,7 @@
     let box2;
     let originalSize;
     const start2 = stream.getPosition();
-    let hdr_size = 0;
+    let hdr_size;
     let uuid;
     if (stream.getEndPosition() - start2 < 8) {
       Log.debug("BoxParser", "Not enough data in stream to parse the type and size of the box");
@@ -2373,13 +2624,16 @@
     }
     let size = stream.readUint32();
     const type = stream.readString(4);
-    if (type.length !== 4 || !/^[\x20-\x7E]{4}$/.test(type)) {
-      Log.error("BoxParser", `Invalid box type: '${type}'`);
-      return {
-        code: -1,
-        start: start2,
-        type
-      };
+    if (!stream.isofile?.ftyp?.major_brand.includes("qt") && !/^[\x20-\x7E]{4}$/.test(type)) {
+      if (!stream.isofile?.allowInvalidBoxTypes) {
+        Log.error("BoxParser", `Invalid box type: '${type}'`);
+        return {
+          code: -1,
+          start: start2,
+          type
+        };
+      }
+      Log.warn("BoxParser", `Invalid box type: '${type}', parsing it anyway`);
     }
     let box_type = type;
     Log.debug("BoxParser", "Found box of type '" + type + "' and size " + size + " at position " + start2);
@@ -2403,17 +2657,19 @@
       originalSize = size;
       size = stream.readUint64();
       hdr_size += 8;
-    } else if (size === 0) if (parentSize) size = parentSize;
-    else if (type !== "mdat") {
-      Log.error("BoxParser", "Unlimited box size not supported for type: '" + type + "'");
-      box2 = new Box(size);
-      box2.type = type;
-      return {
-        code: 1,
-        box: box2,
-        size: box2.size
-      };
-    } else size = stream.getEndPosition() - start2;
+    } else if (size === 0) {
+      if (parentSize) size = parentSize;
+      else if (type !== "mdat") {
+        Log.error("BoxParser", "Unlimited box size not supported for type: '" + type + "'");
+        box2 = new Box(size);
+        box2.type = type;
+        return {
+          code: 1,
+          box: box2,
+          size: box2.size
+        };
+      } else size = stream.getEndPosition() - start2;
+    }
     if (size !== 0 && size < hdr_size) {
       Log.error("BoxParser", "Box of type " + type + " has an invalid size " + size + " (too small to be a box)");
       return {
@@ -2459,8 +2715,10 @@
       box2 = new Box(size);
       box2.type = type;
       box2.has_unparsed_data = true;
-    } else if (uuid in BoxRegistry.uuid) box2 = new BoxRegistry.uuid[uuid](size);
-    else {
+    } else if (uuid in BoxRegistry.uuid) {
+      box2 = new BoxRegistry.uuid[uuid](size);
+      box2.uuid = uuid;
+    } else {
       Log.warn("BoxParser", `Unknown UUID box type: '${uuid}'`);
       box2 = new Box(size);
       box2.type = type;
@@ -2474,7 +2732,22 @@
       Log.info("BoxParser", "'" + box_type + "' box writing not yet implemented, keeping unparsed data in memory for later write");
       box2.parseDataAndRewind(stream);
     }
-    box2.parse(stream);
+    const parseResult = box2.parse(stream);
+    if (stream.inBitMode) {
+      Log.warn("BoxParser", "Parsing of box '" + box_type + "' did not exit bit mode, realigning");
+      while (stream.inBitMode) stream.exitBitMode(false);
+    }
+    if (parseResult === -1) {
+      stream.seek(start2);
+      stream.removeRange(start2);
+      return {
+        code: -1,
+        type,
+        size,
+        hdr_size,
+        start: start2
+      };
+    }
     const diff = stream.getPosition() - (box2.start + box2.size);
     if (diff < 0) {
       Log.warn("BoxParser", "Parsing of box '" + box_type + "' did not read the entire indicated box data size (missing " + -diff + " bytes), seeking forward");
@@ -2531,7 +2804,8 @@
             if (this[box_type]) Log.warn("ContainerBox", `Box of type ${box_type} already exists in container box ${this.type}.`);
             else this[box_type] = box2;
           }
-        } else return;
+        } else if (ret.code === -1) return -1;
+        else return;
       }
     }
   };
@@ -2708,6 +2982,10 @@
     }
   };
   var AudioSampleEntry = class extends SampleEntry {
+    constructor(..._args) {
+      super(..._args);
+      this.samplerate_frac_bits = 16;
+    }
     parse(stream) {
       this.parseHeader(stream);
       this.version = stream.readUint16();
@@ -2717,7 +2995,7 @@
       this.samplesize = stream.readUint16();
       stream.readUint16();
       stream.readUint16();
-      this.samplerate = stream.readUint32() / 65536;
+      this.samplerate = stream.readUint32() / (1 << this.samplerate_frac_bits);
       if (stream.isofile?.ftyp?.major_brand.includes("qt")) {
         if (this.version === 1) this.extensions = stream.readUint8Array(16);
         else if (this.version === 2) this.extensions = stream.readUint8Array(36);
@@ -2750,7 +3028,7 @@
       stream.writeUint16(this.samplesize);
       stream.writeUint16(0);
       stream.writeUint16(0);
-      stream.writeUint32(this.samplerate << 16);
+      stream.writeUint32(this.samplerate * (1 << this.samplerate_frac_bits));
       this.writeFooter(stream);
     }
   };
@@ -3496,14 +3774,14 @@
       if (this.version === 1 || this.version === 2) this.index_size = byte & 15;
       else this.index_size = 0;
       this.items = [];
-      let item_count = 0;
+      let item_count;
       if (this.version < 2) item_count = stream.readUint16();
       else if (this.version === 2) item_count = stream.readUint32();
       else throw new Error("version of iloc box not supported");
       for (let i = 0; i < item_count; i++) {
-        let item_ID = 0;
-        let construction_method = 0;
-        let base_offset = 0;
+        let item_ID;
+        let construction_method;
+        let base_offset;
         if (this.version < 2) item_ID = stream.readUint16();
         else if (this.version === 2) item_ID = stream.readUint32();
         else throw new Error("version of iloc box not supported");
@@ -3527,8 +3805,8 @@
         const extent_count = stream.readUint16();
         for (let j = 0; j < extent_count; j++) {
           let extent_index = 0;
-          let extent_offset = 0;
-          let extent_length = 0;
+          let extent_offset;
+          let extent_length;
           if (this.version === 1 || this.version === 2) switch (this.index_size) {
             case 0:
               extent_index = 0;
@@ -3681,9 +3959,6 @@
           case "ctry":
           case "lang":
             this.isQT = true;
-            break;
-          default:
-            break;
         }
         stream.seek(pos);
       }
@@ -3849,8 +4124,362 @@
       this.configOBUs = stream.readUint8Array(configOBUs_length);
     }
   }, _a61.fourcc = "av1C", _a61);
+  var ReferencePictureSet = class {
+    constructor(list, set) {
+      this.list = list;
+      this.set = set;
+      this.pics = [];
+      this.library_enable_flag_set = false;
+    }
+    set_reference_to_library_enable_flag(flag) {
+      this.library_enable_flag_set = true;
+      this.reference_to_library_enable_flag = flag;
+    }
+    get_reference_to_library_enable_flag() {
+      return this.library_enable_flag_set ? this.reference_to_library_enable_flag : 0;
+    }
+    push(pic) {
+      this.pics.push(pic);
+    }
+    toString() {
+      let ret = "{";
+      if (this.library_enable_flag_set) ret += "reference_to_library_enable_flag: " + this.reference_to_library_enable_flag;
+      this.pics.forEach((e) => {
+        ret += (ret.length > 3 ? ", " : "") + JSON.stringify(e).replace(/"/g, "");
+      });
+      ret += "}";
+      return ret;
+    }
+  };
+  var ReferencePictureList = class {
+    constructor(list) {
+      this.list = list;
+      this.sets = [];
+    }
+    push(set) {
+      this.sets.push(set);
+    }
+    toString() {
+      if (this.sets.length === 0) return "(empty)";
+      const l = [];
+      this.sets.forEach((set) => {
+        l.push(set.toString());
+      });
+      return l.join(", ");
+    }
+  };
+  var WeightQuantMatrix = class {
+    constructor(stream) {
+      this.WeightQuantMatrix4x4 = [];
+      this.WeightQuantMatrix8x8 = [];
+      for (let sizeId = 0; sizeId < 2; sizeId++) {
+        const this_size = [];
+        const WQMSize = 1 << sizeId + 2;
+        for (let i = 0; i < WQMSize; i++) {
+          const iVal = [];
+          for (let j = 0; j < WQMSize; j++) iVal.push(stream.readUE());
+          this_size.push(iVal);
+        }
+        if (sizeId === 0) this.WeightQuantMatrix4x4 = this_size;
+        else this.WeightQuantMatrix8x8 = this_size;
+      }
+    }
+    toString() {
+      let str = "";
+      if (this.WeightQuantMatrix4x4.length) str += "4x4: " + JSON.stringify(this.WeightQuantMatrix4x4);
+      if (this.WeightQuantMatrix8x8.length) str += (str.length > 2 ? ",\n" : "") + "8x8: " + JSON.stringify(this.WeightQuantMatrix8x8);
+      return str;
+    }
+  };
+  var nextStartCode = (stream) => {
+    stream.skipBits(1);
+    while (!stream.isByteAligned()) stream.skipBits(1);
+    while (stream.peekBits(24) !== 1) stream.readUint8();
+  };
+  var AVS3SequenceHeader = class {
+    constructor(stream) {
+      this.data = {};
+      this.deserialize(stream);
+    }
+    deserialize(stream) {
+      this.data.video_sequence_start_code = stream.readUint32();
+      this.data.profile_id = stream.readUint8();
+      this.data.level_id = stream.readUint8();
+      this.data.progressive_sequence = stream.readFlag();
+      this.data.field_coded_sequence = stream.readFlag();
+      this.data.library_stream_flag = stream.readFlag();
+      if (!this.data.library_stream_flag) {
+        this.data.library_picture_enable_flag = stream.readFlag();
+        if (this.data.library_picture_enable_flag) this.data.duplicate_sequence_number_flag = stream.readFlag();
+      }
+      stream.skipBits(1);
+      this.data.horizontal_size = stream.readBits(14);
+      stream.skipBits(1);
+      this.data.vertical_size = stream.readBits(14);
+      this.data.chroma_format = stream.readBits(2);
+      this.data.sample_precision = stream.readBits(3);
+      if (this.data.profile_id === 34 || this.data.profile_id === 50) this.data.encoding_precision = stream.readBits(3);
+      stream.skipBits(1);
+      this.data.aspect_ratio = stream.readBits(4);
+      this.data.frame_rate_code = stream.readBits(4);
+      stream.skipBits(1);
+      this.data.bit_rate_lower = stream.readBits(18);
+      stream.skipBits(1);
+      this.data.bit_rate_upper = stream.readBits(12);
+      this.data.low_delay = stream.readBits(1);
+      this.data.temporal_id_enable_flag = stream.readFlag();
+      stream.skipBits(1);
+      this.data.bbv_buffer_size = stream.readBits(18);
+      stream.skipBits(1);
+      this.data.max_dpb_minus1 = stream.readBits(4);
+      this.data.rpl1_index_exist_flag = stream.readFlag();
+      this.data.rpl1_same_as_rpl0_flag = stream.readFlag();
+      stream.skipBits(1);
+      const makeReferencePictureList = (list, rpls, library_picture_enable_flag) => {
+        const this_set = new ReferencePictureSet(list, rpls);
+        if (library_picture_enable_flag) this_set.set_reference_to_library_enable_flag(stream.readBits(1));
+        const num_of_ref_pic = stream.readUE();
+        for (let i = 0; i < num_of_ref_pic; i++) {
+          const this_pic = {};
+          let libraryIndexFlag = false;
+          if (this_set.get_reference_to_library_enable_flag()) libraryIndexFlag = this_pic.library_index_flag = stream.readFlag();
+          if (libraryIndexFlag) this_pic.referenced_library_picture_index = stream.readUE();
+          else {
+            this_pic.abs_delta_doi = stream.readUE();
+            if (this_pic.abs_delta_doi > 0) this_pic.sign_delta_doi = stream.readBits(1);
+          }
+          this_set.push(this_pic);
+        }
+        return this_set;
+      };
+      this.data.num_ref_pic_list_set0 = stream.readUE();
+      this.data.rpl0 = new ReferencePictureList(0);
+      for (let j = 0; j < this.data.num_ref_pic_list_set0; j++) this.data.rpl0.push(makeReferencePictureList(0, j, this.data.library_picture_enable_flag));
+      if (!this.data.rpl1_same_as_rpl0_flag) {
+        this.data.num_ref_pic_list_set1 = stream.readUE();
+        this.data.rpl1 = new ReferencePictureList(1);
+        for (let j = 0; j < this.data.num_ref_pic_list_set1; j++) this.data.rpl1.push(makeReferencePictureList(1, j, this.data.library_picture_enable_flag));
+      }
+      this.data.num_ref_default_active_minus1_0 = stream.readUE();
+      this.data.num_ref_default_active_minus1_1 = stream.readUE();
+      this.data.log2_lcu_size_minus2 = stream.readBits(3);
+      this.data.log2_min_cu_size_minus2 = stream.readBits(2);
+      this.data.log2_max_part_ratio_minus2 = stream.readBits(2);
+      this.data.max_split_times_minus6 = stream.readBits(3);
+      this.data.log2_min_qt_size_minus2 = stream.readBits(3);
+      this.data.log2_max_bt_size_minus2 = stream.readBits(3);
+      this.data.log2_max_eqt_size_minus3 = stream.readBits(2);
+      stream.skipBits(1);
+      this.data.weight_quant_enable_flag = stream.readFlag();
+      if (this.data.weight_quant_enable_flag) {
+        this.data.load_seq_weight_quant_data_flag = stream.readFlag();
+        if (this.data.load_seq_weight_quant_data_flag) this.data.weight_quant_matrix = new WeightQuantMatrix(stream);
+      }
+      this.data.st_enable_flag = stream.readFlag();
+      this.data.sao_enable_flag = stream.readFlag();
+      this.data.alf_enable_flag = stream.readFlag();
+      this.data.affine_enable_flag = stream.readFlag();
+      this.data.smvd_enable_flag = stream.readFlag();
+      this.data.ipcm_enable_flag = stream.readFlag();
+      this.data.amvr_enable_flag = stream.readFlag();
+      this.data.num_of_hmvp_cand = stream.readBits(4);
+      this.data.umve_enable_flag = stream.readFlag();
+      if (this.data.num_of_hmvp_cand !== 0 && this.data.amvr_enable_flag) this.data.emvr_enable_flag = stream.readFlag();
+      this.data.intra_pf_enable_flag = stream.readFlag();
+      this.data.tscpm_enable_flag = stream.readFlag();
+      stream.skipBits(1);
+      this.data.dt_enable_flag = stream.readFlag();
+      if (this.data.dt_enable_flag) this.data.log2_max_dt_size_minus4 = stream.readBits(2);
+      this.data.pbt_enable_flag = stream.readFlag();
+      if (this.data.profile_id === 34 || this.data.profile_id === 50) {
+        this.data.pmc_enable_flag = stream.readFlag();
+        this.data.iip_enable_flag = stream.readFlag();
+        this.data.sawp_enable_flag = stream.readFlag();
+        if (this.data.affine_enable_flag) this.data.asr_enable_flag = stream.readFlag();
+        this.data.awp_enable_flag = stream.readFlag();
+        this.data.etmvp_mvap_enable_flag = stream.readFlag();
+        this.data.dmvr_enable_flag = stream.readFlag();
+        this.data.bio_enable_flag = stream.readFlag();
+        this.data.bgc_enable_flag = stream.readFlag();
+        this.data.inter_pf_enable_flag = stream.readFlag();
+        this.data.inter_pfc_enable_flag = stream.readFlag();
+        this.data.obmc_enable_flag = stream.readFlag();
+        this.data.sbt_enable_flag = stream.readFlag();
+        this.data.ist_enable_flag = stream.readFlag();
+        this.data.esao_enable_flag = stream.readFlag();
+        this.data.ccsao_enable_flag = stream.readFlag();
+        if (this.data.alf_enable_flag) this.data.ealf_enable_flag = stream.readFlag();
+        this.data.ibc_enable_flag = stream.readFlag();
+        stream.skipBits(1);
+        this.data.isc_enable_flag = stream.readFlag();
+        if (this.data.ibc_enable_flag || this.data.isc_enable_flag) this.data.num_of_intra_hmvp_cand = stream.readBits(4);
+        this.data.fimc_enable_flag = stream.readFlag();
+        this.data.nn_tools_set_hook = stream.readBits(8);
+        if (this.data.nn_tools_set_hook & 1) this.data.num_of_nn_filter_minus1 = stream.readUE();
+        stream.skipBits(1);
+      }
+      if (this.data.low_delay === 0) this.data.output_reorder_delay = stream.readBits(5);
+      this.data.cross_patch_loop_filter_enable_flag = stream.readFlag();
+      this.data.ref_colocated_patch_flag = stream.readFlag();
+      this.data.stable_patch_flag = stream.readFlag();
+      if (this.data.stable_patch_flag) {
+        this.data.uniform_patch_flag = stream.readFlag();
+        if (this.data.uniform_patch_flag) {
+          stream.skipBits(1);
+          this.data.patch_width_minus1 = stream.readUE();
+          this.data.patch_height_minus1 = stream.readUE();
+        }
+      }
+      stream.skipBits(2);
+      nextStartCode(stream);
+    }
+    toString() {
+      let res = "";
+      Object.getOwnPropertyNames(this.data).forEach((property) => {
+        let fmt_val = "";
+        if (Array.isArray(this.data[property])) for (let i = 0; i < this.data[property].length; i++) {
+          const hex = this.data[property][i].toString(16);
+          fmt_val += hex.length === 1 ? "0" + hex : hex;
+          if (i % 4 === 3) fmt_val += " ";
+        }
+        else fmt_val = this.data[property];
+        res += `${property}: ${fmt_val}
+`;
+      });
+      return res;
+    }
+  };
   var _a62;
-  var esdsBox = (_a62 = class extends FullBox {
+  var av3cBox = (_a62 = class extends Box {
+    constructor(..._args) {
+      super(..._args);
+      this.box_name = "AVS3ConfigurationBox";
+    }
+    parse(stream) {
+      this.configurationVersion = stream.readUint8();
+      if (this.configurationVersion === 1) {
+        this.sequence_header_length = stream.readUint16();
+        stream.enterBitMode();
+        this.sequence_header = new AVS3SequenceHeader(stream);
+        stream.exitBitMode(false);
+        this.library_dependency_idc = stream.readUint8();
+      }
+    }
+  }, _a62.fourcc = "av3c", _a62);
+  var AVS3AudioBase = class {
+    toString() {
+      let result = "";
+      Object.getOwnPropertyNames(this.data).forEach((property) => {
+        let formatted_value = "";
+        if (Array.isArray(this.data[property])) for (let i = 0; i < this.data[property].length; i++) {
+          const hex = this.data[property][i].toString(16);
+          formatted_value += hex.length === 1 ? "0" + hex : hex;
+          if (i % 4 === 3) formatted_value += " ";
+        }
+        else formatted_value = this.data[property];
+        result += `${property}: ${formatted_value}
+`;
+      });
+      return result;
+    }
+  };
+  var AVS3GAConfig = class extends AVS3AudioBase {
+    constructor(stream) {
+      super();
+      this.data = {};
+      this.deserialize(stream);
+    }
+    deserialize(stream) {
+      this.data.sampling_frequency_index = stream.readBits(4);
+      this.data.nn_type = stream.readBits(3);
+      stream.skipBits(1);
+      this.data.content_type = stream.readBits(4);
+      if (this.data.content_type === 0) {
+        this.data.channel_number_index = stream.readBits(7);
+        stream.skipBits(1);
+      } else if (this.data.content_type === 1) {
+        this.data.number_objects = stream.readBits(7);
+        stream.skipBits(1);
+      } else if (this.data.content_type === 2) {
+        this.data.channel_number_index = stream.readBits(7);
+        stream.skipBits(1);
+        this.data.number_objects = stream.readBits(7);
+        stream.skipBits(1);
+      } else if (this.data.content_type === 3) this.data.hoa_order = stream.readBits(4);
+      this.data.total_bitrate = stream.readUint16();
+      this.data.resolution = stream.readBits(2);
+    }
+  };
+  var AVS3GHConfig = class extends AVS3AudioBase {
+    constructor(stream) {
+      super();
+      this.data = {};
+      this.deserialize(stream);
+    }
+    deserialize(stream) {
+      this.data.sampling_frequency_index = stream.readBits(4);
+      this.data.anc_data_index = stream.readBits(1);
+      this.data.coding_profile = stream.readBits(3);
+      this.data.bitstream_type = stream.readBits(1);
+      this.data.channel_number_index = stream.readBits(7);
+      this.data.bitrate_index = stream.readBits(4);
+      this.data.raw_frame_length = stream.readUint16();
+      this.data.resolution = stream.readBits(2);
+      const addition_info_length = stream.readUint16();
+      if (addition_info_length > 0) {
+        this.data.addition_info = [];
+        for (let i = 0; i < addition_info_length; i++) this.data.addition_info.push(stream.readUint8());
+      }
+    }
+  };
+  var AVS3LLConfig = class extends AVS3AudioBase {
+    constructor(stream) {
+      super();
+      this.data = {};
+      this.deserialize(stream);
+    }
+    deserialize(stream) {
+      this.data.sampling_frequency_index = stream.readBits(4);
+      if (this.data.sampling_frequency_index === 15) this.data.sampling_frequency = stream.readUint24();
+      this.data.anc_data_index = stream.readBits(1);
+      this.data.coding_profile = stream.readBits(3);
+      this.data.channel_number = stream.readUint8();
+      this.data.resolution = stream.readBits(2);
+      const addition_info_length = stream.readUint16();
+      if (addition_info_length > 0) {
+        this.data.addition_info = [];
+        for (let i = 0; i < addition_info_length; i++) this.data.addition_info.push(stream.readUint8());
+      }
+      stream.skipBits(2);
+    }
+  };
+  var _a63;
+  var dca3Box = (_a63 = class extends Box {
+    constructor(..._args) {
+      super(..._args);
+      this.box_name = "AVS3AConfigurationBox";
+    }
+    parse(stream) {
+      stream.enterBitMode();
+      this.audio_codec_id = stream.readBits(4);
+      switch (this.audio_codec_id) {
+        case 2:
+          this.Avs3AudioGAConfig = new AVS3GAConfig(stream);
+          break;
+        case 0:
+          this.Avs3AudioGHConfig = new AVS3GHConfig(stream);
+          break;
+        case 1:
+          this.Avs3AudioLLConfig = new AVS3LLConfig(stream);
+      }
+      stream.exitBitMode(false);
+    }
+    get_audio_codec_id_str() {
+      return this.audio_codec_id.toString(10).padStart(2, "0");
+    }
+  }, _a63.fourcc = "dca3", _a63);
+  var _a64;
+  var esdsBox = (_a64 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "ElementaryStreamDescriptorBox";
@@ -3863,16 +4492,16 @@
         this.esd = esd_parser.parseOneDescriptor(new DataStream(esd_data.buffer, 0));
       }
     }
-  }, _a62.fourcc = "esds", _a62);
-  var _a63;
-  var waveBox = (_a63 = class extends ContainerBox {
+  }, _a64.fourcc = "esds", _a64);
+  var _a65;
+  var waveBox = (_a65 = class extends ContainerBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "siDecompressionParamBox";
     }
-  }, _a63.fourcc = "wave", _a63);
-  var _a64;
-  var lvcCBox = (_a64 = class extends Box {
+  }, _a65.fourcc = "wave", _a65);
+  var _a66;
+  var lvcCBox = (_a66 = class extends Box {
     constructor(..._args) {
       super(..._args);
       this.box_name = "LCEVCConfigurationBox";
@@ -3926,9 +4555,9 @@
         }
       }
     }
-  }, _a64.fourcc = "lvcC", _a64);
-  var _a65;
-  var vpcCBox = (_a65 = class extends FullBox {
+  }, _a66.fourcc = "lvcC", _a66);
+  var _a67;
+  var vpcCBox = (_a67 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "VPCodecConfigurationRecord";
@@ -3961,9 +4590,9 @@
         this.codecIntializationData = stream.readUint8Array(this.codecIntializationDataSize);
       }
     }
-  }, _a65.fourcc = "vpcC", _a65);
-  var _a66;
-  var vvcCBox = (_a66 = class extends FullBox {
+  }, _a67.fourcc = "vpcC", _a67);
+  var _a68;
+  var vvcCBox = (_a68 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "VvcConfigurationBox";
@@ -4059,9 +4688,9 @@
         }
       }
     }
-  }, _a66.fourcc = "vvcC", _a66);
-  var _a67;
-  var colrBox = (_a67 = class extends Box {
+  }, _a68.fourcc = "vvcC", _a68);
+  var _a69;
+  var colrBox = (_a69 = class extends Box {
     constructor(..._args) {
       super(..._args);
       this.box_name = "ColourInformationBox";
@@ -4077,7 +4706,7 @@
       } else if (this.colour_type === "rICC") this.ICC_profile = stream.readUint8Array(this.size - 4);
       else if (this.colour_type === "prof") this.ICC_profile = stream.readUint8Array(this.size - 4);
     }
-  }, _a67.fourcc = "colr", _a67);
+  }, _a69.fourcc = "colr", _a69);
   function decimalToHex(d, padding) {
     let hex = Number(d).toString(16);
     padding = typeof padding === "undefined" ? 2 : padding;
@@ -4092,36 +4721,36 @@
       else return baseCodec;
     }
   };
-  var _a68;
-  var avc1SampleEntry = (_a68 = class extends avcCSampleEntryBase {
+  var _a70;
+  var avc1SampleEntry = (_a70 = class extends avcCSampleEntryBase {
     constructor(..._args) {
       super(..._args);
       this.box_name = "AVCSampleEntry";
     }
-  }, _a68.fourcc = "avc1", _a68);
-  var _a69;
-  var avc2SampleEntry = (_a69 = class extends avcCSampleEntryBase {
+  }, _a70.fourcc = "avc1", _a70);
+  var _a71;
+  var avc2SampleEntry = (_a71 = class extends avcCSampleEntryBase {
     constructor(..._args2) {
       super(..._args2);
       this.box_name = "AVC2SampleEntry";
     }
-  }, _a69.fourcc = "avc2", _a69);
-  var _a70;
-  var avc3SampleEntry = (_a70 = class extends avcCSampleEntryBase {
+  }, _a71.fourcc = "avc2", _a71);
+  var _a72;
+  var avc3SampleEntry = (_a72 = class extends avcCSampleEntryBase {
     constructor(..._args3) {
       super(..._args3);
       this.box_name = "AVCSampleEntry";
     }
-  }, _a70.fourcc = "avc3", _a70);
-  var _a71;
-  var avc4SampleEntry = (_a71 = class extends avcCSampleEntryBase {
+  }, _a72.fourcc = "avc3", _a72);
+  var _a73;
+  var avc4SampleEntry = (_a73 = class extends avcCSampleEntryBase {
     constructor(..._args4) {
       super(..._args4);
       this.box_name = "AVC2SampleEntry";
     }
-  }, _a71.fourcc = "avc4", _a71);
-  var _a72;
-  var av01SampleEntry = (_a72 = class extends VisualSampleEntry {
+  }, _a73.fourcc = "avc4", _a73);
+  var _a74;
+  var av01SampleEntry = (_a74 = class extends VisualSampleEntry {
     constructor(..._args5) {
       super(..._args5);
       this.box_name = "AV1SampleEntry";
@@ -4136,10 +4765,22 @@
       else if (this.av1C.seq_profile <= 2) bitdepth = this.av1C.high_bitdepth === 1 ? "10" : "08";
       return baseCodec + "." + this.av1C.seq_profile + "." + level + (this.av1C.seq_tier_0 ? "H" : "M") + "." + bitdepth;
     }
-  }, _a72.fourcc = "av01", _a72);
-  var _a73;
-  var dav1SampleEntry = (_a73 = class extends VisualSampleEntry {
-  }, _a73.fourcc = "dav1", _a73);
+  }, _a74.fourcc = "av01", _a74);
+  var _a75;
+  var avs3SampleEntry = (_a75 = class extends VisualSampleEntry {
+    constructor(..._args6) {
+      super(..._args6);
+      this.box_name = "AVS3VideoSampleEntry";
+    }
+    getCodec() {
+      const profile = this.av3c.sequence_header?.data.profile_id ? this.av3c.sequence_header.data.profile_id.toString(16) : "XX";
+      const level = this.av3c.sequence_header?.data.level_id ? this.av3c.sequence_header.data.level_id.toString(16) : "XX";
+      return `${super.getCodec()}.${profile}.${level}`;
+    }
+  }, _a75.fourcc = "avs3", _a75);
+  var _a76;
+  var dav1SampleEntry = (_a76 = class extends VisualSampleEntry {
+  }, _a76.fourcc = "dav1", _a76);
   var hvcCSampleEntryBase = class extends VisualSampleEntry {
     /** @bundle box-codecs.js */
     getCodec() {
@@ -4158,7 +4799,6 @@
             break;
           case 3:
             baseCodec += "C";
-            break;
         }
         baseCodec += this.hvcC.general_profile_idc;
         baseCodec += ".";
@@ -4186,53 +4826,53 @@
       return baseCodec;
     }
   };
-  var _a74;
-  var hvc1SampleEntry = (_a74 = class extends hvcCSampleEntryBase {
-    constructor(..._args6) {
-      super(..._args6);
-      this.box_name = "HEVCSampleEntry";
-    }
-  }, _a74.fourcc = "hvc1", _a74);
-  var _a75;
-  var hvc2SampleEntry = (_a75 = class extends hvcCSampleEntryBase {
-  }, _a75.fourcc = "hvc2", _a75);
-  var _a76;
-  var hev1SampleEntry = (_a76 = class extends hvcCSampleEntryBase {
+  var _a77;
+  var hvc1SampleEntry = (_a77 = class extends hvcCSampleEntryBase {
     constructor(..._args7) {
       super(..._args7);
+      this.box_name = "HEVCSampleEntry";
+    }
+  }, _a77.fourcc = "hvc1", _a77);
+  var _a78;
+  var hvc2SampleEntry = (_a78 = class extends hvcCSampleEntryBase {
+  }, _a78.fourcc = "hvc2", _a78);
+  var _a79;
+  var hev1SampleEntry = (_a79 = class extends hvcCSampleEntryBase {
+    constructor(..._args8) {
+      super(..._args8);
       this.box_name = "HEVCSampleEntry";
       this.colrs = [];
       this.subBoxNames = ["colr"];
     }
-  }, _a76.fourcc = "hev1", _a76);
-  var _a77;
-  var hev2SampleEntry = (_a77 = class extends hvcCSampleEntryBase {
-  }, _a77.fourcc = "hev2", _a77);
-  var _a78;
-  var hvt1SampleEntry = (_a78 = class extends VisualSampleEntry {
-    constructor(..._args8) {
-      super(..._args8);
-      this.box_name = "HEVCTileSampleSampleEntry";
-    }
-  }, _a78.fourcc = "hvt1", _a78);
-  var _a79;
-  var lhe1SampleEntry = (_a79 = class extends VisualSampleEntry {
+  }, _a79.fourcc = "hev1", _a79);
+  var _a80;
+  var hev2SampleEntry = (_a80 = class extends hvcCSampleEntryBase {
+  }, _a80.fourcc = "hev2", _a80);
+  var _a81;
+  var hvt1SampleEntry = (_a81 = class extends VisualSampleEntry {
     constructor(..._args9) {
       super(..._args9);
-      this.box_name = "LHEVCSampleEntry";
+      this.box_name = "HEVCTileSampleSampleEntry";
     }
-  }, _a79.fourcc = "lhe1", _a79);
-  var _a80;
-  var lhv1SampleEntry = (_a80 = class extends VisualSampleEntry {
+  }, _a81.fourcc = "hvt1", _a81);
+  var _a82;
+  var lhe1SampleEntry = (_a82 = class extends VisualSampleEntry {
     constructor(..._args10) {
       super(..._args10);
       this.box_name = "LHEVCSampleEntry";
     }
-  }, _a80.fourcc = "lhv1", _a80);
-  var _a81;
-  var lvc1SampleEntry = (_a81 = class extends VisualSampleEntry {
+  }, _a82.fourcc = "lhe1", _a82);
+  var _a83;
+  var lhv1SampleEntry = (_a83 = class extends VisualSampleEntry {
     constructor(..._args11) {
       super(..._args11);
+      this.box_name = "LHEVCSampleEntry";
+    }
+  }, _a83.fourcc = "lhv1", _a83);
+  var _a84;
+  var lvc1SampleEntry = (_a84 = class extends VisualSampleEntry {
+    constructor(..._args12) {
+      super(..._args12);
       this.box_name = "LCEVCSampleEntry";
     }
     /** @bundle box-codecs.js */
@@ -4248,13 +4888,13 @@
       }
       return baseCodec;
     }
-  }, _a81.fourcc = "lvc1", _a81);
-  var _a82;
-  var dvh1SampleEntry = (_a82 = class extends VisualSampleEntry {
-  }, _a82.fourcc = "dvh1", _a82);
-  var _a83;
-  var dvheSampleEntry = (_a83 = class extends VisualSampleEntry {
-  }, _a83.fourcc = "dvhe", _a83);
+  }, _a84.fourcc = "lvc1", _a84);
+  var _a85;
+  var dvh1SampleEntry = (_a85 = class extends VisualSampleEntry {
+  }, _a85.fourcc = "dvh1", _a85);
+  var _a86;
+  var dvheSampleEntry = (_a86 = class extends VisualSampleEntry {
+  }, _a86.fourcc = "dvhe", _a86);
   var vvcCSampleEntryBase = class extends VisualSampleEntry {
     getCodec() {
       let baseCodec = super.getCodec();
@@ -4303,34 +4943,34 @@
       return baseCodec;
     }
   };
-  var _a84;
-  var vvc1SampleEntry = (_a84 = class extends vvcCSampleEntryBase {
-    constructor(..._args12) {
-      super(..._args12);
-      this.box_name = "VvcSampleEntry";
-    }
-  }, _a84.fourcc = "vvc1", _a84);
-  var _a85;
-  var vvi1SampleEntry = (_a85 = class extends vvcCSampleEntryBase {
+  var _a87;
+  var vvc1SampleEntry = (_a87 = class extends vvcCSampleEntryBase {
     constructor(..._args13) {
       super(..._args13);
       this.box_name = "VvcSampleEntry";
     }
-  }, _a85.fourcc = "vvi1", _a85);
-  var _a86;
-  var vvs1SampleEntry = (_a86 = class extends VisualSampleEntry {
+  }, _a87.fourcc = "vvc1", _a87);
+  var _a88;
+  var vvi1SampleEntry = (_a88 = class extends vvcCSampleEntryBase {
     constructor(..._args14) {
       super(..._args14);
       this.box_name = "VvcSampleEntry";
     }
-  }, _a86.fourcc = "vvs1", _a86);
-  var _a87;
-  var vvcNSampleEntry = (_a87 = class extends VisualSampleEntry {
+  }, _a88.fourcc = "vvi1", _a88);
+  var _a89;
+  var vvs1SampleEntry = (_a89 = class extends VisualSampleEntry {
     constructor(..._args15) {
       super(..._args15);
+      this.box_name = "VvcSampleEntry";
+    }
+  }, _a89.fourcc = "vvs1", _a89);
+  var _a90;
+  var vvcNSampleEntry = (_a90 = class extends VisualSampleEntry {
+    constructor(..._args16) {
+      super(..._args16);
       this.box_name = "VvcNonVCLSampleEntry";
     }
-  }, _a87.fourcc = "vvcN", _a87);
+  }, _a90.fourcc = "vvcN", _a90);
   var vpcCSampleEntryBase = class extends VisualSampleEntry {
     getCodec() {
       const baseCodec = super.getCodec();
@@ -4341,46 +4981,43 @@
       return `${baseCodec}.0${this.vpcC.profile}.${level}.${bitDepth}`;
     }
   };
-  var _a88;
-  var vp08SampleEntry = (_a88 = class extends vpcCSampleEntryBase {
-  }, _a88.fourcc = "vp08", _a88);
-  var _a89;
-  var vp09SampleEntry = (_a89 = class extends vpcCSampleEntryBase {
-  }, _a89.fourcc = "vp09", _a89);
-  var _a90;
-  var avs3SampleEntry = (_a90 = class extends VisualSampleEntry {
-  }, _a90.fourcc = "avs3", _a90);
   var _a91;
-  var j2kiSampleEntry = (_a91 = class extends VisualSampleEntry {
-    constructor(..._args16) {
-      super(..._args16);
-      this.box_name = "J2KSampleEntry";
-    }
-  }, _a91.fourcc = "j2ki", _a91);
+  var vp08SampleEntry = (_a91 = class extends vpcCSampleEntryBase {
+  }, _a91.fourcc = "vp08", _a91);
   var _a92;
-  var mjp2SampleEntry = (_a92 = class extends VisualSampleEntry {
-  }, _a92.fourcc = "mjp2", _a92);
+  var vp09SampleEntry = (_a92 = class extends vpcCSampleEntryBase {
+  }, _a92.fourcc = "vp09", _a92);
   var _a93;
-  var mjpgSampleEntry = (_a93 = class extends VisualSampleEntry {
-  }, _a93.fourcc = "mjpg", _a93);
-  var _a94;
-  var uncvSampleEntry = (_a94 = class extends VisualSampleEntry {
+  var j2kiSampleEntry = (_a93 = class extends VisualSampleEntry {
     constructor(..._args17) {
       super(..._args17);
-      this.box_name = "UncompressedVideoSampleEntry";
+      this.box_name = "J2KSampleEntry";
     }
-  }, _a94.fourcc = "uncv", _a94);
+  }, _a93.fourcc = "j2ki", _a93);
+  var _a94;
+  var mjp2SampleEntry = (_a94 = class extends VisualSampleEntry {
+  }, _a94.fourcc = "mjp2", _a94);
   var _a95;
-  var mp4vSampleEntry = (_a95 = class extends VisualSampleEntry {
+  var mjpgSampleEntry = (_a95 = class extends VisualSampleEntry {
+  }, _a95.fourcc = "mjpg", _a95);
+  var _a96;
+  var uncvSampleEntry = (_a96 = class extends VisualSampleEntry {
     constructor(..._args18) {
       super(..._args18);
-      this.box_name = "MP4VisualSampleEntry";
+      this.box_name = "UncompressedVideoSampleEntry";
     }
-  }, _a95.fourcc = "mp4v", _a95);
-  var _a96;
-  var mp4aSampleEntry = (_a96 = class extends AudioSampleEntry {
+  }, _a96.fourcc = "uncv", _a96);
+  var _a97;
+  var mp4vSampleEntry = (_a97 = class extends VisualSampleEntry {
     constructor(..._args19) {
       super(..._args19);
+      this.box_name = "MP4VisualSampleEntry";
+    }
+  }, _a97.fourcc = "mp4v", _a97);
+  var _a98;
+  var mp4aSampleEntry = (_a98 = class extends AudioSampleEntry {
+    constructor(..._args20) {
+      super(..._args20);
       this.box_name = "MP4AudioSampleEntry";
     }
     getCodec() {
@@ -4392,96 +5029,117 @@
         return baseCodec + "." + decimalToHex(oti) + (dsi ? "." + dsi : "");
       } else return baseCodec;
     }
-  }, _a96.fourcc = "mp4a", _a96);
-  var _a97;
-  var m4aeSampleEntry = (_a97 = class extends AudioSampleEntry {
-  }, _a97.fourcc = "m4ae", _a97);
-  var _a98;
-  var ac_3SampleEntry = (_a98 = class extends AudioSampleEntry {
-  }, _a98.fourcc = "ac-3", _a98);
+  }, _a98.fourcc = "mp4a", _a98);
   var _a99;
-  var ac_4SampleEntry = (_a99 = class extends AudioSampleEntry {
-  }, _a99.fourcc = "ac-4", _a99);
+  var m4aeSampleEntry = (_a99 = class extends AudioSampleEntry {
+  }, _a99.fourcc = "m4ae", _a99);
   var _a100;
-  var ec_3SampleEntry = (_a100 = class extends AudioSampleEntry {
-  }, _a100.fourcc = "ec-3", _a100);
+  var ac_3SampleEntry = (_a100 = class extends AudioSampleEntry {
+  }, _a100.fourcc = "ac-3", _a100);
   var _a101;
-  var OpusSampleEntry = (_a101 = class extends AudioSampleEntry {
-  }, _a101.fourcc = "Opus", _a101);
+  var ac_4SampleEntry = (_a101 = class extends AudioSampleEntry {
+  }, _a101.fourcc = "ac-4", _a101);
   var _a102;
-  var mha1SampleEntry = (_a102 = class extends AudioSampleEntry {
-  }, _a102.fourcc = "mha1", _a102);
+  var ec_3SampleEntry = (_a102 = class extends AudioSampleEntry {
+  }, _a102.fourcc = "ec-3", _a102);
   var _a103;
-  var mha2SampleEntry = (_a103 = class extends AudioSampleEntry {
-  }, _a103.fourcc = "mha2", _a103);
-  var _a104;
-  var mhm1SampleEntry = (_a104 = class extends AudioSampleEntry {
-  }, _a104.fourcc = "mhm1", _a104);
-  var _a105;
-  var mhm2SampleEntry = (_a105 = class extends AudioSampleEntry {
-  }, _a105.fourcc = "mhm2", _a105);
-  var _a106;
-  var fLaCSampleEntry = (_a106 = class extends AudioSampleEntry {
-  }, _a106.fourcc = "fLaC", _a106);
-  var _a107;
-  var encvSampleEntry = (_a107 = class extends VisualSampleEntry {
-  }, _a107.fourcc = "encv", _a107);
-  var _a108;
-  var encaSampleEntry = (_a108 = class extends AudioSampleEntry {
-  }, _a108.fourcc = "enca", _a108);
-  var _a109;
-  var encuSampleEntry = (_a109 = class extends SubtitleSampleEntry {
-    constructor(..._args20) {
-      super(..._args20);
-      this.subBoxNames = ["sinf"];
-      this.sinfs = [];
-    }
-  }, _a109.fourcc = "encu", _a109);
-  var _a110;
-  var encsSampleEntry = (_a110 = class extends SystemSampleEntry {
+  var mlpaSampleEntry = (_a103 = class extends AudioSampleEntry {
     constructor(..._args21) {
       super(..._args21);
-      this.subBoxNames = ["sinf"];
-      this.sinfs = [];
+      this.box_name = "MLPSampleEntry";
+      this.samplerate_frac_bits = 0;
     }
-  }, _a110.fourcc = "encs", _a110);
-  var _a111;
-  var mp4sSampleEntry = (_a111 = class extends SystemSampleEntry {
-  }, _a111.fourcc = "mp4s", _a111);
-  var _a112;
-  var enctSampleEntry = (_a112 = class extends TextSampleEntry {
+  }, _a103.fourcc = "mlpa", _a103);
+  var _a104;
+  var OpusSampleEntry = (_a104 = class extends AudioSampleEntry {
+  }, _a104.fourcc = "Opus", _a104);
+  var _a105;
+  var mha1SampleEntry = (_a105 = class extends AudioSampleEntry {
+  }, _a105.fourcc = "mha1", _a105);
+  var _a106;
+  var mha2SampleEntry = (_a106 = class extends AudioSampleEntry {
+  }, _a106.fourcc = "mha2", _a106);
+  var _a107;
+  var mhm1SampleEntry = (_a107 = class extends AudioSampleEntry {
+  }, _a107.fourcc = "mhm1", _a107);
+  var _a108;
+  var mhm2SampleEntry = (_a108 = class extends AudioSampleEntry {
+  }, _a108.fourcc = "mhm2", _a108);
+  var _a109;
+  var fLaCSampleEntry = (_a109 = class extends AudioSampleEntry {
+  }, _a109.fourcc = "fLaC", _a109);
+  var _a110;
+  var av3aSampleEntry = (_a110 = class extends AudioSampleEntry {
     constructor(..._args22) {
       super(..._args22);
-      this.subBoxNames = ["sinf"];
-      this.sinfs = [];
+      this.box_name = "AVS3AudioSampleEntry";
     }
-  }, _a112.fourcc = "enct", _a112);
+    getCodec() {
+      return `${super.getCodec()}.${this.dca3.get_audio_codec_id_str()}`;
+    }
+  }, _a110.fourcc = "av3a", _a110);
+  var _a111;
+  var a3asSampleEntry = (_a111 = class extends AudioSampleEntry {
+  }, _a111.fourcc = "a3as", _a111);
+  var _a112;
+  var encvSampleEntry = (_a112 = class extends VisualSampleEntry {
+  }, _a112.fourcc = "encv", _a112);
   var _a113;
-  var encmSampleEntry = (_a113 = class extends MetadataSampleEntry {
+  var encaSampleEntry = (_a113 = class extends AudioSampleEntry {
+  }, _a113.fourcc = "enca", _a113);
+  var _a114;
+  var encuSampleEntry = (_a114 = class extends SubtitleSampleEntry {
     constructor(..._args23) {
       super(..._args23);
       this.subBoxNames = ["sinf"];
       this.sinfs = [];
     }
-  }, _a113.fourcc = "encm", _a113);
-  var _a114;
-  var resvSampleEntry = (_a114 = class extends VisualSampleEntry {
+  }, _a114.fourcc = "encu", _a114);
+  var _a115;
+  var encsSampleEntry = (_a115 = class extends SystemSampleEntry {
     constructor(..._args24) {
       super(..._args24);
+      this.subBoxNames = ["sinf"];
+      this.sinfs = [];
+    }
+  }, _a115.fourcc = "encs", _a115);
+  var _a116;
+  var mp4sSampleEntry = (_a116 = class extends SystemSampleEntry {
+  }, _a116.fourcc = "mp4s", _a116);
+  var _a117;
+  var enctSampleEntry = (_a117 = class extends TextSampleEntry {
+    constructor(..._args25) {
+      super(..._args25);
+      this.subBoxNames = ["sinf"];
+      this.sinfs = [];
+    }
+  }, _a117.fourcc = "enct", _a117);
+  var _a118;
+  var encmSampleEntry = (_a118 = class extends MetadataSampleEntry {
+    constructor(..._args26) {
+      super(..._args26);
+      this.subBoxNames = ["sinf"];
+      this.sinfs = [];
+    }
+  }, _a118.fourcc = "encm", _a118);
+  var _a119;
+  var resvSampleEntry = (_a119 = class extends VisualSampleEntry {
+    constructor(..._args27) {
+      super(..._args27);
       this.box_name = "RestrictedVideoSampleEntry";
     }
-  }, _a114.fourcc = "resv", _a114);
-  var _a115;
-  var sbttSampleEntry = (_a115 = class extends SubtitleSampleEntry {
+  }, _a119.fourcc = "resv", _a119);
+  var _a120;
+  var sbttSampleEntry = (_a120 = class extends SubtitleSampleEntry {
     parse(stream) {
       this.parseHeader(stream);
       this.content_encoding = stream.readCString();
       this.mime_format = stream.readCString();
       this.parseFooter(stream);
     }
-  }, _a115.fourcc = "sbtt", _a115);
-  var _a116;
-  var stppSampleEntry = (_a116 = class extends SubtitleSampleEntry {
+  }, _a120.fourcc = "sbtt", _a120);
+  var _a121;
+  var stppSampleEntry = (_a121 = class extends SubtitleSampleEntry {
     parse(stream) {
       this.parseHeader(stream);
       this.namespace = stream.readCString();
@@ -4498,9 +5156,9 @@
       stream.writeCString(this.auxiliary_mime_types);
       this.writeFooter(stream);
     }
-  }, _a116.fourcc = "stpp", _a116);
-  var _a117;
-  var stxtSampleEntry = (_a117 = class extends SubtitleSampleEntry {
+  }, _a121.fourcc = "stpp", _a121);
+  var _a122;
+  var stxtSampleEntry = (_a122 = class extends SubtitleSampleEntry {
     parse(stream) {
       this.parseHeader(stream);
       this.content_encoding = stream.readCString();
@@ -4512,9 +5170,9 @@
       if (this.mime_format) return baseCodec + "." + this.mime_format;
       else return baseCodec;
     }
-  }, _a117.fourcc = "stxt", _a117);
-  var _a118;
-  var tx3gSampleEntry = (_a118 = class extends SubtitleSampleEntry {
+  }, _a122.fourcc = "stxt", _a122);
+  var _a123;
+  var tx3gSampleEntry = (_a123 = class extends SubtitleSampleEntry {
     parse(stream) {
       this.parseHeader(stream);
       this.displayFlags = stream.readUint32();
@@ -4525,16 +5183,16 @@
       this.style_record = stream.readUint8Array(12);
       this.parseFooter(stream);
     }
-  }, _a118.fourcc = "tx3g", _a118);
-  var _a119;
-  var wvttSampleEntry = (_a119 = class extends MetadataSampleEntry {
+  }, _a123.fourcc = "tx3g", _a123);
+  var _a124;
+  var wvttSampleEntry = (_a124 = class extends MetadataSampleEntry {
     parse(stream) {
       this.parseHeader(stream);
       this.parseFooter(stream);
     }
-  }, _a119.fourcc = "wvtt", _a119);
-  var _a120;
-  var sbgpBox = (_a120 = class extends FullBox {
+  }, _a124.fourcc = "wvtt", _a124);
+  var _a125;
+  var sbgpBox = (_a125 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "SampleToGroupBox";
@@ -4567,9 +5225,9 @@
         stream.writeInt32(entry.group_description_index);
       }
     }
-  }, _a120.fourcc = "sbgp", _a120);
-  var _a121;
-  var sdtpBox = (_a121 = class extends FullBox {
+  }, _a125.fourcc = "sbgp", _a125);
+  var _a126;
+  var sdtpBox = (_a126 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "SampleDependencyTypeBox";
@@ -4589,9 +5247,9 @@
         this.sample_has_redundancy[i] = tmp_byte & 3;
       }
     }
-  }, _a121.fourcc = "sdtp", _a121);
-  var _a122;
-  var sgpdBox = (_a122 = class extends FullBox {
+  }, _a126.fourcc = "sdtp", _a126);
+  var _a127;
+  var sgpdBox = (_a127 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "SampleGroupDescriptionBox";
@@ -4610,9 +5268,10 @@
         if (this.grouping_type in BoxRegistry.sampleGroupEntry) entry = new BoxRegistry.sampleGroupEntry[this.grouping_type](this.grouping_type);
         else entry = new SampleGroupEntry(this.grouping_type);
         this.entries.push(entry);
-        if (this.version === 1) if (this.default_length === 0) entry.description_length = stream.readUint32();
-        else entry.description_length = this.default_length;
-        else entry.description_length = this.default_length;
+        if (this.version === 1) {
+          if (this.default_length === 0) entry.description_length = stream.readUint32();
+          else entry.description_length = this.default_length;
+        } else entry.description_length = this.default_length;
         if (entry.write === SampleGroupEntry.prototype.write) {
           Log.info("BoxParser", "SampleGroup for type " + this.grouping_type + " writing not yet implemented, keeping unparsed data in memory for later write");
           entry.data = stream.readUint8Array(entry.description_length);
@@ -4645,9 +5304,9 @@
         entry.write(stream);
       }
     }
-  }, _a122.fourcc = "sgpd", _a122);
-  var _a123;
-  var sidxBox = (_a123 = class extends FullBox {
+  }, _a127.fourcc = "sgpd", _a127);
+  var _a128;
+  var sidxBox = (_a128 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "CompressedSegmentIndexBox";
@@ -4706,9 +5365,9 @@
         stream.writeUint32(ref.starts_with_SAP << 31 | ref.SAP_type << 28 | ref.SAP_delta_time);
       }
     }
-  }, _a123.fourcc = "sidx", _a123);
-  var _a124;
-  var smhdBox = (_a124 = class extends FullBox {
+  }, _a128.fourcc = "sidx", _a128);
+  var _a129;
+  var smhdBox = (_a129 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "SoundMediaHeaderBox";
@@ -4726,9 +5385,9 @@
       stream.writeUint16(this.balance);
       stream.writeUint16(0);
     }
-  }, _a124.fourcc = "smhd", _a124);
-  var _a125;
-  var stcoBox = (_a125 = class extends FullBox {
+  }, _a129.fourcc = "smhd", _a129);
+  var _a130;
+  var stcoBox = (_a130 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "ChunkOffsetBox";
@@ -4752,16 +5411,16 @@
     unpack(samples) {
       for (let i = 0; i < this.chunk_offsets.length; i++) samples[i].offset = this.chunk_offsets[i];
     }
-  }, _a125.fourcc = "stco", _a125);
-  var _a126;
-  var sthdBox = (_a126 = class extends FullBox {
+  }, _a130.fourcc = "stco", _a130);
+  var _a131;
+  var sthdBox = (_a131 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "SubtitleMediaHeaderBox";
     }
-  }, _a126.fourcc = "sthd", _a126);
-  var _a127;
-  var stscBox = (_a127 = class extends FullBox {
+  }, _a131.fourcc = "sthd", _a131);
+  var _a132;
+  var stscBox = (_a132 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "SampleToChunkBox";
@@ -4804,9 +5463,9 @@
         }
       }
     }
-  }, _a127.fourcc = "stsc", _a127);
-  var _a128;
-  var stsdBox = (_a128 = class extends FullBox {
+  }, _a132.fourcc = "stsc", _a132);
+  var _a133;
+  var stsdBox = (_a133 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "SampleDescriptionBox";
@@ -4852,9 +5511,9 @@
       Log.debug("BoxWriter", "Adjusting box " + this.type + " with new size " + this.size);
       stream.adjustUint32(this.sizePosition, this.size);
     }
-  }, _a128.fourcc = "stsd", _a128);
-  var _a129;
-  var stszBox = (_a129 = class extends FullBox {
+  }, _a133.fourcc = "stsd", _a133);
+  var _a134;
+  var stszBox = (_a134 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "SampleSizeBox";
@@ -4886,9 +5545,9 @@
     unpack(samples) {
       for (let i = 0; i < this.sample_sizes.length; i++) samples[i].size = this.sample_sizes[i];
     }
-  }, _a129.fourcc = "stsz", _a129);
-  var _a130;
-  var sttsBox = (_a130 = class extends FullBox {
+  }, _a134.fourcc = "stsz", _a134);
+  var _a135;
+  var sttsBox = (_a135 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "TimeToSampleBox";
@@ -4931,9 +5590,9 @@
         k++;
       }
     }
-  }, _a130.fourcc = "stts", _a130);
-  var _a131;
-  var tfdtBox = (_a131 = class extends FullBox {
+  }, _a135.fourcc = "stts", _a135);
+  var _a136;
+  var tfdtBox = (_a136 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "TrackFragmentBaseMediaDecodeTimeBox";
@@ -4954,9 +5613,9 @@
       if (useVersion1) stream.writeUint64(this.baseMediaDecodeTime);
       else stream.writeUint32(this.baseMediaDecodeTime);
     }
-  }, _a131.fourcc = "tfdt", _a131);
-  var _a132;
-  var tfhdBox = (_a132 = class extends FullBox {
+  }, _a136.fourcc = "tfdt", _a136);
+  var _a137;
+  var tfhdBox = (_a137 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "TrackFragmentHeaderBox";
@@ -4981,10 +5640,8 @@
         this.default_sample_size = stream.readUint32();
         readBytes += 4;
       } else this.default_sample_size = 0;
-      if (this.size - this.hdr_size > readBytes && this.flags & 32) {
-        this.default_sample_flags = stream.readUint32();
-        readBytes += 4;
-      } else this.default_sample_flags = 0;
+      if (this.size - this.hdr_size > readBytes && this.flags & 32) this.default_sample_flags = stream.readUint32();
+      else this.default_sample_flags = 0;
     }
     /** @bundle writing/tfhd.js */
     write(stream) {
@@ -5003,9 +5660,9 @@
       if (this.flags & 16) stream.writeUint32(this.default_sample_size);
       if (this.flags & 32) stream.writeUint32(this.default_sample_flags);
     }
-  }, _a132.fourcc = "tfhd", _a132);
-  var _a133;
-  var tkhdBox = (_a133 = class extends FullBox {
+  }, _a137.fourcc = "tfhd", _a137);
+  var _a138;
+  var tkhdBox = (_a138 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "TrackHeaderBox";
@@ -5013,7 +5670,11 @@
       this.alternate_group = 0;
     }
     parse(stream) {
+      if (this.size - this.hdr_size < 4) return -1;
       this.parseFullHeader(stream);
+      if (this.version !== 0 && this.version !== 1) return -1;
+      const minimumFieldBytes = this.version === 1 ? 92 : 80;
+      if (this.size - this.hdr_size < minimumFieldBytes) return -1;
       if (this.version === 1) {
         this.creation_time = stream.readUint64();
         this.modification_time = stream.readUint64();
@@ -5079,9 +5740,9 @@
       output.log(output.indent + "width: " + this.width);
       output.log(output.indent + "height: " + this.height);
     }
-  }, _a133.fourcc = "tkhd", _a133);
-  var _a134;
-  var trexBox = (_a134 = class extends FullBox {
+  }, _a138.fourcc = "tkhd", _a138);
+  var _a139;
+  var trexBox = (_a139 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "TrackExtendsBox";
@@ -5105,9 +5766,9 @@
       stream.writeUint32(this.default_sample_size);
       stream.writeUint32(this.default_sample_flags);
     }
-  }, _a134.fourcc = "trex", _a134);
-  var _a135;
-  var trunBox = (_a135 = class extends FullBox {
+  }, _a139.fourcc = "trex", _a139);
+  var _a140;
+  var trunBox = (_a140 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "TrackRunBox";
@@ -5137,8 +5798,10 @@
         if (this.flags & 256) this.sample_duration[i] = stream.readUint32();
         if (this.flags & 512) this.sample_size[i] = stream.readUint32();
         if (this.flags & 1024) this.sample_flags[i] = stream.readUint32();
-        if (this.flags & 2048) if (this.version === 0) this.sample_composition_time_offset[i] = stream.readUint32();
-        else this.sample_composition_time_offset[i] = stream.readInt32();
+        if (this.flags & 2048) {
+          if (this.version === 0) this.sample_composition_time_offset[i] = stream.readUint32();
+          else this.sample_composition_time_offset[i] = stream.readInt32();
+        }
       }
     }
     /** @bundle writing/trun.js */
@@ -5161,13 +5824,15 @@
         if (this.flags & 256) stream.writeUint32(this.sample_duration[i]);
         if (this.flags & 512) stream.writeUint32(this.sample_size[i]);
         if (this.flags & 1024) stream.writeUint32(this.sample_flags[i]);
-        if (this.flags & 2048) if (this.version === 0) stream.writeUint32(this.sample_composition_time_offset[i]);
-        else stream.writeInt32(this.sample_composition_time_offset[i]);
+        if (this.flags & 2048) {
+          if (this.version === 0) stream.writeUint32(this.sample_composition_time_offset[i]);
+          else stream.writeInt32(this.sample_composition_time_offset[i]);
+        }
       }
     }
-  }, _a135.fourcc = "trun", _a135);
-  var _a136;
-  var urlBox = (_a136 = class extends FullBox {
+  }, _a140.fourcc = "trun", _a140);
+  var _a141;
+  var urlBox = (_a141 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "DataEntryUrlBox";
@@ -5189,9 +5854,9 @@
       this.writeHeader(stream);
       if (this.location) stream.writeCString(this.location);
     }
-  }, _a136.fourcc = "url ", _a136);
-  var _a137;
-  var vmhdBox = (_a137 = class extends FullBox {
+  }, _a141.fourcc = "url ", _a141);
+  var _a142;
+  var vmhdBox = (_a142 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "VideoMediaHeaderBox";
@@ -5209,7 +5874,7 @@
       stream.writeUint16(this.graphicsmode);
       stream.writeUint16Array(this.opcolor);
     }
-  }, _a137.fourcc = "vmhd", _a137);
+  }, _a142.fourcc = "vmhd", _a142);
   var SampleGroupInfo = class {
     constructor(grouping_type, grouping_type_parameter, sbgp) {
       this.grouping_type = grouping_type;
@@ -5220,11 +5885,12 @@
     }
   };
   var ISOFile = class ISOFile2 {
-    constructor(stream, discardMdatData = true) {
+    constructor(stream, discardMdatData = true, options) {
       this.boxes = [];
       this.mdats = [];
       this.moofs = [];
       this.isProgressive = false;
+      this.allowInvalidBoxTypes = false;
       this.moovStartFound = false;
       this.moovStartSent = false;
       this.readySent = false;
@@ -5245,11 +5911,10 @@
       this.nextParsePosition = 0;
       this.discardMdatData = true;
       this.discardMdatData = discardMdatData;
-      if (stream) {
-        this.stream = stream;
-        this.parse();
-      } else this.stream = new MultiBufferStream();
+      this.allowInvalidBoxTypes = options?.allowInvalidBoxTypes ?? false;
+      this.stream = stream ?? new MultiBufferStream();
       this.stream.isofile = this;
+      if (stream) this.parse();
     }
     setSegmentOptions(id, user, opts) {
       const { sizePerSegment = Number.MAX_SAFE_INTEGER, rapAlignement = true, normalizeAudioSampleEntriesForMSE = true } = opts;
@@ -5288,7 +5953,7 @@
         this.fragmentedTracks.push(fragTrack);
         trak.nextSample = 0;
       }
-      if (this.discardMdatData) Log.warn("ISOFile", "Segmentation options set but discardMdatData is true, samples will not be segmented");
+      if (this.discardMdatData) Log.warn("ISOFile", "Segmentation options set but discardMdatData is true, only samples whose data is appended after start() will be segmented");
     }
     unsetSegmentOptions(id) {
       let index = -1;
@@ -5307,7 +5972,7 @@
         });
         trak.nextSample = 0;
       }
-      if (this.discardMdatData) Log.warn("ISOFile", "Extraction options set but discardMdatData is true, samples will not be extracted");
+      if (this.discardMdatData) Log.warn("ISOFile", "Extraction options set but discardMdatData is true, only samples whose data is appended after start() will be extracted");
     }
     unsetExtractionOptions(id) {
       let index = -1;
@@ -5319,15 +5984,18 @@
       if (this.restoreParsePosition) {
         if (!this.restoreParsePosition()) return;
       }
-      while (true) if (this.hasIncompleteMdat && this.hasIncompleteMdat()) if (this.processIncompleteMdat()) continue;
-      else return;
-      else {
+      while (true) if (this.hasIncompleteMdat && this.hasIncompleteMdat()) {
+        if (this.processIncompleteMdat()) continue;
+        else return;
+      } else {
         if (this.saveParsePosition) this.saveParsePosition();
         const ret = parseOneBox(this.stream, parseBoxHeadersOnly);
-        if (ret.code === 0) if (this.processIncompleteBox) if (this.processIncompleteBox(ret)) continue;
-        else return;
-        else return;
-        else if (ret.code === 1) {
+        if (ret.code === 0) {
+          if (this.processIncompleteBox) {
+            if (this.processIncompleteBox(ret)) continue;
+            else return;
+          } else return;
+        } else if (ret.code === 1) {
           const box2 = ret.box;
           this.boxes.push(box2);
           if (box2.type === "uuid") {
@@ -5348,22 +6016,22 @@
               this.moovStartFound = true;
               if (this.mdats.length === 0) this.isProgressive = true;
             default:
-              if (this[box2.type] !== void 0) if (Array.isArray(this[box2.type + "s"])) {
-                Log.info("ISOFile", `Found multiple boxes of type ${box2.type} in ISOFile, adding to array`);
-                this[box2.type + "s"].push(box2);
+              if (this[box2.type] !== void 0) {
+                if (Array.isArray(this[box2.type + "s"])) {
+                  Log.info("ISOFile", `Found multiple boxes of type ${box2.type} in ISOFile, adding to array`);
+                  this[box2.type + "s"].push(box2);
+                } else {
+                  Log.warn("ISOFile", `Found multiple boxes of type ${box2.type} but no array exists. Creating array dynamically.`);
+                  this[box2.type + "s"] = [this[box2.type], box2];
+                }
               } else {
-                Log.warn("ISOFile", `Found multiple boxes of type ${box2.type} but no array exists. Creating array dynamically.`);
-                this[box2.type + "s"] = [this[box2.type], box2];
-              }
-              else {
                 this[box2.type] = box2;
                 if (Array.isArray(this[box2.type + "s"])) this[box2.type + "s"].push(box2);
               }
-              break;
           }
           if (this.updateUsedBytes) this.updateUsedBytes(box2, ret);
         } else if (ret.code === -1) {
-          Log.error("ISOFile", `Invalid data found while parsing box of type '${ret.type}' at position ${ret.start}. Aborting parsing.`, this);
+          Log.error("ISOFile", `Invalid data found while parsing box of type '${ret.type}' at position ${ret.start}. Discarded bytes from ${ret.start} until the end of the stream.`, this);
           break;
         }
       }
@@ -5751,6 +6419,7 @@
     }
     getTrackDuration(trak) {
       if (!trak.samples) return Infinity;
+      if (trak.samples.length === 0) return 0;
       const sample = trak.samples[trak.samples.length - 1];
       return (sample.cts + sample.duration) / sample.timescale;
     }
@@ -6205,8 +6874,14 @@
             else default_sample_flags = trex ? trex.default_sample_flags : 0;
             traf.sample_number = 0;
             if (traf.sbgps.length > 0) ISOFile2.initSampleGroups(trak, traf, traf.sbgps, trak.mdia.minf.stbl.sgpds, traf.sgpds);
+            let base_data_offset;
+            if (traf.tfhd.flags & 1) base_data_offset = traf.tfhd.base_data_offset;
+            else if (traf.tfhd.flags & 131072 || i === 0) base_data_offset = moof.start;
+            else base_data_offset = last_run_position;
+            last_run_position = base_data_offset;
             for (let j = 0; j < traf.truns.length; j++) {
               const trun = traf.truns[j];
+              if (trun.flags & 1) last_run_position = base_data_offset + trun.data_offset;
               for (let k = 0; k < trun.sample_count; k++) {
                 const description_index = default_sample_description_index - 1;
                 let sample_flags = default_sample_flags;
@@ -6227,19 +6902,8 @@
                 }
                 let cts = dts;
                 if (trun.flags & 2048) cts = dts + trun.sample_composition_time_offset[k];
-                const bdop = traf.tfhd.flags & 1 ? true : false;
-                const dbim = traf.tfhd.flags & 131072 ? true : false;
-                const dop = trun.flags & 1 ? true : false;
-                let bdo = 0;
-                if (!bdop) if (!dbim) if (j === 0) bdo = moof.start;
-                else bdo = last_run_position;
-                else bdo = moof.start;
-                else bdo = traf.tfhd.base_data_offset;
-                let offset;
-                if (j === 0 && k === 0) if (dop) offset = bdo + trun.data_offset;
-                else offset = bdo;
-                else offset = last_run_position;
-                last_run_position = offset + size;
+                const offset = last_run_position;
+                last_run_position += size;
                 const number_in_traf = traf.sample_number;
                 traf.sample_number++;
                 const sample = {
@@ -6678,10 +7342,12 @@
     }
     /** @bundle isofile-advanced-parsing.js */
     updateUsedBytes(box2, _ret) {
-      if (this.stream.addUsedBytes) if (box2.type === "mdat") {
-        this.stream.addUsedBytes(box2.hdr_size);
-        if (this.discardMdatData) this.stream.addUsedBytes(box2.size - box2.hdr_size);
-      } else this.stream.addUsedBytes(box2.size);
+      if (this.stream.addUsedBytes) {
+        if (box2.type === "mdat") {
+          this.stream.addUsedBytes(box2.hdr_size);
+          if (this.discardMdatData) this.stream.addUsedBytes(box2.size - box2.hdr_size);
+        } else this.stream.addUsedBytes(box2.size);
+      }
     }
     /** @bundle isofile-advanced-creation.js */
     addBox(box2) {
@@ -6891,7 +7557,7 @@
       trun.first_sample_flags = 0;
       trun.sample_count = samples.length;
       for (const sample of samples) {
-        let sample_flags = 0;
+        let sample_flags;
         if (sample.is_sync) sample_flags = 1 << 25;
         else sample_flags = 65536;
         trun.sample_duration.push(sample.duration);
@@ -6907,11 +7573,11 @@
       for (let i = 0; i < this.boxes.length; i++) if (this.boxes[i]) this.boxes[i].print(output);
     }
   };
-  function createFile(keepMdatData = false, stream) {
-    return new ISOFile(stream, !keepMdatData);
+  function createFile(keepMdatData = false, stream, options) {
+    return new ISOFile(stream, !keepMdatData, options);
   }
-  var _a138;
-  var emsgBox = (_a138 = class extends FullBox {
+  var _a143;
+  var emsgBox = (_a143 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "EventMessageBox";
@@ -6951,9 +7617,9 @@
       stream.writeUint32(this.id);
       stream.writeUint8Array(this.message_data);
     }
-  }, _a138.fourcc = "emsg", _a138);
-  var _a139;
-  var ssixBox = (_a139 = class extends FullBox {
+  }, _a143.fourcc = "emsg", _a143);
+  var _a144;
+  var ssixBox = (_a144 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "CompressedSubsegmentIndexBox";
@@ -6975,9 +7641,9 @@
         }
       }
     }
-  }, _a139.fourcc = "ssix", _a139);
-  var _a140;
-  var stypBox = (_a140 = class extends Box {
+  }, _a144.fourcc = "ssix", _a144);
+  var _a145;
+  var stypBox = (_a145 = class extends Box {
     constructor(..._args) {
       super(..._args);
       this.box_name = "SegmentTypeBox";
@@ -7002,9 +7668,9 @@
       stream.writeUint32(this.minor_version);
       for (let i = 0; i < this.compatible_brands.length; i++) stream.writeString(this.compatible_brands[i], void 0, 4);
     }
-  }, _a140.fourcc = "styp", _a140);
+  }, _a145.fourcc = "styp", _a145);
 
-  // node_modules/.pnpm/mp4box@2.4.1/node_modules/mp4box/dist/mp4box.all.mjs
+  // node_modules/.pnpm/mp4box@2.5.0/node_modules/mp4box/dist/mp4box.all.mjs
   var descriptor_exports = /* @__PURE__ */ __exportAll({
     Descriptor: () => Descriptor,
     ES_Descriptor: () => ES_Descriptor,
@@ -7134,8 +7800,8 @@
       return descTagToName[tag];
     }
   };
-  var _a141;
-  var a1lxBox = (_a141 = class extends Box {
+  var _a146;
+  var a1lxBox = (_a146 = class extends Box {
     constructor(..._args) {
       super(..._args);
       this.box_name = "AV1LayeredImageIndexingProperty";
@@ -7146,9 +7812,9 @@
       for (let i = 0; i < 3; i++) if (FieldLength === 16) this.layer_size[i] = stream.readUint16();
       else this.layer_size[i] = stream.readUint32();
     }
-  }, _a141.fourcc = "a1lx", _a141);
-  var _a142;
-  var a1opBox = (_a142 = class extends Box {
+  }, _a146.fourcc = "a1lx", _a146);
+  var _a147;
+  var a1opBox = (_a147 = class extends Box {
     constructor(..._args) {
       super(..._args);
       this.box_name = "OperatingPointSelectorProperty";
@@ -7156,9 +7822,21 @@
     parse(stream) {
       this.op_index = stream.readUint8();
     }
-  }, _a142.fourcc = "a1op", _a142);
-  var _a143;
-  var auxCBox = (_a143 = class extends FullBox {
+  }, _a147.fourcc = "a1op", _a147);
+  var _a148;
+  var amveBox = (_a148 = class extends Box {
+    constructor(..._args) {
+      super(..._args);
+      this.box_name = "AmbientViewingEnvironmentBox";
+    }
+    parse(stream) {
+      this.ambient_illuminance = stream.readUint32();
+      this.ambient_light_x = stream.readUint16();
+      this.ambient_light_y = stream.readUint16();
+    }
+  }, _a148.fourcc = "amve", _a148);
+  var _a149;
+  var auxCBox = (_a149 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "AuxiliaryTypeProperty";
@@ -7169,9 +7847,9 @@
       const aux_subtype_length = this.size - this.hdr_size - (this.aux_type.length + 1);
       this.aux_subtype = stream.readUint8Array(aux_subtype_length);
     }
-  }, _a143.fourcc = "auxC", _a143);
-  var _a144;
-  var btrtBox = (_a144 = class extends Box {
+  }, _a149.fourcc = "auxC", _a149);
+  var _a150;
+  var btrtBox = (_a150 = class extends Box {
     constructor(..._args) {
       super(..._args);
       this.box_name = "BitRateBox";
@@ -7181,9 +7859,37 @@
       this.maxBitrate = stream.readUint32();
       this.avgBitrate = stream.readUint32();
     }
-  }, _a144.fourcc = "btrt", _a144);
-  var _a145;
-  var ccstBox = (_a145 = class extends FullBox {
+  }, _a150.fourcc = "btrt", _a150);
+  var _a151;
+  var cclvBox = (_a151 = class extends Box {
+    constructor(..._args) {
+      super(..._args);
+      this.box_name = "ContentColourVolumeBox";
+    }
+    parse(stream) {
+      stream.enterBitMode();
+      stream.readBits(3);
+      const ccv_primaries_present_flag = stream.readFlag();
+      const ccv_min_luminance_value_present_flag = stream.readFlag();
+      const ccv_max_luminance_value_present_flag = stream.readFlag();
+      const ccv_avg_luminance_value_present_flag = stream.readFlag();
+      stream.readBits(1);
+      stream.exitBitMode();
+      if (ccv_primaries_present_flag) {
+        this.ccv_primaries_x = new Array(3);
+        this.ccv_primaries_y = new Array(3);
+        for (let c = 0; c < 3; c++) {
+          this.ccv_primaries_x[c] = stream.readInt32();
+          this.ccv_primaries_y[c] = stream.readInt32();
+        }
+      }
+      if (ccv_min_luminance_value_present_flag) this.ccv_min_luminance_value = stream.readUint32();
+      if (ccv_max_luminance_value_present_flag) this.ccv_max_luminance_value = stream.readUint32();
+      if (ccv_avg_luminance_value_present_flag) this.ccv_avg_luminance_value = stream.readUint32();
+    }
+  }, _a151.fourcc = "cclv", _a151);
+  var _a152;
+  var ccstBox = (_a152 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "CodingConstraintsBox";
@@ -7196,9 +7902,9 @@
       this.max_ref_per_pic = (flags & 63) >> 2;
       stream.readUint24();
     }
-  }, _a145.fourcc = "ccst", _a145);
-  var _a146;
-  var cdefBox = (_a146 = class extends Box {
+  }, _a152.fourcc = "ccst", _a152);
+  var _a153;
+  var cdefBox = (_a153 = class extends Box {
     constructor(..._args) {
       super(..._args);
       this.box_name = "ComponentDefinitionBox";
@@ -7214,9 +7920,9 @@
         this.channel_associations.push(stream.readUint16());
       }
     }
-  }, _a146.fourcc = "cdef", _a146);
-  var _a147;
-  var clapBox = (_a147 = class extends Box {
+  }, _a153.fourcc = "cdef", _a153);
+  var _a154;
+  var clapBox = (_a154 = class extends Box {
     constructor(..._args) {
       super(..._args);
       this.box_name = "CleanApertureBox";
@@ -7231,9 +7937,9 @@
       this.vertOffN = stream.readUint32();
       this.vertOffD = stream.readUint32();
     }
-  }, _a147.fourcc = "clap", _a147);
-  var _a148;
-  var clliBox = (_a148 = class extends Box {
+  }, _a154.fourcc = "clap", _a154);
+  var _a155;
+  var clliBox = (_a155 = class extends Box {
     constructor(..._args) {
       super(..._args);
       this.box_name = "ContentLightLevelBox";
@@ -7242,9 +7948,9 @@
       this.max_content_light_level = stream.readUint16();
       this.max_pic_average_light_level = stream.readUint16();
     }
-  }, _a148.fourcc = "clli", _a148);
-  var _a149;
-  var cmexBox = (_a149 = class extends Box {
+  }, _a155.fourcc = "clli", _a155);
+  var _a156;
+  var cmexBox = (_a156 = class extends Box {
     constructor(..._args) {
       super(..._args);
       this.box_name = "CameraExtrinsicMatrixProperty";
@@ -7254,23 +7960,24 @@
       if (this.flags & 2) this.pos_y = stream.readInt32();
       if (this.flags & 4) this.pos_z = stream.readInt32();
       if (this.flags & 8) {
-        if (this.version === 0) if (this.flags & 16) {
-          this.quat_x = stream.readInt32();
-          this.quat_y = stream.readInt32();
-          this.quat_z = stream.readInt32();
-        } else {
-          this.quat_x = stream.readInt16();
-          this.quat_y = stream.readInt16();
-          this.quat_z = stream.readInt16();
-        }
-        else if (this.version === 1) {
+        if (this.version === 0) {
+          if (this.flags & 16) {
+            this.quat_x = stream.readInt32();
+            this.quat_y = stream.readInt32();
+            this.quat_z = stream.readInt32();
+          } else {
+            this.quat_x = stream.readInt16();
+            this.quat_y = stream.readInt16();
+            this.quat_z = stream.readInt16();
+          }
+        } else if (this.version === 1) {
         }
       }
       if (this.flags & 32) this.id = stream.readUint32();
     }
-  }, _a149.fourcc = "cmex", _a149);
-  var _a150;
-  var cminBox = (_a150 = class extends Box {
+  }, _a156.fourcc = "cmex", _a156);
+  var _a157;
+  var cminBox = (_a157 = class extends Box {
     constructor(..._args) {
       super(..._args);
       this.box_name = "CameraIntrinsicMatrixProperty";
@@ -7284,9 +7991,9 @@
         this.skew_factor = stream.readInt32();
       }
     }
-  }, _a150.fourcc = "cmin", _a150);
-  var _a151;
-  var cmpCBox = (_a151 = class extends FullBox {
+  }, _a157.fourcc = "cmin", _a157);
+  var _a158;
+  var cmpCBox = (_a158 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "CompressionConfigurationBox";
@@ -7296,9 +8003,9 @@
       this.compression_type = stream.readString(4);
       this.compressed_unit_type = stream.readUint8();
     }
-  }, _a151.fourcc = "cmpC", _a151);
-  var _a152;
-  var cmpdBox = (_a152 = class extends Box {
+  }, _a158.fourcc = "cmpC", _a158);
+  var _a159;
+  var cmpdBox = (_a159 = class extends Box {
     constructor(..._args) {
       super(..._args);
       this.box_name = "ComponentDefinitionBox";
@@ -7313,9 +8020,9 @@
         if (component_type >= 32768) this.component_type_urls.push(stream.readCString());
       }
     }
-  }, _a152.fourcc = "cmpd", _a152);
-  var _a153;
-  var co64Box = (_a153 = class extends FullBox {
+  }, _a159.fourcc = "cmpd", _a159);
+  var _a160;
+  var co64Box = (_a160 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "ChunkLargeOffsetBox";
@@ -7335,9 +8042,9 @@
       stream.writeUint32(this.chunk_offsets.length);
       for (let i = 0; i < this.chunk_offsets.length; i++) stream.writeUint64(this.chunk_offsets[i]);
     }
-  }, _a153.fourcc = "co64", _a153);
-  var _a154;
-  var CoLLBox = (_a154 = class extends FullBox {
+  }, _a160.fourcc = "co64", _a160);
+  var _a161;
+  var CoLLBox = (_a161 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "ContentLightLevelBox";
@@ -7347,7 +8054,7 @@
       this.maxCLL = stream.readUint16();
       this.maxFALL = stream.readUint16();
     }
-  }, _a154.fourcc = "CoLL", _a154);
+  }, _a161.fourcc = "CoLL", _a161);
   var SphereRegion = class {
     toString() {
       let s = "centre_azimuth: ";
@@ -7395,8 +8102,8 @@
       return s;
     }
   };
-  var _a155;
-  var coviBox = (_a155 = class extends FullBox {
+  var _a162;
+  var coviBox = (_a162 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "CoverageInformationBox";
@@ -7430,9 +8137,9 @@
       if (interpolate_included_flag) sphere_region.interpolate = (stream.readUint8() & 128) === 128;
       return sphere_region;
     }
-  }, _a155.fourcc = "covi", _a155);
-  var _a156;
-  var cprtBox = (_a156 = class extends FullBox {
+  }, _a162.fourcc = "covi", _a162);
+  var _a163;
+  var cprtBox = (_a163 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "CopyrightBox";
@@ -7442,9 +8149,9 @@
       this.parseLanguage(stream);
       this.notice = stream.readCString();
     }
-  }, _a156.fourcc = "cprt", _a156);
-  var _a157;
-  var cschBox = (_a157 = class extends FullBox {
+  }, _a163.fourcc = "cprt", _a163);
+  var _a164;
+  var cschBox = (_a164 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "CompatibleSchemeTypeBox";
@@ -7455,10 +8162,10 @@
       this.scheme_version = stream.readUint32();
       if (this.flags & 1) this.scheme_uri = stream.readCString();
     }
-  }, _a157.fourcc = "csch", _a157);
+  }, _a164.fourcc = "csch", _a164);
   var INT32_MAX = 2147483647;
-  var _a158;
-  var cslgBox = (_a158 = class extends FullBox {
+  var _a165;
+  var cslgBox = (_a165 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "CompositionToDecodeBox";
@@ -7502,9 +8209,9 @@
         stream.writeInt64(this.compositionEndTime);
       }
     }
-  }, _a158.fourcc = "cslg", _a158);
-  var _a159;
-  var cttsBox = (_a159 = class extends FullBox {
+  }, _a165.fourcc = "cslg", _a165);
+  var _a166;
+  var cttsBox = (_a166 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "CompositionOffsetBox";
@@ -7546,9 +8253,9 @@
         k++;
       }
     }
-  }, _a159.fourcc = "ctts", _a159);
-  var _a160;
-  var dac3Box = (_a160 = class extends Box {
+  }, _a166.fourcc = "ctts", _a166);
+  var _a167;
+  var dac3Box = (_a167 = class extends Box {
     constructor(..._args) {
       super(..._args);
       this.box_name = "AC3SpecificBox";
@@ -7564,9 +8271,9 @@
       this.lfeon = tmp_byte2 >> 2 & 1;
       this.bit_rate_code = tmp_byte2 & 3 | tmp_byte3 >> 5 & 7;
     }
-  }, _a160.fourcc = "dac3", _a160);
-  var _a161;
-  var dec3Box = (_a161 = class extends Box {
+  }, _a167.fourcc = "dac3", _a167);
+  var _a168;
+  var dec3Box = (_a168 = class extends Box {
     constructor(..._args) {
       super(..._args);
       this.box_name = "EC3SpecificBox";
@@ -7592,9 +8299,9 @@
         if (ind_sub.num_dep_sub > 0) ind_sub.chan_loc = (tmp_byte3 & 1) << 8 | stream.readUint8();
       }
     }
-  }, _a161.fourcc = "dec3", _a161);
-  var _a162;
-  var dfLaBox = (_a162 = class extends FullBox {
+  }, _a168.fourcc = "dec3", _a168);
+  var _a169;
+  var dfLaBox = (_a169 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "FLACSpecificBox";
@@ -7627,9 +8334,9 @@
       } while (flagAndType & LASTMETADATABLOCKFLAG_MASK);
       this.numMetadataBlocks = boxesFound.length + " (" + boxesFound.join(", ") + ")";
     }
-  }, _a162.fourcc = "dfLa", _a162);
-  var _a163;
-  var dimmBox = (_a163 = class extends Box {
+  }, _a169.fourcc = "dfLa", _a169);
+  var _a170;
+  var dimmBox = (_a170 = class extends Box {
     constructor(..._args) {
       super(..._args);
       this.box_name = "hintimmediateBytesSent";
@@ -7637,9 +8344,9 @@
     parse(stream) {
       this.bytessent = stream.readUint64();
     }
-  }, _a163.fourcc = "dimm", _a163);
-  var _a164;
-  var dmax = (_a164 = class extends Box {
+  }, _a170.fourcc = "dimm", _a170);
+  var _a171;
+  var dmax = (_a171 = class extends Box {
     constructor(..._args) {
       super(..._args);
       this.box_name = "hintlongestpacket";
@@ -7647,9 +8354,9 @@
     parse(stream) {
       this.time = stream.readUint32();
     }
-  }, _a164.fourcc = "dmax", _a164);
-  var _a165;
-  var dmedBox = (_a165 = class extends Box {
+  }, _a171.fourcc = "dmax", _a171);
+  var _a172;
+  var dmedBox = (_a172 = class extends Box {
     constructor(..._args) {
       super(..._args);
       this.box_name = "hintmediaBytesSent";
@@ -7657,9 +8364,28 @@
     parse(stream) {
       this.bytessent = stream.readUint64();
     }
-  }, _a165.fourcc = "dmed", _a165);
-  var _a166;
-  var dOpsBox = (_a166 = class extends Box {
+  }, _a172.fourcc = "dmed", _a172);
+  var _a173;
+  var dmlpBox = (_a173 = class extends Box {
+    constructor(..._args) {
+      super(..._args);
+      this.box_name = "MLPSpecificBox";
+    }
+    parse(stream) {
+      this.format_info = stream.readUint16();
+      const tmp_16 = stream.readUint16();
+      this.peak_data_rate = tmp_16 >> 1;
+      let reserved = tmp_16 & 1;
+      if (reserved !== 0) {
+        Log.error("BoxParser", "dmlp reserved parsing problem", stream.isofile);
+        return;
+      }
+      reserved = stream.readUint32();
+      if (reserved !== 0) Log.error("BoxParser", "dmlp reserved parsing problem", stream.isofile);
+    }
+  }, _a173.fourcc = "dmlp", _a173);
+  var _a174;
+  var dOpsBox = (_a174 = class extends Box {
     constructor(..._args) {
       super(..._args);
       this.box_name = "OpusSpecificBox";
@@ -7694,9 +8420,9 @@
         for (let i = 0; i < this.OutputChannelCount; i++) stream.writeUint8(this.ChannelMapping[i]);
       }
     }
-  }, _a166.fourcc = "dOps", _a166);
-  var _a167;
-  var drepBox = (_a167 = class extends Box {
+  }, _a174.fourcc = "dOps", _a174);
+  var _a175;
+  var drepBox = (_a175 = class extends Box {
     constructor(..._args) {
       super(..._args);
       this.box_name = "hintrepeatedBytesSent";
@@ -7704,9 +8430,9 @@
     parse(stream) {
       this.bytessent = stream.readUint64();
     }
-  }, _a167.fourcc = "drep", _a167);
-  var _a168;
-  var elstBox = (_a168 = class extends FullBox {
+  }, _a175.fourcc = "drep", _a175);
+  var _a176;
+  var elstBox = (_a176 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "EditListBox";
@@ -7746,7 +8472,7 @@
         stream.writeInt16(entry.media_rate_fraction);
       }
     }
-  }, _a168.fourcc = "elst", _a168);
+  }, _a176.fourcc = "elst", _a176);
   var EntityToGroup = class extends FullBox {
     parse(stream) {
       this.parseFullHeader(stream);
@@ -7759,120 +8485,120 @@
       }
     }
   };
-  var _a169;
-  var aebrBox = (_a169 = class extends EntityToGroup {
+  var _a177;
+  var aebrBox = (_a177 = class extends EntityToGroup {
     constructor(..._args) {
       super(..._args);
       this.box_name = "Auto exposure bracketing";
     }
-  }, _a169.fourcc = "aebr", _a169);
-  var _a170;
-  var afbrBox = (_a170 = class extends EntityToGroup {
+  }, _a177.fourcc = "aebr", _a177);
+  var _a178;
+  var afbrBox = (_a178 = class extends EntityToGroup {
     constructor(..._args2) {
       super(..._args2);
       this.box_name = "Flash exposure information";
     }
-  }, _a170.fourcc = "afbr", _a170);
-  var _a171;
-  var albcBox = (_a171 = class extends EntityToGroup {
+  }, _a178.fourcc = "afbr", _a178);
+  var _a179;
+  var albcBox = (_a179 = class extends EntityToGroup {
     constructor(..._args3) {
       super(..._args3);
       this.box_name = "Album collection";
     }
-  }, _a171.fourcc = "albc", _a171);
-  var _a172;
-  var altrBox = (_a172 = class extends EntityToGroup {
+  }, _a179.fourcc = "albc", _a179);
+  var _a180;
+  var altrBox = (_a180 = class extends EntityToGroup {
     constructor(..._args4) {
       super(..._args4);
       this.box_name = "Alternative entity";
     }
-  }, _a172.fourcc = "altr", _a172);
-  var _a173;
-  var brstBox = (_a173 = class extends EntityToGroup {
+  }, _a180.fourcc = "altr", _a180);
+  var _a181;
+  var brstBox = (_a181 = class extends EntityToGroup {
     constructor(..._args5) {
       super(..._args5);
       this.box_name = "Burst image";
     }
-  }, _a173.fourcc = "brst", _a173);
-  var _a174;
-  var dobrBox = (_a174 = class extends EntityToGroup {
+  }, _a181.fourcc = "brst", _a181);
+  var _a182;
+  var dobrBox = (_a182 = class extends EntityToGroup {
     constructor(..._args6) {
       super(..._args6);
       this.box_name = "Depth of field bracketing";
     }
-  }, _a174.fourcc = "dobr", _a174);
-  var _a175;
-  var eqivBox = (_a175 = class extends EntityToGroup {
+  }, _a182.fourcc = "dobr", _a182);
+  var _a183;
+  var eqivBox = (_a183 = class extends EntityToGroup {
     constructor(..._args7) {
       super(..._args7);
       this.box_name = "Equivalent entity";
     }
-  }, _a175.fourcc = "eqiv", _a175);
-  var _a176;
-  var favcBox = (_a176 = class extends EntityToGroup {
+  }, _a183.fourcc = "eqiv", _a183);
+  var _a184;
+  var favcBox = (_a184 = class extends EntityToGroup {
     constructor(..._args8) {
       super(..._args8);
       this.box_name = "Favorites collection";
     }
-  }, _a176.fourcc = "favc", _a176);
-  var _a177;
-  var fobrBox = (_a177 = class extends EntityToGroup {
+  }, _a184.fourcc = "favc", _a184);
+  var _a185;
+  var fobrBox = (_a185 = class extends EntityToGroup {
     constructor(..._args9) {
       super(..._args9);
       this.box_name = "Focus bracketing";
     }
-  }, _a177.fourcc = "fobr", _a177);
-  var _a178;
-  var iaugBox = (_a178 = class extends EntityToGroup {
+  }, _a185.fourcc = "fobr", _a185);
+  var _a186;
+  var iaugBox = (_a186 = class extends EntityToGroup {
     constructor(..._args10) {
       super(..._args10);
       this.box_name = "Image item with an audio track";
     }
-  }, _a178.fourcc = "iaug", _a178);
-  var _a179;
-  var panoBox = (_a179 = class extends EntityToGroup {
+  }, _a186.fourcc = "iaug", _a186);
+  var _a187;
+  var panoBox = (_a187 = class extends EntityToGroup {
     constructor(..._args11) {
       super(..._args11);
       this.box_name = "Panorama";
     }
-  }, _a179.fourcc = "pano", _a179);
-  var _a180;
-  var slidBox = (_a180 = class extends EntityToGroup {
+  }, _a187.fourcc = "pano", _a187);
+  var _a188;
+  var slidBox = (_a188 = class extends EntityToGroup {
     constructor(..._args12) {
       super(..._args12);
       this.box_name = "Slideshow";
     }
-  }, _a180.fourcc = "slid", _a180);
-  var _a181;
-  var sterBox = (_a181 = class extends EntityToGroup {
+  }, _a188.fourcc = "slid", _a188);
+  var _a189;
+  var sterBox = (_a189 = class extends EntityToGroup {
     constructor(..._args13) {
       super(..._args13);
       this.box_name = "Stereo";
     }
-  }, _a181.fourcc = "ster", _a181);
-  var _a182;
-  var tsynBox = (_a182 = class extends EntityToGroup {
+  }, _a189.fourcc = "ster", _a189);
+  var _a190;
+  var tsynBox = (_a190 = class extends EntityToGroup {
     constructor(..._args14) {
       super(..._args14);
       this.box_name = "Time-synchronized capture";
     }
-  }, _a182.fourcc = "tsyn", _a182);
-  var _a183;
-  var wbbrBox = (_a183 = class extends EntityToGroup {
+  }, _a190.fourcc = "tsyn", _a190);
+  var _a191;
+  var wbbrBox = (_a191 = class extends EntityToGroup {
     constructor(..._args15) {
       super(..._args15);
       this.box_name = "White balance bracketing";
     }
-  }, _a183.fourcc = "wbbr", _a183);
-  var _a184;
-  var prgrBox = (_a184 = class extends EntityToGroup {
+  }, _a191.fourcc = "wbbr", _a191);
+  var _a192;
+  var prgrBox = (_a192 = class extends EntityToGroup {
     constructor(..._args16) {
       super(..._args16);
       this.box_name = "Progressive rendering";
     }
-  }, _a184.fourcc = "prgr", _a184);
-  var _a185;
-  var pymdBox = (_a185 = class extends EntityToGroup {
+  }, _a192.fourcc = "prgr", _a192);
+  var _a193;
+  var pymdBox = (_a193 = class extends EntityToGroup {
     constructor(..._args17) {
       super(..._args17);
       this.box_name = "Image pyramid";
@@ -7897,9 +8623,9 @@
         this.tiles_in_layer_column_minus1[i] = stream.readUint16();
       }
     }
-  }, _a185.fourcc = "pymd", _a185);
-  var _a186;
-  var fielBox = (_a186 = class extends Box {
+  }, _a193.fourcc = "pymd", _a193);
+  var _a194;
+  var fielBox = (_a194 = class extends Box {
     constructor(..._args) {
       super(..._args);
       this.box_name = "FieldHandlingBox";
@@ -7908,9 +8634,9 @@
       this.fieldCount = stream.readUint8();
       this.fieldOrdering = stream.readUint8();
     }
-  }, _a186.fourcc = "fiel", _a186);
-  var _a187;
-  var frmaBox = (_a187 = class extends Box {
+  }, _a194.fourcc = "fiel", _a194);
+  var _a195;
+  var frmaBox = (_a195 = class extends Box {
     constructor(..._args) {
       super(..._args);
       this.box_name = "OriginalFormatBox";
@@ -7918,9 +8644,9 @@
     parse(stream) {
       this.data_format = stream.readString(4);
     }
-  }, _a187.fourcc = "frma", _a187);
-  var _a188;
-  var imirBox = (_a188 = class extends Box {
+  }, _a195.fourcc = "frma", _a195);
+  var _a196;
+  var imirBox = (_a196 = class extends Box {
     constructor(..._args) {
       super(..._args);
       this.box_name = "ImageMirror";
@@ -7930,9 +8656,9 @@
       this.reserved = tmp >> 7;
       this.axis = tmp & 1;
     }
-  }, _a188.fourcc = "imir", _a188);
-  var _a189;
-  var ipmaBox = (_a189 = class extends FullBox {
+  }, _a196.fourcc = "imir", _a196);
+  var _a197;
+  var ipmaBox = (_a197 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "ItemPropertyAssociationBox";
@@ -7958,9 +8684,9 @@
         });
       }
     }
-  }, _a189.fourcc = "ipma", _a189);
-  var _a190;
-  var irotBox = (_a190 = class extends Box {
+  }, _a197.fourcc = "ipma", _a197);
+  var _a198;
+  var irotBox = (_a198 = class extends Box {
     constructor(..._args) {
       super(..._args);
       this.box_name = "ImageRotation";
@@ -7968,9 +8694,9 @@
     parse(stream) {
       this.angle = stream.readUint8() & 3;
     }
-  }, _a190.fourcc = "irot", _a190);
-  var _a191;
-  var ispeBox = (_a191 = class extends FullBox {
+  }, _a198.fourcc = "irot", _a198);
+  var _a199;
+  var ispeBox = (_a199 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "ImageSpatialExtentsProperty";
@@ -7980,9 +8706,9 @@
       this.image_width = stream.readUint32();
       this.image_height = stream.readUint32();
     }
-  }, _a191.fourcc = "ispe", _a191);
-  var _a192;
-  var itaiBox = (_a192 = class extends FullBox {
+  }, _a199.fourcc = "ispe", _a199);
+  var _a200;
+  var itaiBox = (_a200 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "TAITimestampBox";
@@ -7994,9 +8720,9 @@
       this.timestamp_generation_failure = status_bits >> 6 & 1;
       this.timestamp_is_modified = status_bits >> 5 & 1;
     }
-  }, _a192.fourcc = "itai", _a192);
-  var _a193;
-  var kindBox = (_a193 = class extends FullBox {
+  }, _a200.fourcc = "itai", _a200);
+  var _a201;
+  var kindBox = (_a201 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "KindBox";
@@ -8015,9 +8741,9 @@
       stream.writeCString(this.schemeURI);
       if (this.value) stream.writeCString(this.value);
     }
-  }, _a193.fourcc = "kind", _a193);
-  var _a194;
-  var levaBox = (_a194 = class extends FullBox {
+  }, _a201.fourcc = "kind", _a201);
+  var _a202;
+  var levaBox = (_a202 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "LevelAssignmentBox";
@@ -8053,9 +8779,9 @@
         }
       }
     }
-  }, _a194.fourcc = "leva", _a194);
-  var _a195;
-  var lhvCBox = (_a195 = class extends Box {
+  }, _a202.fourcc = "leva", _a202);
+  var _a203;
+  var lhvCBox = (_a203 = class extends Box {
     constructor(..._args) {
       super(..._args);
       this.box_name = "LHEVCConfigurationBox";
@@ -8083,9 +8809,9 @@
         }
       }
     }
-  }, _a195.fourcc = "lhvC", _a195);
-  var _a196;
-  var lselBox = (_a196 = class extends Box {
+  }, _a203.fourcc = "lhvC", _a203);
+  var _a204;
+  var lselBox = (_a204 = class extends Box {
     constructor(..._args) {
       super(..._args);
       this.box_name = "LayerSelectorProperty";
@@ -8093,9 +8819,9 @@
     parse(stream) {
       this.layer_id = stream.readUint16();
     }
-  }, _a196.fourcc = "lsel", _a196);
-  var _a197;
-  var maxrBox = (_a197 = class extends Box {
+  }, _a204.fourcc = "lsel", _a204);
+  var _a205;
+  var maxrBox = (_a205 = class extends Box {
     constructor(..._args) {
       super(..._args);
       this.box_name = "hintmaxrate";
@@ -8104,7 +8830,7 @@
       this.period = stream.readUint32();
       this.bytes = stream.readUint32();
     }
-  }, _a197.fourcc = "maxr", _a197);
+  }, _a205.fourcc = "maxr", _a205);
   var ColorPoint = class {
     constructor(x, y) {
       this.x = x;
@@ -8114,8 +8840,8 @@
       return "(" + this.x + "," + this.y + ")";
     }
   };
-  var _a198;
-  var mdcvBox = (_a198 = class extends Box {
+  var _a206;
+  var mdcvBox = (_a206 = class extends Box {
     constructor(..._args) {
       super(..._args);
       this.box_name = "MasteringDisplayColourVolumeBox";
@@ -8129,9 +8855,9 @@
       this.max_display_mastering_luminance = stream.readUint32();
       this.min_display_mastering_luminance = stream.readUint32();
     }
-  }, _a198.fourcc = "mdcv", _a198);
-  var _a199;
-  var mfroBox = (_a199 = class extends FullBox {
+  }, _a206.fourcc = "mdcv", _a206);
+  var _a207;
+  var mfroBox = (_a207 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "MovieFragmentRandomAccessOffsetBox";
@@ -8140,9 +8866,192 @@
       this.parseFullHeader(stream);
       this._size = stream.readUint32();
     }
-  }, _a199.fourcc = "mfro", _a199);
-  var _a200;
-  var mskCBox = (_a200 = class extends FullBox {
+  }, _a207.fourcc = "mfro", _a207);
+  var _a208;
+  var ndwtBox = (_a208 = class extends Box {
+    constructor(..._args) {
+      super(..._args);
+      this.box_name = "NominalDiffuseWhite";
+    }
+    parse(stream) {
+      this.diffuse_white_luminance = stream.readUint32();
+    }
+  }, _a208.fourcc = "ndwt", _a208);
+  var _a209;
+  var reveBox = (_a209 = class extends Box {
+    constructor(..._args) {
+      super(..._args);
+      this.box_name = "ReferenceViewingEnvironment";
+    }
+    parse(stream) {
+      this.surround_luminance = stream.readUint32();
+      this.surround_light_x = stream.readUint16();
+      this.surround_light_y = stream.readUint16();
+      this.periphery_luminance = stream.readUint32();
+      this.periphery_light_x = stream.readUint16();
+      this.periphery_light_y = stream.readUint16();
+    }
+  }, _a209.fourcc = "reve", _a209);
+  var _a210;
+  var miniBox = (_a210 = class extends Box {
+    constructor(..._args) {
+      super(..._args);
+      this.box_name = "MinimizedImageBox";
+    }
+    parse(stream) {
+      stream.enterBitMode();
+      this.version = stream.readBits(2);
+      this.explicit_codec_types_flag = stream.readFlag();
+      this.float_flag = stream.readFlag();
+      this.full_range_flag = stream.readFlag();
+      this.alpha_flag = stream.readFlag();
+      this.explicit_cicp_flag = stream.readFlag();
+      this.hdr_flag = stream.readFlag();
+      this.icc_flag = stream.readFlag();
+      this.exif_flag = stream.readFlag();
+      this.xmp_flag = stream.readFlag();
+      this.chroma_subsampling = stream.readBits(2);
+      this.orientation_minus1 = stream.readBits(3);
+      this.large_dimensions_flag = stream.readFlag();
+      this.width_minus1 = stream.readBits(this.large_dimensions_flag ? 15 : 7);
+      this.height_minus1 = stream.readBits(this.large_dimensions_flag ? 15 : 7);
+      if (this.chroma_subsampling === 1 || this.chroma_subsampling === 2) this.chroma_is_horizontally_centered = stream.readFlag();
+      if (this.chroma_subsampling === 1) this.chroma_is_vertically_centered = stream.readFlag();
+      if (this.float_flag) this.bit_depth = 1 << stream.readBits(2) + 4;
+      else this.bit_depth = stream.readFlag() ? stream.readBits(3) + 9 : 8;
+      if (this.alpha_flag) this.alpha_is_premultiplied = stream.readFlag();
+      if (this.explicit_cicp_flag) {
+        this.colour_primaries = stream.readBits(8);
+        this.transfer_characteristics = stream.readBits(8);
+        this.matrix_coefficients = stream.readBits(8);
+      } else {
+        this.colour_primaries = this.icc_flag ? 2 : 1;
+        this.transfer_characteristics = this.icc_flag ? 2 : 13;
+        this.matrix_coefficients = this.chroma_subsampling === 0 ? 2 : 6;
+      }
+      if (this.explicit_codec_types_flag) {
+        this.infe_type = stream.readString(4);
+        this.codec_config_type = stream.readString(4);
+      } else {
+        this.infe_type = "[deduced from ftyp minor_version]";
+        this.codec_config_type = "[deduced from ftyp minor_version]";
+      }
+      if (this.hdr_flag) {
+        this.gainmap_flag = stream.readFlag();
+        if (this.gainmap_flag) {
+          if (stream.readFlag()) {
+            this.gainmap_width_minus1 = this.width_minus1;
+            this.gainmap_height_minus1 = this.height_minus1;
+          } else {
+            this.gainmap_width_minus1 = stream.readBits(this.large_dimensions_flag ? 15 : 7);
+            this.gainmap_height_minus1 = stream.readBits(this.large_dimensions_flag ? 15 : 7);
+          }
+          this.gainmap_matrix_coefficients = stream.readBits(8);
+          this.gainmap_full_range_flag = stream.readFlag();
+          this.gainmap_chroma_subsampling = stream.readBits(2);
+          if (this.gainmap_chroma_subsampling === 1 || this.gainmap_chroma_subsampling === 2) this.gainmap_chroma_is_horizontally_centered = stream.readFlag();
+          if (this.gainmap_chroma_subsampling === 1) this.gainmap_chroma_is_vertically_centered = stream.readFlag();
+          this.gainmap_float_flag = stream.readFlag();
+          if (this.gainmap_float_flag) this.gainmap_bit_depth = 1 << stream.readBits(2) + 4;
+          else this.gainmap_bit_depth = stream.readFlag() ? stream.readBits(3) + 9 : 8;
+          this.tmap_icc_flag = stream.readFlag();
+          this.tmap_explicit_cicp_flag = stream.readFlag();
+          if (this.tmap_explicit_cicp_flag) {
+            this.tmap_colour_primaries = stream.readBits(8);
+            this.tmap_transfer_characteristics = stream.readBits(8);
+            this.tmap_matrix_coefficients = stream.readBits(8);
+            this.tmap_full_range_flag = stream.readFlag();
+          } else {
+            this.tmap_colour_primaries = 1;
+            this.tmap_transfer_characteristics = 13;
+            this.tmap_matrix_coefficients = 6;
+            this.tmap_full_range_flag = true;
+          }
+        }
+        const parse_hdr_boxes = (parent) => {
+          const clli_flag = stream.readFlag();
+          const mdcv_flag = stream.readFlag();
+          const cclv_flag = stream.readFlag();
+          const amve_flag = stream.readFlag();
+          const reve_flag = stream.readFlag();
+          const ndwt_flag = stream.readFlag();
+          if (clli_flag) {
+            const clli = new clliBox();
+            clli.parse(stream);
+            parent.addBox(clli);
+          }
+          if (mdcv_flag) {
+            const mdcv = new mdcvBox();
+            mdcv.parse(stream);
+            parent.addBox(mdcv);
+          }
+          if (cclv_flag) {
+            const cclv = new cclvBox();
+            cclv.parse(stream);
+            parent.addBox(cclv);
+          }
+          if (amve_flag) {
+            const amve = new amveBox();
+            amve.parse(stream);
+            parent.addBox(amve);
+          }
+          if (reve_flag) {
+            const reve = new reveBox();
+            reve.parse(stream);
+            parent.addBox(reve);
+          }
+          if (ndwt_flag) {
+            const ndwt = new ndwtBox();
+            ndwt.parse(stream);
+            parent.addBox(ndwt);
+          }
+        };
+        parse_hdr_boxes(this);
+        if (this.gainmap_flag) {
+          const tmap_placeholder = new Box();
+          tmap_placeholder.box_name = "tmap";
+          parse_hdr_boxes(tmap_placeholder);
+          if (tmap_placeholder.boxes) this.addBox(tmap_placeholder);
+        }
+      }
+      if (this.icc_flag || this.exif_flag || this.xmp_flag || this.hdr_flag && this.gainmap_flag) this.large_metadata_flag = stream.readFlag();
+      this.large_codec_config_flag = stream.readFlag();
+      this.large_item_data_flag = stream.readFlag();
+      if (this.icc_flag) this.icc_data_size_minus1 = stream.readBits(this.large_metadata_flag ? 20 : 10);
+      if (this.hdr_flag && this.gainmap_flag && this.tmap_icc_flag) this.tmap_icc_data_size_minus1 = stream.readBits(this.large_metadata_flag ? 20 : 10);
+      if (this.hdr_flag && this.gainmap_flag) this.gainmap_metadata_size = stream.readBits(this.large_metadata_flag ? 20 : 10);
+      if (this.hdr_flag && this.gainmap_flag) this.gainmap_item_data_size = stream.readBits(this.large_item_data_flag ? 28 : 15);
+      if (this.hdr_flag && this.gainmap_flag && this.gainmap_item_data_size > 0) this.gainmap_item_codec_config_size = stream.readBits(this.large_codec_config_flag ? 12 : 3);
+      this.main_item_codec_config_size = stream.readBits(this.large_codec_config_flag ? 12 : 3);
+      this.main_item_data_size_minus1 = stream.readBits(this.large_item_data_flag ? 28 : 15);
+      if (this.alpha_flag) this.alpha_item_data_size = stream.readBits(this.large_item_data_flag ? 28 : 15);
+      if (this.alpha_flag && this.alpha_item_data_size > 0) this.alpha_item_codec_config_size = stream.readBits(this.large_codec_config_flag ? 12 : 3);
+      if (this.exif_flag || this.xmp_flag) this.exif_xmp_compressed_flag = stream.readFlag();
+      if (this.exif_flag) this.exif_data_size_minus1 = stream.readBits(this.large_metadata_flag ? 20 : 10);
+      if (this.xmp_flag) this.xmp_data_size_minus1 = stream.readBits(this.large_metadata_flag ? 20 : 10);
+      stream.exitBitMode();
+    }
+  }, _a210.fourcc = "mini", _a210);
+  var _a211;
+  var mhaCBox = (_a211 = class extends Box {
+    constructor(..._args) {
+      super(..._args);
+      this.box_name = "MHAConfigurationBox";
+    }
+    parse(stream) {
+      this.configurationVersion = stream.readUint8();
+      if (this.configurationVersion !== 1) {
+        Log.error("BoxParser", "mhaC version " + this.configurationVersion + " not supported", stream.isofile);
+        return;
+      }
+      this.mpegh3daProfileLevelIndication = stream.readUint8();
+      this.referenceChannelLayout = stream.readUint8();
+      this.mpegh3daConfigLength = stream.readUint16();
+      this.mpegh3daConfig = stream.readUint8Array(this.mpegh3daConfigLength);
+    }
+  }, _a211.fourcc = "mhaC", _a211);
+  var _a212;
+  var mskCBox = (_a212 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "MaskConfigurationProperty";
@@ -8151,9 +9060,9 @@
       this.parseFullHeader(stream);
       this.bits_per_pixel = stream.readUint8();
     }
-  }, _a200.fourcc = "mskC", _a200);
-  var _a201;
-  var npckBox = (_a201 = class extends Box {
+  }, _a212.fourcc = "mskC", _a212);
+  var _a213;
+  var npckBox = (_a213 = class extends Box {
     constructor(..._args) {
       super(..._args);
       this.box_name = "hintPacketsSent";
@@ -8161,9 +9070,9 @@
     parse(stream) {
       this.packetssent = stream.readUint32();
     }
-  }, _a201.fourcc = "npck", _a201);
-  var _a202;
-  var numpBox = (_a202 = class extends Box {
+  }, _a213.fourcc = "npck", _a213);
+  var _a214;
+  var numpBox = (_a214 = class extends Box {
     constructor(..._args) {
       super(..._args);
       this.box_name = "hintPacketsSent";
@@ -8171,15 +9080,15 @@
     parse(stream) {
       this.packetssent = stream.readUint64();
     }
-  }, _a202.fourcc = "nump", _a202);
+  }, _a214.fourcc = "nump", _a214);
   var PaddingBit = class {
     constructor(pad1, pad2) {
       this.pad1 = pad1;
       this.pad2 = pad2;
     }
   };
-  var _a203;
-  var padbBox = (_a203 = class extends FullBox {
+  var _a215;
+  var padbBox = (_a215 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "PaddingBitsBox";
@@ -8195,9 +9104,9 @@
         this.padbits.push(new PaddingBit(pad1, pad2));
       }
     }
-  }, _a203.fourcc = "padb", _a203);
-  var _a204;
-  var paspBox = (_a204 = class extends Box {
+  }, _a215.fourcc = "padb", _a215);
+  var _a216;
+  var paspBox = (_a216 = class extends Box {
     constructor(..._args) {
       super(..._args);
       this.box_name = "PixelAspectRatioBox";
@@ -8206,9 +9115,9 @@
       this.hSpacing = stream.readUint32();
       this.vSpacing = stream.readUint32();
     }
-  }, _a204.fourcc = "pasp", _a204);
-  var _a205;
-  var paylBox = (_a205 = class extends Box {
+  }, _a216.fourcc = "pasp", _a216);
+  var _a217;
+  var paylBox = (_a217 = class extends Box {
     constructor(..._args) {
       super(..._args);
       this.box_name = "CuePayloadBox";
@@ -8216,9 +9125,9 @@
     parse(stream) {
       this.text = stream.readString(this.size - this.hdr_size);
     }
-  }, _a205.fourcc = "payl", _a205);
-  var _a206;
-  var paytBox = (_a206 = class extends Box {
+  }, _a217.fourcc = "payl", _a217);
+  var _a218;
+  var paytBox = (_a218 = class extends Box {
     constructor(..._args) {
       super(..._args);
       this.box_name = "hintpayloadID";
@@ -8228,9 +9137,9 @@
       const count = stream.readUint8();
       this.rtpmap_string = stream.readString(count);
     }
-  }, _a206.fourcc = "payt", _a206);
-  var _a207;
-  var pdinBox = (_a207 = class extends FullBox {
+  }, _a218.fourcc = "payt", _a218);
+  var _a219;
+  var pdinBox = (_a219 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "ProgressiveDownloadInfoBox";
@@ -8245,9 +9154,11 @@
         this.initial_delay[i] = stream.readUint32();
       }
     }
-  }, _a207.fourcc = "pdin", _a207);
-  var _a208;
-  var pixiBox = (_a208 = class extends FullBox {
+  }, _a219.fourcc = "pdin", _a219);
+  var pixiBoxChannel = class extends Box {
+  };
+  var _a220;
+  var pixiBox = (_a220 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "PixelInformationProperty";
@@ -8255,12 +9166,32 @@
     parse(stream) {
       this.parseFullHeader(stream);
       this.num_channels = stream.readUint8();
-      this.bits_per_channels = [];
-      for (let i = 0; i < this.num_channels; i++) this.bits_per_channels[i] = stream.readUint8();
+      const channels = [];
+      for (let i = 0; i < this.num_channels; i++) {
+        channels[i] = new pixiBoxChannel();
+        channels[i].depth = stream.readUint8();
+      }
+      if (this.flags & 1) {
+        stream.enterBitMode();
+        for (let i = 0; i < this.num_channels; i++) {
+          channels[i].channel_idc = stream.readBits(3);
+          channels[i].reserved = stream.readBits(1);
+          channels[i].component_format = stream.readBits(2);
+          const subsampling_flag = stream.readFlag();
+          const channel_label_flag = stream.readFlag();
+          if (subsampling_flag) {
+            channels[i].subsampling_type = stream.readBits(4);
+            channels[i].subsampling_location = stream.readBits(4);
+          }
+          if (channel_label_flag) channels[i].channel_label = stream.readCString();
+        }
+        stream.exitBitMode();
+      }
+      for (let i = 0; i < this.num_channels; i++) this.addEntry(channels[i]);
     }
-  }, _a208.fourcc = "pixi", _a208);
-  var _a209;
-  var pmaxBox = (_a209 = class extends Box {
+  }, _a220.fourcc = "pixi", _a220);
+  var _a221;
+  var pmaxBox = (_a221 = class extends Box {
     constructor(..._args) {
       super(..._args);
       this.box_name = "hintlargestpacket";
@@ -8268,9 +9199,9 @@
     parse(stream) {
       this.bytes = stream.readUint32();
     }
-  }, _a209.fourcc = "pmax", _a209);
-  var _a210;
-  var prdiBox = (_a210 = class extends FullBox {
+  }, _a221.fourcc = "pmax", _a221);
+  var _a222;
+  var prdiBox = (_a222 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "ProgressiveDerivedImageItemInformationProperty";
@@ -8281,9 +9212,9 @@
       this.item_count = [];
       if (this.flags & 2) for (let i = 0; i < this.step_count; i++) this.item_count[i] = stream.readUint16();
     }
-  }, _a210.fourcc = "prdi", _a210);
-  var _a211;
-  var prfrBox = (_a211 = class extends FullBox {
+  }, _a222.fourcc = "prdi", _a222);
+  var _a223;
+  var prfrBox = (_a223 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "ProjectionFormatBox";
@@ -8292,9 +9223,9 @@
       this.parseFullHeader(stream);
       this.projection_type = stream.readUint8() & 31;
     }
-  }, _a211.fourcc = "prfr", _a211);
-  var _a212;
-  var prftBox = (_a212 = class extends FullBox {
+  }, _a223.fourcc = "prfr", _a223);
+  var _a224;
+  var prftBox = (_a224 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "ProducerReferenceTimeBox";
@@ -8306,9 +9237,9 @@
       if (this.version === 0) this.media_time = stream.readUint32();
       else this.media_time = stream.readUint64();
     }
-  }, _a212.fourcc = "prft", _a212);
-  var _a213;
-  var psshBox = (_a213 = class extends FullBox {
+  }, _a224.fourcc = "prft", _a224);
+  var _a225;
+  var psshBox = (_a225 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "ProtectionSystemSpecificHeaderBox";
@@ -8324,9 +9255,9 @@
       const datasize = stream.readUint32();
       if (datasize > 0) this.protection_data = stream.readUint8Array(datasize);
     }
-  }, _a213.fourcc = "pssh", _a213);
-  var _a214;
-  var clefBox = (_a214 = class extends FullBox {
+  }, _a225.fourcc = "pssh", _a225);
+  var _a226;
+  var clefBox = (_a226 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "TrackCleanApertureDimensionsBox";
@@ -8336,25 +9267,27 @@
       this.width = stream.readUint32();
       this.height = stream.readUint32();
     }
-  }, _a214.fourcc = "clef", _a214);
+  }, _a226.fourcc = "clef", _a226);
   function parseItifData(type, data) {
     if (type === dataBox.Types.UTF8) return new TextDecoder("utf-8").decode(data);
     const view = new DataView(data.buffer);
-    if (type === dataBox.Types.BE_UNSIGNED_INT) if (data.length === 1) return view.getUint8(0);
-    else if (data.length === 2) return view.getUint16(0, false);
-    else if (data.length === 4) return view.getUint32(0, false);
-    else if (data.length === 8) return view.getBigUint64(0, false);
-    else throw new Error("Unsupported ITIF_TYPE_BE_UNSIGNED_INT length " + data.length);
-    else if (type === dataBox.Types.BE_SIGNED_INT) if (data.length === 1) return view.getInt8(0);
-    else if (data.length === 2) return view.getInt16(0, false);
-    else if (data.length === 4) return view.getInt32(0, false);
-    else if (data.length === 8) return view.getBigInt64(0, false);
-    else throw new Error("Unsupported ITIF_TYPE_BE_SIGNED_INT length " + data.length);
-    else if (type === dataBox.Types.BE_FLOAT32) return view.getFloat32(0, false);
+    if (type === dataBox.Types.BE_UNSIGNED_INT) {
+      if (data.length === 1) return view.getUint8(0);
+      else if (data.length === 2) return view.getUint16(0, false);
+      else if (data.length === 4) return view.getUint32(0, false);
+      else if (data.length === 8) return view.getBigUint64(0, false);
+      else throw new Error("Unsupported ITIF_TYPE_BE_UNSIGNED_INT length " + data.length);
+    } else if (type === dataBox.Types.BE_SIGNED_INT) {
+      if (data.length === 1) return view.getInt8(0);
+      else if (data.length === 2) return view.getInt16(0, false);
+      else if (data.length === 4) return view.getInt32(0, false);
+      else if (data.length === 8) return view.getBigInt64(0, false);
+      else throw new Error("Unsupported ITIF_TYPE_BE_SIGNED_INT length " + data.length);
+    } else if (type === dataBox.Types.BE_FLOAT32) return view.getFloat32(0, false);
     Log.warn("DataBox", "Unsupported or unimplemented itif data type: " + type);
   }
-  var _a215;
-  var dataBox = (_a215 = class extends Box {
+  var _a227;
+  var dataBox = (_a227 = class extends Box {
     constructor(..._args) {
       super(..._args);
       this.box_name = "DataBox";
@@ -8374,7 +9307,7 @@
       this.raw = stream.readUint8Array(this.size - this.hdr_size - 8);
       this.value = parseItifData(this.valueType, this.raw);
     }
-  }, _a215.fourcc = "data", _a215.Types = {
+  }, _a227.fourcc = "data", _a227.Types = {
     RESERVED: 0,
     UTF8: 1,
     UTF16: 2,
@@ -8401,9 +9334,9 @@
     BE_UNSIGNED_INT32: 77,
     BE_UNSIGNED_INT64: 78,
     BE_FLOAT64_AFFINE_TRANSFORM: 79
-  }, _a215);
-  var _a216;
-  var enofBox = (_a216 = class extends FullBox {
+  }, _a227);
+  var _a228;
+  var enofBox = (_a228 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "TrackEncodedPixelsDimensionsBox";
@@ -8413,9 +9346,9 @@
       this.width = stream.readUint32();
       this.height = stream.readUint32();
     }
-  }, _a216.fourcc = "enof", _a216);
-  var _a217;
-  var ilstBox = (_a217 = class extends Box {
+  }, _a228.fourcc = "enof", _a228);
+  var _a229;
+  var ilstBox = (_a229 = class extends Box {
     constructor(..._args) {
       super(..._args);
       this.box_name = "IlstBox";
@@ -8431,9 +9364,9 @@
         total -= size;
       }
     }
-  }, _a217.fourcc = "ilst", _a217);
-  var _a218;
-  var keysBox = (_a218 = class extends FullBox {
+  }, _a229.fourcc = "ilst", _a229);
+  var _a230;
+  var keysBox = (_a230 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "KeysBox";
@@ -8447,9 +9380,9 @@
         this.keys[i + 1] = stream.readString(len - 4);
       }
     }
-  }, _a218.fourcc = "keys", _a218);
-  var _a219;
-  var profBox = (_a219 = class extends FullBox {
+  }, _a230.fourcc = "keys", _a230);
+  var _a231;
+  var profBox = (_a231 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "TrackProductionApertureDimensionsBox";
@@ -8459,9 +9392,9 @@
       this.width = stream.readUint32();
       this.height = stream.readUint32();
     }
-  }, _a219.fourcc = "prof", _a219);
-  var _a220;
-  var taptBox = (_a220 = class extends ContainerBox {
+  }, _a231.fourcc = "prof", _a231);
+  var _a232;
+  var taptBox = (_a232 = class extends ContainerBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "TrackApertureModeDimensionsBox";
@@ -8474,9 +9407,9 @@
         "enof"
       ];
     }
-  }, _a220.fourcc = "tapt", _a220);
-  var _a221;
-  var rtp_Box = (_a221 = class extends Box {
+  }, _a232.fourcc = "tapt", _a232);
+  var _a233;
+  var rtp_Box = (_a233 = class extends Box {
     constructor(..._args) {
       super(..._args);
       this.box_name = "rtpmoviehintinformation";
@@ -8485,9 +9418,9 @@
       this.descriptionformat = stream.readString(4);
       this.sdptext = stream.readString(this.size - this.hdr_size - 4);
     }
-  }, _a221.fourcc = "rtp ", _a221);
-  var _a222;
-  var saioBox = (_a222 = class extends FullBox {
+  }, _a233.fourcc = "rtp ", _a233);
+  var _a234;
+  var saioBox = (_a234 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "SampleAuxiliaryInformationOffsetsBox";
@@ -8503,9 +9436,9 @@
       for (let i = 0; i < this.entry_count; i++) if (this.version === 0) this.offset[i] = stream.readUint32();
       else this.offset[i] = stream.readUint64();
     }
-  }, _a222.fourcc = "saio", _a222);
-  var _a223;
-  var saizBox = (_a223 = class extends FullBox {
+  }, _a234.fourcc = "saio", _a234);
+  var _a235;
+  var saizBox = (_a235 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "SampleAuxiliaryInformationSizesBox";
@@ -8521,7 +9454,7 @@
       this.sample_info_size = [];
       if (this.default_sample_info_size === 0) for (let i = 0; i < this.sample_count; i++) this.sample_info_size[i] = stream.readUint8();
     }
-  }, _a223.fourcc = "saiz", _a223);
+  }, _a235.fourcc = "saiz", _a235);
   var Pixel = class {
     constructor(bad_pixel_row, bad_pixel_column) {
       this.bad_pixel_row = bad_pixel_row;
@@ -8531,8 +9464,8 @@
       return "[row: " + this.bad_pixel_row + ", column: " + this.bad_pixel_column + "]";
     }
   };
-  var _a224;
-  var sbpmBox = (_a224 = class extends FullBox {
+  var _a236;
+  var sbpmBox = (_a236 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "SensorBadPixelsMapBox";
@@ -8558,9 +9491,9 @@
         this.bad_pixels.push(new Pixel(row, col));
       }
     }
-  }, _a224.fourcc = "sbpm", _a224);
-  var _a225;
-  var schmBox = (_a225 = class extends FullBox {
+  }, _a236.fourcc = "sbpm", _a236);
+  var _a237;
+  var schmBox = (_a237 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "SchemeTypeBox";
@@ -8571,9 +9504,9 @@
       this.scheme_version = stream.readUint32();
       if (this.flags & 1) this.scheme_uri = stream.readString(this.size - this.hdr_size - 8);
     }
-  }, _a225.fourcc = "schm", _a225);
-  var _a226;
-  var sdp_Box = (_a226 = class extends Box {
+  }, _a237.fourcc = "schm", _a237);
+  var _a238;
+  var sdp_Box = (_a238 = class extends Box {
     constructor(..._args) {
       super(..._args);
       this.box_name = "rtptracksdphintinformation";
@@ -8581,16 +9514,16 @@
     parse(stream) {
       this.sdptext = stream.readString(this.size - this.hdr_size);
     }
-  }, _a226.fourcc = "sdp ", _a226);
-  var _a227;
-  var sencBox = (_a227 = class extends FullBox {
+  }, _a238.fourcc = "sdp ", _a238);
+  var _a239;
+  var sencBox = (_a239 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "SampleEncryptionBox";
     }
-  }, _a227.fourcc = "senc", _a227);
-  var _a228;
-  var SmDmBox = (_a228 = class extends FullBox {
+  }, _a239.fourcc = "senc", _a239);
+  var _a240;
+  var SmDmBox = (_a240 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "SMPTE2086MasteringDisplayMetadataBox";
@@ -8608,9 +9541,9 @@
       this.luminanceMax = stream.readUint32();
       this.luminanceMin = stream.readUint32();
     }
-  }, _a228.fourcc = "SmDm", _a228);
-  var _a229;
-  var sratBox = (_a229 = class extends FullBox {
+  }, _a240.fourcc = "SmDm", _a240);
+  var _a241;
+  var sratBox = (_a241 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "SamplingRateBox";
@@ -8619,9 +9552,9 @@
       this.parseFullHeader(stream);
       this.sampling_rate = stream.readUint32();
     }
-  }, _a229.fourcc = "srat", _a229);
-  var _a230;
-  var stdpBox = (_a230 = class extends FullBox {
+  }, _a241.fourcc = "srat", _a241);
+  var _a242;
+  var stdpBox = (_a242 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "DegradationPriorityBox";
@@ -8632,9 +9565,9 @@
       this.priority = [];
       for (let i = 0; i < count; i++) this.priority[i] = stream.readUint16();
     }
-  }, _a230.fourcc = "stdp", _a230);
-  var _a231;
-  var striBox = (_a231 = class extends FullBox {
+  }, _a242.fourcc = "stdp", _a242);
+  var _a243;
+  var striBox = (_a243 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "SubTrackInformationBox";
@@ -8648,9 +9581,9 @@
       this.attribute_list = [];
       for (let i = 0; i < count; i++) this.attribute_list[i] = stream.readUint32();
     }
-  }, _a231.fourcc = "stri", _a231);
-  var _a232;
-  var stsgBox = (_a232 = class extends FullBox {
+  }, _a243.fourcc = "stri", _a243);
+  var _a244;
+  var stsgBox = (_a244 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "SubTrackSampleGroupBox";
@@ -8662,9 +9595,9 @@
       this.group_description_index = [];
       for (let i = 0; i < count; i++) this.group_description_index[i] = stream.readUint32();
     }
-  }, _a232.fourcc = "stsg", _a232);
-  var _a233;
-  var stshBox = (_a233 = class extends FullBox {
+  }, _a244.fourcc = "stsg", _a244);
+  var _a245;
+  var stshBox = (_a245 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "ShadowSyncSampleBox";
@@ -8690,9 +9623,9 @@
         stream.writeUint32(this.sync_sample_numbers[i]);
       }
     }
-  }, _a233.fourcc = "stsh", _a233);
-  var _a234;
-  var stssBox = (_a234 = class extends FullBox {
+  }, _a245.fourcc = "stsh", _a245);
+  var _a246;
+  var stssBox = (_a246 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "SyncSampleBox";
@@ -8714,9 +9647,9 @@
       stream.writeUint32(this.sample_numbers.length);
       stream.writeUint32Array(this.sample_numbers);
     }
-  }, _a234.fourcc = "stss", _a234);
-  var _a235;
-  var stviBox = (_a235 = class extends FullBox {
+  }, _a246.fourcc = "stss", _a246);
+  var _a247;
+  var stviBox = (_a247 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "StereoVideoBox";
@@ -8738,9 +9671,9 @@
         } else return;
       }
     }
-  }, _a235.fourcc = "stvi", _a235);
-  var _a236;
-  var stz2Box = (_a236 = class extends FullBox {
+  }, _a247.fourcc = "stvi", _a247);
+  var _a248;
+  var stz2Box = (_a248 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "CompactSampleSizeBox";
@@ -8762,9 +9695,9 @@
         else Log.error("BoxParser", "Error in length field in stz2 box", stream.isofile);
       }
     }
-  }, _a236.fourcc = "stz2", _a236);
-  var _a237;
-  var subsBox = (_a237 = class extends FullBox {
+  }, _a248.fourcc = "stz2", _a248);
+  var _a249;
+  var subsBox = (_a249 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "SubSampleInformationBox";
@@ -8791,9 +9724,9 @@
         }
       }
     }
-  }, _a237.fourcc = "subs", _a237);
-  var _a238;
-  var taicBox = (_a238 = class extends FullBox {
+  }, _a249.fourcc = "subs", _a249);
+  var _a250;
+  var taicBox = (_a250 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "TAIClockInfoBox";
@@ -8805,9 +9738,9 @@
       const reserved_byte = stream.readUint8();
       this.clock_type = (reserved_byte & 192) >> 6;
     }
-  }, _a238.fourcc = "taic", _a238);
-  var _a239;
-  var tencBox = (_a239 = class extends FullBox {
+  }, _a250.fourcc = "taic", _a250);
+  var _a251;
+  var tencBox = (_a251 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "TrackEncryptionBox";
@@ -8829,11 +9762,11 @@
         this.default_constant_IV = stream.readUint8Array(this.default_constant_IV_size);
       }
     }
-  }, _a239.fourcc = "tenc", _a239);
+  }, _a251.fourcc = "tenc", _a251);
   var TfraEntry = class {
   };
-  var _a240;
-  var tfraBox = (_a240 = class extends FullBox {
+  var _a252;
+  var tfraBox = (_a252 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "TrackFragmentRandomAccessBox";
@@ -8863,9 +9796,9 @@
         this.entries.push(entry);
       }
     }
-  }, _a240.fourcc = "tfra", _a240);
-  var _a241;
-  var tmaxBox = (_a241 = class extends Box {
+  }, _a252.fourcc = "tfra", _a252);
+  var _a253;
+  var tmaxBox = (_a253 = class extends Box {
     constructor(..._args) {
       super(..._args);
       this.box_name = "hintmaxrelativetime";
@@ -8873,9 +9806,9 @@
     parse(stream) {
       this.time = stream.readUint32();
     }
-  }, _a241.fourcc = "tmax", _a241);
-  var _a242;
-  var tminBox = (_a242 = class extends Box {
+  }, _a253.fourcc = "tmax", _a253);
+  var _a254;
+  var tminBox = (_a254 = class extends Box {
     constructor(..._args) {
       super(..._args);
       this.box_name = "hintminrelativetime";
@@ -8883,9 +9816,9 @@
     parse(stream) {
       this.time = stream.readUint32();
     }
-  }, _a242.fourcc = "tmin", _a242);
-  var _a243;
-  var totlBox = (_a243 = class extends Box {
+  }, _a254.fourcc = "tmin", _a254);
+  var _a255;
+  var totlBox = (_a255 = class extends Box {
     constructor(..._args) {
       super(..._args);
       this.box_name = "hintBytesSent";
@@ -8893,9 +9826,9 @@
     parse(stream) {
       this.bytessent = stream.readUint32();
     }
-  }, _a243.fourcc = "totl", _a243);
-  var _a244;
-  var tpayBox = (_a244 = class extends Box {
+  }, _a255.fourcc = "totl", _a255);
+  var _a256;
+  var tpayBox = (_a256 = class extends Box {
     constructor(..._args) {
       super(..._args);
       this.box_name = "hintBytesSent";
@@ -8903,9 +9836,9 @@
     parse(stream) {
       this.bytessent = stream.readUint32();
     }
-  }, _a244.fourcc = "tpay", _a244);
-  var _a245;
-  var tpylBox = (_a245 = class extends Box {
+  }, _a256.fourcc = "tpay", _a256);
+  var _a257;
+  var tpylBox = (_a257 = class extends Box {
     constructor(..._args) {
       super(..._args);
       this.box_name = "hintBytesSent";
@@ -8913,12 +9846,12 @@
     parse(stream) {
       this.bytessent = stream.readUint64();
     }
-  }, _a245.fourcc = "tpyl", _a245);
-  var _a246;
-  var msrcTrackGroupTypeBox = (_a246 = class extends TrackGroupTypeBox {
-  }, _a246.fourcc = "msrc", _a246);
-  var _a247;
-  var trefBox = (_a247 = class extends Box {
+  }, _a257.fourcc = "tpyl", _a257);
+  var _a258;
+  var msrcTrackGroupTypeBox = (_a258 = class extends TrackGroupTypeBox {
+  }, _a258.fourcc = "msrc", _a258);
+  var _a259;
+  var trefBox = (_a259 = class extends Box {
     constructor(..._args) {
       super(..._args);
       this.box_name = "TrackReferenceBox";
@@ -8928,7 +9861,7 @@
       while (stream.getPosition() < this.start + this.size) {
         const ret = parseOneBox(stream, true, this.size - (stream.getPosition() - this.start));
         if (ret.code === 1) {
-          if (!_a247.allowed_types.includes(ret.type)) Log.warn("BoxParser", `Unknown track reference type: '${ret.type}'`);
+          if (!_a259.allowed_types.includes(ret.type)) Log.warn("BoxParser", `Unknown track reference type: '${ret.type}'`);
           const box2 = new TrackReferenceTypeBox(ret.type, ret.size, ret.hdr_size, ret.start);
           if (box2.write === Box.prototype.write && box2.type !== "mdat") {
             Log.info("BoxParser", "TrackReference " + box2.type + " box writing not yet implemented, keeping unparsed data in memory for later write");
@@ -8939,7 +9872,7 @@
         } else return;
       }
     }
-  }, _a247.fourcc = "tref", _a247.allowed_types = [
+  }, _a259.fourcc = "tref", _a259.allowed_types = [
     "hint",
     "cdsc",
     "font",
@@ -8952,9 +9885,9 @@
     "cdtg",
     "shsc",
     "aest"
-  ], _a247);
-  var _a248;
-  var trepBox = (_a248 = class extends FullBox {
+  ], _a259);
+  var _a260;
+  var trepBox = (_a260 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "TrackExtensionPropertiesBox";
@@ -8971,9 +9904,9 @@
         } else return;
       }
     }
-  }, _a248.fourcc = "trep", _a248);
-  var _a249;
-  var trpyBox = (_a249 = class extends Box {
+  }, _a260.fourcc = "trep", _a260);
+  var _a261;
+  var trpyBox = (_a261 = class extends Box {
     constructor(..._args) {
       super(..._args);
       this.box_name = "hintBytesSent";
@@ -8981,9 +9914,9 @@
     parse(stream) {
       this.bytessent = stream.readUint64();
     }
-  }, _a249.fourcc = "trpy", _a249);
-  var _a250;
-  var tselBox = (_a250 = class extends FullBox {
+  }, _a261.fourcc = "trpy", _a261);
+  var _a262;
+  var tselBox = (_a262 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "TrackSelectionBox";
@@ -8995,9 +9928,9 @@
       this.attribute_list = [];
       for (let i = 0; i < count; i++) this.attribute_list[i] = stream.readUint32();
     }
-  }, _a250.fourcc = "tsel", _a250);
-  var _a251;
-  var txtcBox = (_a251 = class extends FullBox {
+  }, _a262.fourcc = "tsel", _a262);
+  var _a263;
+  var txtcBox = (_a263 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "TextConfigBox";
@@ -9006,9 +9939,9 @@
       this.parseFullHeader(stream);
       this.config = stream.readCString();
     }
-  }, _a251.fourcc = "txtc", _a251);
-  var _a252;
-  var tycoBox = (_a252 = class extends Box {
+  }, _a263.fourcc = "txtc", _a263);
+  var _a264;
+  var tycoBox = (_a264 = class extends Box {
     constructor(..._args) {
       super(..._args);
       this.box_name = "TypeCombinationBox";
@@ -9018,9 +9951,9 @@
       this.compatible_brands = [];
       for (let i = 0; i < count; i++) this.compatible_brands[i] = stream.readString(4);
     }
-  }, _a252.fourcc = "tyco", _a252);
-  var _a253;
-  var udesBox = (_a253 = class extends FullBox {
+  }, _a264.fourcc = "tyco", _a264);
+  var _a265;
+  var udesBox = (_a265 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "UserDescriptionProperty";
@@ -9032,9 +9965,21 @@
       this.description = stream.readCString();
       this.tags = stream.readCString();
     }
-  }, _a253.fourcc = "udes", _a253);
-  var _a254;
-  var uncCBox = (_a254 = class extends FullBox {
+  }, _a265.fourcc = "udes", _a265);
+  var _a266;
+  var alttBox = (_a266 = class extends FullBox {
+    constructor(..._args) {
+      super(..._args);
+      this.box_name = "AccessibilityTextProperty";
+    }
+    parse(stream) {
+      this.parseFullHeader(stream);
+      this.alt_text = stream.readCString();
+      this.alt_lang = stream.readCString();
+    }
+  }, _a266.fourcc = "altt", _a266);
+  var _a267;
+  var uncCBox = (_a267 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "UncompressedFrameConfigBox";
@@ -9071,9 +10016,9 @@
         this.num_tile_rows_minus_one = stream.readUint32();
       }
     }
-  }, _a254.fourcc = "uncC", _a254);
-  var _a255;
-  var urnBox = (_a255 = class extends FullBox {
+  }, _a267.fourcc = "uncC", _a267);
+  var _a268;
+  var urnBox = (_a268 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "DataEntryUrnBox";
@@ -9092,9 +10037,9 @@
       stream.writeCString(this.name);
       if (this.location) stream.writeCString(this.location);
     }
-  }, _a255.fourcc = "urn ", _a255);
-  var _a256;
-  var vttCBox = (_a256 = class extends Box {
+  }, _a268.fourcc = "urn ", _a268);
+  var _a269;
+  var vttCBox = (_a269 = class extends Box {
     constructor(..._args) {
       super(..._args);
       this.box_name = "WebVTTConfigurationBox";
@@ -9102,9 +10047,9 @@
     parse(stream) {
       this.text = stream.readString(this.size - this.hdr_size);
     }
-  }, _a256.fourcc = "vttC", _a256);
-  var _a257;
-  var vvnCBox = (_a257 = class extends FullBox {
+  }, _a269.fourcc = "vttC", _a269);
+  var _a270;
+  var vvnCBox = (_a270 = class extends FullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "VvcNALUConfigBox";
@@ -9114,9 +10059,9 @@
       const tmp = stream.readUint8();
       this.lengthSizeMinusOne = tmp & 3;
     }
-  }, _a257.fourcc = "vvnC", _a257);
-  var _a258;
-  var alstSampleGroupEntry = (_a258 = class extends SampleGroupEntry {
+  }, _a270.fourcc = "vvnC", _a270);
+  var _a271;
+  var alstSampleGroupEntry = (_a271 = class extends SampleGroupEntry {
     parse(stream) {
       const roll_count = stream.readUint16();
       this.first_output_sample = stream.readUint16();
@@ -9130,18 +10075,18 @@
         this.num_total_samples[i] = stream.readUint16();
       }
     }
-  }, _a258.grouping_type = "alst", _a258);
-  var _a259;
-  var avllSampleGroupEntry = (_a259 = class extends SampleGroupEntry {
+  }, _a271.grouping_type = "alst", _a271);
+  var _a272;
+  var avllSampleGroupEntry = (_a272 = class extends SampleGroupEntry {
     parse(stream) {
       this.layerNumber = stream.readUint8();
       this.accurateStatisticsFlag = stream.readUint8();
       this.avgBitRate = stream.readUint16();
       this.avgFrameRate = stream.readUint16();
     }
-  }, _a259.grouping_type = "avll", _a259);
-  var _a260;
-  var avssSampleGroupEntry = (_a260 = class extends SampleGroupEntry {
+  }, _a272.grouping_type = "avll", _a272);
+  var _a273;
+  var avssSampleGroupEntry = (_a273 = class extends SampleGroupEntry {
     parse(stream) {
       this.subSequenceIdentifier = stream.readUint16();
       this.layerNumber = stream.readUint8();
@@ -9162,35 +10107,35 @@
         subSequenceIdentifier: stream.readUint16()
       });
     }
-  }, _a260.grouping_type = "avss", _a260);
-  var _a261;
-  var dtrtSampleGroupEntry = (_a261 = class extends SampleGroupEntry {
+  }, _a273.grouping_type = "avss", _a273);
+  var _a274;
+  var dtrtSampleGroupEntry = (_a274 = class extends SampleGroupEntry {
     parse(_stream) {
       Log.warn("BoxParser", "Sample Group type: " + this.grouping_type + " not fully parsed");
     }
-  }, _a261.grouping_type = "dtrt", _a261);
-  var _a262;
-  var mvifSampleGroupEntry = (_a262 = class extends SampleGroupEntry {
+  }, _a274.grouping_type = "dtrt", _a274);
+  var _a275;
+  var mvifSampleGroupEntry = (_a275 = class extends SampleGroupEntry {
     parse(_stream) {
       Log.warn("BoxParser", "Sample Group type: " + this.grouping_type + " not fully parsed");
     }
-  }, _a262.grouping_type = "mvif", _a262);
-  var _a263;
-  var prolSampleGroupEntry = (_a263 = class extends SampleGroupEntry {
+  }, _a275.grouping_type = "mvif", _a275);
+  var _a276;
+  var prolSampleGroupEntry = (_a276 = class extends SampleGroupEntry {
     parse(stream) {
       this.roll_distance = stream.readInt16();
     }
-  }, _a263.grouping_type = "prol", _a263);
-  var _a264;
-  var rapSampleGroupEntry = (_a264 = class extends SampleGroupEntry {
+  }, _a276.grouping_type = "prol", _a276);
+  var _a277;
+  var rapSampleGroupEntry = (_a277 = class extends SampleGroupEntry {
     parse(stream) {
       const tmp_byte = stream.readUint8();
       this.num_leading_samples_known = tmp_byte >> 7;
       this.num_leading_samples = tmp_byte & 127;
     }
-  }, _a264.grouping_type = "rap ", _a264);
-  var _a265;
-  var rashSampleGroupEntry = (_a265 = class extends SampleGroupEntry {
+  }, _a277.grouping_type = "rap ", _a277);
+  var _a278;
+  var rashSampleGroupEntry = (_a278 = class extends SampleGroupEntry {
     parse(stream) {
       this.operation_point_count = stream.readUint16();
       if (this.description_length !== 2 + (this.operation_point_count === 1 ? 2 : this.operation_point_count * 6) + 9) {
@@ -9211,27 +10156,27 @@
         this.discard_priority = stream.readUint8();
       }
     }
-  }, _a265.grouping_type = "rash", _a265);
-  var _a266;
-  var rollSampleGroupEntry = (_a266 = class extends SampleGroupEntry {
+  }, _a278.grouping_type = "rash", _a278);
+  var _a279;
+  var rollSampleGroupEntry = (_a279 = class extends SampleGroupEntry {
     parse(stream) {
       this.roll_distance = stream.readInt16();
     }
-  }, _a266.grouping_type = "roll", _a266);
-  var _a267;
-  var scifSampleGroupEntry = (_a267 = class extends SampleGroupEntry {
+  }, _a279.grouping_type = "roll", _a279);
+  var _a280;
+  var scifSampleGroupEntry = (_a280 = class extends SampleGroupEntry {
     parse(_stream) {
       Log.warn("BoxParser", "Sample Group type: " + this.grouping_type + " not fully parsed");
     }
-  }, _a267.grouping_type = "scif", _a267);
-  var _a268;
-  var scnmSampleGroupEntry = (_a268 = class extends SampleGroupEntry {
+  }, _a280.grouping_type = "scif", _a280);
+  var _a281;
+  var scnmSampleGroupEntry = (_a281 = class extends SampleGroupEntry {
     parse(_stream) {
       Log.warn("BoxParser", "Sample Group type: " + this.grouping_type + " not fully parsed");
     }
-  }, _a268.grouping_type = "scnm", _a268);
-  var _a269;
-  var seigSampleGroupEntry = (_a269 = class extends SampleGroupEntry {
+  }, _a281.grouping_type = "scnm", _a281);
+  var _a282;
+  var seigSampleGroupEntry = (_a282 = class extends SampleGroupEntry {
     parse(stream) {
       this.reserved = stream.readUint8();
       const tmp = stream.readUint8();
@@ -9247,53 +10192,53 @@
         this.constant_IV = stream.readUint8Array(this.constant_IV_size);
       }
     }
-  }, _a269.grouping_type = "seig", _a269);
-  var _a270;
-  var stsaSampleGroupEntry = (_a270 = class extends SampleGroupEntry {
+  }, _a282.grouping_type = "seig", _a282);
+  var _a283;
+  var stsaSampleGroupEntry = (_a283 = class extends SampleGroupEntry {
     parse(_stream) {
       Log.warn("BoxParser", "Sample Group type: " + this.grouping_type + " not fully parsed");
     }
-  }, _a270.grouping_type = "stsa", _a270);
-  var _a271;
-  var syncSampleGroupEntry = (_a271 = class extends SampleGroupEntry {
+  }, _a283.grouping_type = "stsa", _a283);
+  var _a284;
+  var syncSampleGroupEntry = (_a284 = class extends SampleGroupEntry {
     parse(stream) {
       const tmp_byte = stream.readUint8();
       this.NAL_unit_type = tmp_byte & 63;
     }
-  }, _a271.grouping_type = "sync", _a271);
-  var _a272;
-  var teleSampleGroupEntry = (_a272 = class extends SampleGroupEntry {
+  }, _a284.grouping_type = "sync", _a284);
+  var _a285;
+  var teleSampleGroupEntry = (_a285 = class extends SampleGroupEntry {
     parse(stream) {
       const tmp_byte = stream.readUint8();
       this.level_independently_decodable = tmp_byte >> 7;
     }
-  }, _a272.grouping_type = "tele", _a272);
-  var _a273;
-  var tsasSampleGroupEntry = (_a273 = class extends SampleGroupEntry {
+  }, _a285.grouping_type = "tele", _a285);
+  var _a286;
+  var tsasSampleGroupEntry = (_a286 = class extends SampleGroupEntry {
     parse(_stream) {
       Log.warn("BoxParser", "Sample Group type: " + this.grouping_type + " not fully parsed");
     }
-  }, _a273.grouping_type = "tsas", _a273);
-  var _a274;
-  var tsclSampleGroupEntry = (_a274 = class extends SampleGroupEntry {
+  }, _a286.grouping_type = "tsas", _a286);
+  var _a287;
+  var tsclSampleGroupEntry = (_a287 = class extends SampleGroupEntry {
     parse(_stream) {
       Log.warn("BoxParser", "Sample Group type: " + this.grouping_type + " not fully parsed");
     }
-  }, _a274.grouping_type = "tscl", _a274);
-  var _a275;
-  var viprSampleGroupEntry = (_a275 = class extends SampleGroupEntry {
+  }, _a287.grouping_type = "tscl", _a287);
+  var _a288;
+  var viprSampleGroupEntry = (_a288 = class extends SampleGroupEntry {
     parse(_stream) {
       Log.warn("BoxParser", "Sample Group type: " + this.grouping_type + " not fully parsed");
     }
-  }, _a275.grouping_type = "vipr", _a275);
-  var _a276;
-  var UUIDBox = (_a276 = class extends Box {
-  }, _a276.fourcc = "uuid", _a276);
-  var _a277;
-  var UUIDFullBox = (_a277 = class extends FullBox {
-  }, _a277.fourcc = "uuid", _a277);
-  var _a278;
-  var piffLsmBox = (_a278 = class extends UUIDFullBox {
+  }, _a288.grouping_type = "vipr", _a288);
+  var _a289;
+  var UUIDBox = (_a289 = class extends Box {
+  }, _a289.fourcc = "uuid", _a289);
+  var _a290;
+  var UUIDFullBox = (_a290 = class extends FullBox {
+  }, _a290.fourcc = "uuid", _a290);
+  var _a291;
+  var piffLsmBox = (_a291 = class extends UUIDFullBox {
     constructor(..._args) {
       super(..._args);
       this.box_name = "LiveServerManifestBox";
@@ -9302,9 +10247,9 @@
       this.parseFullHeader(stream);
       this.LiveServerManifest = stream.readString(this.size - this.hdr_size).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
     }
-  }, _a278.uuid = "a5d40b30e81411ddba2f0800200c9a66", _a278);
-  var _a279;
-  var piffPsshBox = (_a279 = class extends UUIDFullBox {
+  }, _a291.uuid = "a5d40b30e81411ddba2f0800200c9a66", _a291);
+  var _a292;
+  var piffPsshBox = (_a292 = class extends UUIDFullBox {
     constructor(..._args2) {
       super(..._args2);
       this.box_name = "PiffProtectionSystemSpecificHeaderBox";
@@ -9315,16 +10260,16 @@
       const datasize = stream.readUint32();
       if (datasize > 0) this.data = stream.readUint8Array(datasize);
     }
-  }, _a279.uuid = "d08a4f1810f34a82b6c832d8aba183d3", _a279);
-  var _a280;
-  var piffSencBox = (_a280 = class extends UUIDFullBox {
+  }, _a292.uuid = "d08a4f1810f34a82b6c832d8aba183d3", _a292);
+  var _a293;
+  var piffSencBox = (_a293 = class extends UUIDFullBox {
     constructor(..._args3) {
       super(..._args3);
       this.box_name = "PiffSampleEncryptionBox";
     }
-  }, _a280.uuid = "a2394f525a9b4f14a2446c427c648df4", _a280);
-  var _a281;
-  var piffTencBox = (_a281 = class extends UUIDFullBox {
+  }, _a293.uuid = "a2394f525a9b4f14a2446c427c648df4", _a293);
+  var _a294;
+  var piffTencBox = (_a294 = class extends UUIDFullBox {
     constructor(..._args4) {
       super(..._args4);
       this.box_name = "PiffTrackEncryptionBox";
@@ -9335,9 +10280,9 @@
       this.default_IV_size = stream.readUint8();
       this.default_KID = parseHex16(stream);
     }
-  }, _a281.uuid = "8974dbce7be74c5184f97148f9882554", _a281);
-  var _a282;
-  var piffTfrfBox = (_a282 = class extends UUIDFullBox {
+  }, _a294.uuid = "8974dbce7be74c5184f97148f9882554", _a294);
+  var _a295;
+  var piffTfrfBox = (_a295 = class extends UUIDFullBox {
     constructor(..._args5) {
       super(..._args5);
       this.box_name = "TfrfBox";
@@ -9347,8 +10292,8 @@
       this.fragment_count = stream.readUint8();
       this.entries = [];
       for (let i = 0; i < this.fragment_count; i++) {
-        let absolute_time = 0;
-        let absolute_duration = 0;
+        let absolute_time;
+        let absolute_duration;
         if (this.version === 1) {
           absolute_time = stream.readUint64();
           absolute_duration = stream.readUint64();
@@ -9362,9 +10307,9 @@
         });
       }
     }
-  }, _a282.uuid = "d4807ef2ca3946958e5426cb9e46a79f", _a282);
-  var _a283;
-  var piffTfxdBox = (_a283 = class extends UUIDFullBox {
+  }, _a295.uuid = "d4807ef2ca3946958e5426cb9e46a79f", _a295);
+  var _a296;
+  var piffTfxdBox = (_a296 = class extends UUIDFullBox {
     constructor(..._args6) {
       super(..._args6);
       this.box_name = "TfxdBox";
@@ -9379,9 +10324,9 @@
         this.duration = stream.readUint32();
       }
     }
-  }, _a283.uuid = "6d1d9b0542d544e680e2141daff757b2", _a283);
-  var _a284;
-  var ItemContentIDPropertyBox = (_a284 = class extends UUIDBox {
+  }, _a296.uuid = "6d1d9b0542d544e680e2141daff757b2", _a296);
+  var _a297;
+  var ItemContentIDPropertyBox = (_a297 = class extends UUIDBox {
     constructor(..._args7) {
       super(..._args7);
       this.box_name = "ItemContentIDProperty";
@@ -9389,9 +10334,9 @@
     parse(stream) {
       this.content_id = stream.readCString();
     }
-  }, _a284.uuid = "261ef3741d975bbaacbd9d2c8ea73522", _a284);
-  var _a285;
-  var ItemComponentContentIDPropertyBox = (_a285 = class extends UUIDBox {
+  }, _a297.uuid = "261ef3741d975bbaacbd9d2c8ea73522", _a297);
+  var _a298;
+  var ItemComponentContentIDPropertyBox = (_a298 = class extends UUIDBox {
     constructor(..._args8) {
       super(..._args8);
       this.box_name = "ItemComponentContentIDProperty";
@@ -9404,7 +10349,7 @@
         this.content_ids.push(content_id);
       }
     }
-  }, _a285.uuid = "9db9dd6e373c5a4e811021fc83a911fd", _a285);
+  }, _a298.uuid = "9db9dd6e373c5a4e811021fc83a911fd", _a298);
   var all_boxes_exports = /* @__PURE__ */ __exportAll({
     CoLLBox: () => CoLLBox,
     ItemComponentContentIDPropertyBox: () => ItemComponentContentIDPropertyBox,
@@ -9413,6 +10358,7 @@
     SmDmBox: () => SmDmBox,
     a1lxBox: () => a1lxBox,
     a1opBox: () => a1opBox,
+    a3asSampleEntry: () => a3asSampleEntry,
     ac_3SampleEntry: () => ac_3SampleEntry,
     ac_4SampleEntry: () => ac_4SampleEntry,
     aebrBox: () => aebrBox,
@@ -9420,9 +10366,13 @@
     albcBox: () => albcBox,
     alstSampleGroupEntry: () => alstSampleGroupEntry,
     altrBox: () => altrBox,
+    alttBox: () => alttBox,
+    amveBox: () => amveBox,
     auxCBox: () => auxCBox,
     av01SampleEntry: () => av01SampleEntry,
     av1CBox: () => av1CBox,
+    av3aSampleEntry: () => av3aSampleEntry,
+    av3cBox: () => av3cBox,
     avc1SampleEntry: () => avc1SampleEntry,
     avc2SampleEntry: () => avc2SampleEntry,
     avc3SampleEntry: () => avc3SampleEntry,
@@ -9434,6 +10384,7 @@
     brstBox: () => brstBox,
     btrtBox: () => btrtBox,
     bxmlBox: () => bxmlBox,
+    cclvBox: () => cclvBox,
     ccstBox: () => ccstBox,
     cdefBox: () => cdefBox,
     clapBox: () => clapBox,
@@ -9454,12 +10405,14 @@
     dac3Box: () => dac3Box,
     dataBox: () => dataBox,
     dav1SampleEntry: () => dav1SampleEntry,
+    dca3Box: () => dca3Box,
     dec3Box: () => dec3Box,
     dfLaBox: () => dfLaBox,
     dimmBox: () => dimmBox,
     dinfBox: () => dinfBox,
     dmax: () => dmax,
     dmedBox: () => dmedBox,
+    dmlpBox: () => dmlpBox,
     dobrBox: () => dobrBox,
     drefBox: () => drefBox,
     drepBox: () => drepBox,
@@ -9542,11 +10495,14 @@
     mfroBox: () => mfroBox,
     mha1SampleEntry: () => mha1SampleEntry,
     mha2SampleEntry: () => mha2SampleEntry,
+    mhaCBox: () => mhaCBox,
     mhm1SampleEntry: () => mhm1SampleEntry,
     mhm2SampleEntry: () => mhm2SampleEntry,
     minfBox: () => minfBox,
+    miniBox: () => miniBox,
     mjp2SampleEntry: () => mjp2SampleEntry,
     mjpgSampleEntry: () => mjpgSampleEntry,
+    mlpaSampleEntry: () => mlpaSampleEntry,
     moofBox: () => moofBox,
     moovBox: () => moovBox,
     mp4aSampleEntry: () => mp4aSampleEntry,
@@ -9557,6 +10513,7 @@
     mvexBox: () => mvexBox,
     mvhdBox: () => mvhdBox,
     mvifSampleGroupEntry: () => mvifSampleGroupEntry,
+    ndwtBox: () => ndwtBox,
     nmhdBox: () => nmhdBox,
     npckBox: () => npckBox,
     numpBox: () => numpBox,
@@ -9587,6 +10544,7 @@
     rapSampleGroupEntry: () => rapSampleGroupEntry,
     rashSampleGroupEntry: () => rashSampleGroupEntry,
     resvSampleEntry: () => resvSampleEntry,
+    reveBox: () => reveBox,
     rinfBox: () => rinfBox,
     rollSampleGroupEntry: () => rollSampleGroupEntry,
     rtp_Box: () => rtp_Box,

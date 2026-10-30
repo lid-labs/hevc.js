@@ -18,6 +18,7 @@ architecture document, dated 2026-03-19, and is not updated.
 - Less code = fewer conformance bugs
 
 **Consequence**: `Pixel = uint16_t` everywhere. Shifts/clips use `BitDepth` at runtime.
+Superseded in part by AD-011: the storage type is templated, the bit depth is not.
 
 ## AD-002 : Picture layout — Planar (separate planes)
 
@@ -228,3 +229,42 @@ kernel that needs them, such as a transpose, has to wrap both. Where the
 generated code falls short of hand-written assembly, the gap stays: closing it
 would mean per-architecture code, which this decision rules out until a
 measurement justifies it.
+
+## AD-011 : Sample storage — templated on the storage type, bit depth still runtime
+
+**Context**: AD-001 made every sample a `uint16_t`, on the rationale that speed
+would come from SIMD rather than from templates. After the SIMD layer (AD-010),
+a single-thread profile of the native decoder showed what was left: motion
+compensation, the deblocking and SAO filters and the per-picture SAO backup copy
+spend their time moving bytes, and for 8-bit content half of those bytes are the
+zero high half of each sample. 8-bit is what the browser pipeline transcodes
+almost always, and `uint16_t` doubled its memory traffic for nothing.
+
+**Decision**: a picture whose luma **and** chroma are both 8 bits stores its
+planes as `uint8_t`, any other as `uint16_t` (`Picture::planes8` / `planes16`,
+reached through `plane<P>()`). The code that touches samples is templated on the
+storage type, and dispatches on it **once per call** — per picture, per block,
+per edge — never per sample. The bit depth itself stays a runtime value: shifts,
+clips and the weighted-prediction offsets still read `bit_depth`, so Main 10 and
+a future Main 12 need no new instance.
+
+**Rationale**:
+- Measured on one thread on an Apple M4 Pro, 2026-10-30, against the previous
+  `main`: 6-18% fewer instructions retired and 11-25% fewer cycles elapsed on
+  the four reference streams, the largest gains on the single-slice ones
+- Decoded output is unchanged — the 147 conformance streams still match their
+  reference MD5, and the WASM build still decodes the 50-stream set exactly
+  like the native one
+- One dispatch per call keeps the inner loops branch-free, which is what
+  AD-001 was protecting; the duplication it feared is paid in binary size, not
+  in conformance risk, since both instances come from the same source
+
+**Consequence**: every templated kernel exists twice in the binary. The WASM
+decoder grows from 290 418 to 336 019 bytes, 105 730 to 116 139 with `gzip -9`.
+Both instances are kept: Main 10 is a mainstream profile, not a corner case, and
+dropping its path to save the bytes would trade a profile for a download.
+A new kernel that touches samples has to be written against the storage template,
+or it compiles for one type only and the other silently keeps the scalar path.
+`HEVCFrame` carries `bytes_per_sample` so that a caller reading the planes out of
+the heap knows which view to use; `@hevcjs/core` widens 8-bit planes into the
+`Uint16Array` it has always returned, so the JS API does not move.

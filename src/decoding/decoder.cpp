@@ -197,6 +197,7 @@ DecodeStatus Decoder::decode_picture(const std::vector<NalUnit>& nals,
     ctx.sao_params = sao_params_buf_.data();
     ctx.sao_params_stride = sps->PicWidthInCtbsY;
     ctx.sao_backup = sao_backup_;
+    ctx.sao_backup8 = sao_backup8_;
     ctx.slice_idx = slice_idx_buf_.data();
 
     // Decode each slice segment — store headers for per-CTU filter parameter lookup

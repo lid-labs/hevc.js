@@ -77,7 +77,7 @@ self.onmessage = async function (e) {
 
       // Send frames one by one (transferable for zero-copy)
       const count = api.getFrameCount(dec);
-      const framePtr = m._malloc(48);
+      const framePtr = m._malloc(52);
 
       for (let i = 0; i < count; i++) {
         if (api.getFrame(dec, i, framePtr) !== 0) continue;
@@ -95,9 +95,10 @@ self.onmessage = async function (e) {
         const poc     = m.getValue(framePtr + 40, 'i32');
 
         // Copy planes out of WASM heap as transferable ArrayBuffers
-        const y  = copyPlane(m, yPtr, width, height, strideY);
-        const cb = copyPlane(m, cbPtr, cw, ch, strideC);
-        const cr = copyPlane(m, crPtr, cw, ch, strideC);
+        const bps     = m.getValue(framePtr + 48, 'i32');
+        const y  = copyPlane(m, yPtr, width, height, strideY, bps);
+        const cb = copyPlane(m, cbPtr, cw, ch, strideC, bps);
+        const cr = copyPlane(m, crPtr, cw, ch, strideC, bps);
 
         self.postMessage(
           { type: 'frame', index: i, frame: { y, cb, cr, width, height, chromaWidth: cw, chromaHeight: ch, bitDepth: bd, poc } },
@@ -113,11 +114,13 @@ self.onmessage = async function (e) {
   }
 };
 
-function copyPlane(m, ptr, width, height, stride) {
+// bytesPerSample 1: an 8-bit picture, one byte per sample; set() widens it
+function copyPlane(m, ptr, width, height, stride, bytesPerSample) {
   const out = new Uint16Array(width * height);
-  const base = ptr >> 1;
+  const heap = bytesPerSample === 1 ? m.HEAPU8 : m.HEAPU16;
+  const base = bytesPerSample === 1 ? ptr : ptr >> 1;
   for (let y = 0; y < height; y++) {
-    out.set(m.HEAPU16.subarray(base + y * stride, base + y * stride + width), y * width);
+    out.set(heap.subarray(base + y * stride, base + y * stride + width), y * width);
   }
   return out;
 }

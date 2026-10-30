@@ -97,6 +97,7 @@ private:
 
     // Phase 9: SAO backup buffers (reused across frames to avoid per-frame allocation)
     std::vector<uint16_t> sao_backup_[3];
+    std::vector<uint8_t> sao_backup8_[3];
 
     // Phase 10: slice index per CTU
     std::vector<uint16_t> slice_idx_buf_;
