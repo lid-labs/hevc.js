@@ -14,6 +14,29 @@
  *     { type: 'error', message: string }
  */
 
+/**
+ * Where the fields of the module's HEVCFrame struct sit, as the module itself
+ * reports them through hevc_frame_layout(): "name:offset,...,_size:N". This
+ * file ships unbundled, so it cannot import the parser the bundled readers
+ * share — what it hardcodes is the field names, not their offsets (#370).
+ */
+function parseFrameLayout(spec) {
+  const offset = {};
+  for (const field of spec.split(',')) {
+    const sep = field.indexOf(':');
+    if (sep < 0) throw new Error('HEVCFrame layout: malformed field ' + field);
+    offset[field.slice(0, sep)] = Number(field.slice(sep + 1));
+  }
+  for (const name of ['y', 'cb', 'cr', 'width', 'height', 'stride_y', 'stride_c',
+                      'chroma_width', 'chroma_height', 'bit_depth', 'poc', 'cvs_id',
+                      'bytes_per_sample', '_size']) {
+    if (!Number.isInteger(offset[name])) {
+      throw new Error('HEVCFrame layout: missing or invalid ' + name);
+    }
+  }
+  return { offset, size: offset._size };
+}
+
 let decoder = null;
 
 // Import the WASM module (loaded as a classic script in worker context)
@@ -37,12 +60,13 @@ self.onmessage = async function (e) {
         getFrameCount: m.cwrap('hevc_decoder_get_frame_count', 'number', ['number']),
         getFrame: m.cwrap('hevc_decoder_get_frame', 'number', ['number', 'number', 'number']),
         getInfo: m.cwrap('hevc_decoder_get_info', 'number', ['number', 'number']),
+        frameLayout: m.cwrap('hevc_frame_layout', 'string', []),
       };
 
       const dec = api.create();
       if (!dec) throw new Error('Failed to create decoder');
 
-      decoder = { m, api, dec };
+      decoder = { m, api, dec, layout: parseFrameLayout(api.frameLayout()) };
       self.postMessage({ type: 'ready' });
 
     } else if (type === 'decode') {
@@ -77,25 +101,26 @@ self.onmessage = async function (e) {
 
       // Send frames one by one (transferable for zero-copy)
       const count = api.getFrameCount(dec);
-      const framePtr = m._malloc(52);
+      const at = decoder.layout.offset;
+      const framePtr = m._malloc(decoder.layout.size);
 
       for (let i = 0; i < count; i++) {
         if (api.getFrame(dec, i, framePtr) !== 0) continue;
 
-        const yPtr    = m.getValue(framePtr, '*');
-        const cbPtr   = m.getValue(framePtr + 4, '*');
-        const crPtr   = m.getValue(framePtr + 8, '*');
-        const width   = m.getValue(framePtr + 12, 'i32');
-        const height  = m.getValue(framePtr + 16, 'i32');
-        const strideY = m.getValue(framePtr + 20, 'i32');
-        const strideC = m.getValue(framePtr + 24, 'i32');
-        const cw      = m.getValue(framePtr + 28, 'i32');
-        const ch      = m.getValue(framePtr + 32, 'i32');
-        const bd      = m.getValue(framePtr + 36, 'i32');
-        const poc     = m.getValue(framePtr + 40, 'i32');
+        const yPtr    = m.getValue(framePtr + at.y, '*');
+        const cbPtr   = m.getValue(framePtr + at.cb, '*');
+        const crPtr   = m.getValue(framePtr + at.cr, '*');
+        const width   = m.getValue(framePtr + at.width, 'i32');
+        const height  = m.getValue(framePtr + at.height, 'i32');
+        const strideY = m.getValue(framePtr + at.stride_y, 'i32');
+        const strideC = m.getValue(framePtr + at.stride_c, 'i32');
+        const cw      = m.getValue(framePtr + at.chroma_width, 'i32');
+        const ch      = m.getValue(framePtr + at.chroma_height, 'i32');
+        const bd      = m.getValue(framePtr + at.bit_depth, 'i32');
+        const poc     = m.getValue(framePtr + at.poc, 'i32');
 
         // Copy planes out of WASM heap as transferable ArrayBuffers
-        const bps     = m.getValue(framePtr + 48, 'i32');
+        const bps     = m.getValue(framePtr + at.bytes_per_sample, 'i32');
         const y  = copyPlane(m, yPtr, width, height, strideY, bps);
         const cb = copyPlane(m, cbPtr, cw, ch, strideC, bps);
         const cr = copyPlane(m, crPtr, cw, ch, strideC, bps);

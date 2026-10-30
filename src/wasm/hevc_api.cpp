@@ -5,6 +5,7 @@
 #include "common/types.h"
 
 #include <cstddef>
+#include <cstdio>
 #include <cstring>
 #include <vector>
 
@@ -16,40 +17,31 @@ struct HEVCDecoder {
     const hevc::SPS* last_sps = nullptr;
 };
 
-// Five JS readers walk HEVCFrame by hardcoded byte offsets and allocate 52 bytes
-// for it: packages/core/src/decoder.ts, packages/core/src/worker.ts,
-// src/wasm/hevc_decoder.js, src/wasm/worker.js and tools/wasm_decode.cjs. Only
-// two of them can share code — the other three ship unbundled — so the offsets
-// are duplicated by construction and the compiler is what keeps them honest.
-// Asserting the size alone is not enough: swapping two int fields keeps it at 52
-// and every reader then misreads silently, so each offset is asserted too.
-// wasm32 only, where a pointer is 4 bytes; a native 64-bit build lays the same
-// struct out differently and no JS reads it there.
-#ifdef __EMSCRIPTEN__
-#define HEVC_FRAME_OFFSET(field, bytes) \
-    static_assert(offsetof(HEVCFrame, field) == (bytes), \
-                  "HEVCFrame::" #field " moved — update decoder.ts, worker.ts, " \
-                  "hevc_decoder.js, worker.js and wasm_decode.cjs")
-static_assert(sizeof(HEVCFrame) == 52,
-              "HEVCFrame grew or shrank — update decoder.ts, worker.ts, "
-              "hevc_decoder.js, worker.js and wasm_decode.cjs");
-HEVC_FRAME_OFFSET(y, 0);
-HEVC_FRAME_OFFSET(cb, 4);
-HEVC_FRAME_OFFSET(cr, 8);
-HEVC_FRAME_OFFSET(width, 12);
-HEVC_FRAME_OFFSET(height, 16);
-HEVC_FRAME_OFFSET(stride_y, 20);
-HEVC_FRAME_OFFSET(stride_c, 24);
-HEVC_FRAME_OFFSET(chroma_width, 28);
-HEVC_FRAME_OFFSET(chroma_height, 32);
-HEVC_FRAME_OFFSET(bit_depth, 36);
-HEVC_FRAME_OFFSET(poc, 40);
-HEVC_FRAME_OFFSET(cvs_id, 44);
-HEVC_FRAME_OFFSET(bytes_per_sample, 48);
-#undef HEVC_FRAME_OFFSET
-#endif
-
 extern "C" {
+
+const char* hevc_frame_layout(void) {
+    // Built from offsetof on first use, so the five readers that walk HEVCFrame
+    // in the module's memory follow the binary they are talking to instead of
+    // carrying their own copy of the offsets (#370). Thirteen fields and the
+    // size take under 300 bytes; the buffer holds about forty fields. Writing
+    // it twice, were two threads to race here, writes the same bytes.
+    static char layout[1024];
+    if (layout[0] == '\0') {
+        snprintf(layout, sizeof(layout),
+                 "y:%zu,cb:%zu,cr:%zu,width:%zu,height:%zu,stride_y:%zu,"
+                 "stride_c:%zu,chroma_width:%zu,chroma_height:%zu,"
+                 "bit_depth:%zu,poc:%zu,cvs_id:%zu,bytes_per_sample:%zu,"
+                 "_size:%zu",
+                 offsetof(HEVCFrame, y), offsetof(HEVCFrame, cb),
+                 offsetof(HEVCFrame, cr), offsetof(HEVCFrame, width),
+                 offsetof(HEVCFrame, height), offsetof(HEVCFrame, stride_y),
+                 offsetof(HEVCFrame, stride_c), offsetof(HEVCFrame, chroma_width),
+                 offsetof(HEVCFrame, chroma_height), offsetof(HEVCFrame, bit_depth),
+                 offsetof(HEVCFrame, poc), offsetof(HEVCFrame, cvs_id),
+                 offsetof(HEVCFrame, bytes_per_sample), sizeof(HEVCFrame));
+    }
+    return layout;
+}
 
 HEVCDecoder* hevc_decoder_create(void) {
     return new (std::nothrow) HEVCDecoder();

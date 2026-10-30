@@ -24,7 +24,29 @@ if (typeof HEVCDecoderModule !== 'function') {
 }
 
 const HEVC_OK = 0;
-const FRAME_SIZE = 52; // sizeof(HEVCFrame) under wasm32, asserted in src/wasm/hevc_api.cpp
+
+/**
+ * Where the fields of the module's HEVCFrame struct sit, as the module itself
+ * reports them through hevc_frame_layout(): "name:offset,...,_size:N". This
+ * tool ships unbundled, so it cannot import the parser the bundled readers
+ * share — what it hardcodes is the field names, not their offsets (#370).
+ */
+function parseFrameLayout(spec) {
+    const offset = {};
+    for (const field of spec.split(',')) {
+        const sep = field.indexOf(':');
+        if (sep < 0) throw new Error('HEVCFrame layout: malformed field ' + field);
+        offset[field.slice(0, sep)] = Number(field.slice(sep + 1));
+    }
+    for (const name of ['y', 'cb', 'cr', 'width', 'height', 'stride_y', 'stride_c',
+                        'chroma_width', 'chroma_height', 'bit_depth',
+                        'bytes_per_sample', '_size']) {
+        if (!Number.isInteger(offset[name])) {
+            throw new Error('HEVCFrame layout: missing or invalid ' + name);
+        }
+    }
+    return { offset, size: offset._size };
+}
 
 async function main() {
     const m = await HEVCDecoderModule({ locateFile: (p) => path.join(wasmPath, p) });
@@ -33,7 +55,9 @@ async function main() {
     const dataPtr = m._malloc(data.length);
     m.HEAPU8.set(data, dataPtr);
     const dec = m._hevc_decoder_create();
-    const framePtr = m._malloc(FRAME_SIZE);
+    const layout = parseFrameLayout(m.ccall('hevc_frame_layout', 'string', [], []));
+    const at = layout.offset;
+    const framePtr = m._malloc(layout.size);
     const fd = fs.openSync(output, 'w');
 
     try {
@@ -44,22 +68,23 @@ async function main() {
         for (let i = 0; i < count; i++) {
             if (m._hevc_decoder_get_frame(dec, i, framePtr) !== HEVC_OK) return 1;
             const i32 = (off) => m.getValue(framePtr + off, 'i32');
-            const width = i32(12), height = i32(16);
-            const strideY = i32(20), strideC = i32(24);
-            const cw = i32(28), ch = i32(32), bitDepth = i32(36);
+            const width = i32(at.width), height = i32(at.height);
+            const strideY = i32(at.stride_y), strideC = i32(at.stride_c);
+            const cw = i32(at.chroma_width), ch = i32(at.chroma_height);
+            const bitDepth = i32(at.bit_depth);
             // HEVCFrame carries the luma bit depth only; every stream compared has
             // the same depth for chroma.
             const planes = [
-                [m.getValue(framePtr, '*'), width, height, strideY],
-                [m.getValue(framePtr + 4, '*'), cw, ch, strideC],
-                [m.getValue(framePtr + 8, '*'), cw, ch, strideC],
+                [m.getValue(framePtr + at.y, '*'), width, height, strideY],
+                [m.getValue(framePtr + at.cb, '*'), cw, ch, strideC],
+                [m.getValue(framePtr + at.cr, '*'), cw, ch, strideC],
             ];
             for (const [ptr, w, h, stride] of planes) {
                 if (!ptr || w === 0 || h === 0) continue; // monochrome: no chroma plane
                 const bytesPerSample = bitDepth <= 8 ? 1 : 2;
                 const buf = Buffer.alloc(w * h * bytesPerSample);
                 // Storage: one byte per sample for an 8-bit picture
-                const stored = i32(48);
+                const stored = i32(at.bytes_per_sample);
                 for (let y = 0; y < h; y++) {
                     // The heap is re-read every row: memory growth replaces the buffer
                     const row = stored === 1
