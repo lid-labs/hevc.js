@@ -12066,6 +12066,86 @@ var HevcDash = (() => {
     });
     return trafCount === 1 ? tfdt : null;
   }
+  var SELF_CONTAINED_NAL_TYPES = /* @__PURE__ */ new Set([
+    16,
+    // BLA_W_LP
+    17,
+    // BLA_W_RADL
+    18,
+    // BLA_N_LP
+    19,
+    // IDR_W_RADL
+    20
+    // IDR_N_LP
+  ]);
+  var MAX_VCL_NAL_TYPE = 31;
+  function leadingVclNalType(segment, nalLengthSize = 4) {
+    try {
+      return walkToFirstVcl(segment, nalLengthSize);
+    } catch {
+      return null;
+    }
+  }
+  function walkToFirstVcl(segment, nalLengthSize) {
+    const mdat = findMdat(segment);
+    if (!mdat) return null;
+    const view = new DataView(segment.buffer, segment.byteOffset, segment.byteLength);
+    let offset = mdat.start;
+    for (let seen = 0; seen < 16; seen++) {
+      if (offset + nalLengthSize + 2 > mdat.end) return null;
+      const length = readLength(view, offset, nalLengthSize);
+      if (length === null) return null;
+      offset += nalLengthSize;
+      if (length < 2 || offset + length > mdat.end) return null;
+      const nalType = view.getUint8(offset) >> 1 & 63;
+      if (nalType <= MAX_VCL_NAL_TYPE) return nalType;
+      offset += length;
+    }
+    return null;
+  }
+  function isSelfContainedSegment(segment, nalLengthSize = 4) {
+    const nalType = leadingVclNalType(segment, nalLengthSize);
+    return nalType !== null && SELF_CONTAINED_NAL_TYPES.has(nalType);
+  }
+  function readLength(view, offset, nalLengthSize) {
+    switch (nalLengthSize) {
+      case 1:
+        return view.getUint8(offset);
+      case 2:
+        return view.getUint16(offset);
+      case 4:
+        return view.getUint32(offset);
+      default:
+        return null;
+    }
+  }
+  function findMdat(segment) {
+    const view = new DataView(segment.buffer, segment.byteOffset, segment.byteLength);
+    let offset = 0;
+    while (offset + 8 <= segment.byteLength) {
+      let size = view.getUint32(offset);
+      let headerSize = 8;
+      if (size === 1) {
+        if (offset + 16 > segment.byteLength) return null;
+        const high = view.getUint32(offset + 8);
+        if (high !== 0) return null;
+        size = view.getUint32(offset + 12);
+        headerSize = 16;
+      } else if (size === 0) {
+        size = segment.byteLength - offset;
+      }
+      if (size < headerSize || offset + size > segment.byteLength) return null;
+      const type = String.fromCharCode(
+        view.getUint8(offset + 4),
+        view.getUint8(offset + 5),
+        view.getUint8(offset + 6),
+        view.getUint8(offset + 7)
+      );
+      if (type === "mdat") return { start: offset + headerSize, end: offset + size };
+      offset += size;
+    }
+    return null;
+  }
   var TranscodeWorkerClient = class {
     constructor(config) {
       this._ready = false;
@@ -12207,7 +12287,6 @@ var HevcDash = (() => {
         reject(new Error("Aborted"));
       }
       this._pendingPrepareInit.clear();
-      this._segmentId = 0;
       this._ready = false;
       this._readyPromise = new Promise((resolve) => {
         this._readyResolve = resolve;
@@ -12320,6 +12399,182 @@ var HevcDash = (() => {
     );
     return new Worker(blobUrl);
   }
+  function recommendedPoolSize() {
+    const threads = typeof navigator !== "undefined" ? navigator.hardwareConcurrency : void 0;
+    if (!threads || threads < 4) return 1;
+    return 2;
+  }
+  var TranscodePool = class {
+    constructor(config) {
+      this._slots = [];
+      this._initData = null;
+      this._waiters = [];
+      this._epoch = 0;
+      this._destroyed = false;
+      this._config = config;
+      const requested = config.poolSize ?? recommendedPoolSize();
+      this._maxSize = Math.max(1, Math.floor(requested));
+      this._slots.push(this._createSlot());
+    }
+    /** How many workers exist. Grows up to `poolSize` as parallel work arrives. */
+    get size() {
+      return this._slots.length;
+    }
+    /** The cap on workers, after clamping. */
+    get maxSize() {
+      return this._maxSize;
+    }
+    /** Segments being transcoded right now. */
+    get inFlight() {
+      return this._slots.filter((s) => s.busy).length;
+    }
+    get isInitialized() {
+      return this._primary.client.isInitialized;
+    }
+    get isInitParsed() {
+      return this._primary.client.isInitParsed;
+    }
+    get initResult() {
+      return this._primary.client.initResult;
+    }
+    /** The most recent per-segment stats of any worker. */
+    get lastPerfStats() {
+      let latest = null;
+      for (const slot of this._slots) {
+        const stats = slot.client.lastPerfStats;
+        if (stats) latest = stats;
+      }
+      return latest;
+    }
+    get _primary() {
+      return this._slots[0];
+    }
+    async waitReady() {
+      return this._primary.client.waitReady();
+    }
+    /**
+     * Parse an init segment. It is a barrier: the caller drains the segments in
+     * flight before calling this, because the workers that hold them are about to
+     * be re-initialised with other parameter sets. Workers beyond the first are
+     * marked for re-initialisation and parse it when they next take a segment.
+     */
+    async processInitSegment(data) {
+      this._initData = new Uint8Array(data);
+      for (const slot of this._slots) slot.initialized = false;
+      await this._primary.client.processInitSegment(data);
+      this._primary.initialized = true;
+    }
+    /** Shaka's warmup path: an H.264 init segment before any media is seen. */
+    async prepareInit(data) {
+      return this._primary.client.prepareInit(data);
+    }
+    /**
+     * Transcode one segment, with `onChunk` called for each H.264 chunk the
+     * worker emits, in the order that worker emits them. Chunks of two segments
+     * transcoding at once interleave freely: keeping the SourceBuffer in order is
+     * the caller's job.
+     *
+     * `selfContained` says whether the segment may go to any worker. The caller
+     * reads it from the bytes with `isSelfContainedSegment`, before the buffer is
+     * transferred.
+     */
+    async processMediaSegmentStreaming(data, onChunk, options) {
+      const slot = await this._acquire(options.selfContained);
+      const epoch = this._epoch;
+      try {
+        await this._ensureInitialized(slot, epoch);
+        await slot.client.processMediaSegmentStreaming(data, onChunk);
+      } finally {
+        this._release(slot, epoch);
+      }
+    }
+    abort() {
+      this._epoch++;
+      for (const slot of this._slots) {
+        slot.client.abort();
+        slot.busy = false;
+        slot.initialized = false;
+      }
+      this._primary.initialized = false;
+      this._wakeWaiters();
+    }
+    destroy() {
+      this._epoch++;
+      this._destroyed = true;
+      for (const slot of this._slots) slot.client.destroy();
+      this._slots = [];
+      this._initData = null;
+      this._wakeWaiters();
+    }
+    /**
+     * Take a worker. A segment that is not self-contained always takes the first
+     * one, which is the only worker that sees every such segment and therefore
+     * the only one whose DPB holds the right predecessor.
+     */
+    async _acquire(selfContained) {
+      for (; ; ) {
+        if (this._destroyed) throw new Error("Transcode pool destroyed");
+        if (!selfContained) {
+          if (!this._primary.busy) {
+            this._primary.busy = true;
+            return this._primary;
+          }
+        } else {
+          const free = this._slots.find((s) => !s.busy);
+          if (free) {
+            free.busy = true;
+            return free;
+          }
+          if (this._slots.length < this._maxSize) {
+            const slot = this._createSlot();
+            this._slots.push(slot);
+            slot.busy = true;
+            log.debug(`Transcode pool grew to ${this._slots.length} workers`);
+            return slot;
+          }
+        }
+        await new Promise((resolve) => this._waiters.push(resolve));
+      }
+    }
+    _release(slot, epoch) {
+      if (epoch !== this._epoch) {
+        this._wakeWaiters();
+        return;
+      }
+      slot.busy = false;
+      this._wakeWaiters();
+    }
+    _wakeWaiters() {
+      const waiters = this._waiters;
+      this._waiters = [];
+      for (const wake of waiters) wake();
+    }
+    _createSlot() {
+      return {
+        client: new TranscodeWorkerClient(this._config),
+        busy: false,
+        initialized: false
+      };
+    }
+    /**
+     * A worker takes no segment before it has the parameter sets of the stream.
+     * Each await is followed by an epoch check: an abort in between re-created the
+     * worker's transcoder without an init segment, so marking the slot
+     * initialised afterwards would let it take a segment it cannot decode.
+     */
+    async _ensureInitialized(slot, epoch) {
+      if (slot.initialized) return;
+      await slot.client.waitReady();
+      if (epoch !== this._epoch) return;
+      if (!this._initData) {
+        slot.initialized = true;
+        return;
+      }
+      await slot.client.processInitSegment(new Uint8Array(this._initData));
+      if (epoch !== this._epoch) return;
+      slot.initialized = true;
+    }
+  };
   var HEVC_DETECT_RE = /hev1|hvc1/i;
   var HEVC_CODEC_RE = /hev1[^"',]*|hvc1[^"',]*/gi;
   var TS_OFFSET_FLUSH_THRESHOLD_S = 0.5;
@@ -12407,27 +12662,31 @@ var HevcDash = (() => {
   }
   function createTranscodingProxy(realSB, config, muxed = false) {
     const useWorker = !!config.workerUrl && !muxed;
-    let workerClient = null;
+    let pool = null;
     let transcoder = null;
     let initParsed = false;
     let initAppended = false;
     let lastInitSegment = null;
     let fakeUpdating = false;
     const queue = [];
+    const inFlight = [];
+    let transcodesRunning = 0;
     let processing = false;
     let abortGeneration = 0;
     let cachedInitData = null;
     const MAX_QUEUE_BEFORE_BACKPRESSURE = 2;
+    const poolSize = config.poolSize ?? recommendedPoolSize();
     if (useWorker) {
-      workerClient = new TranscodeWorkerClient({
+      pool = new TranscodePool({
         workerUrl: config.workerUrl,
         wasmUrl: config.wasmUrl,
         wasmBinaryUrl: config.wasmBinaryUrl,
         fps: config.fps,
-        bitrate: config.bitrate
+        bitrate: config.bitrate,
+        poolSize
       });
-      workerClient.waitReady().then(() => {
-        log.info("Worker transcoder ready");
+      pool.waitReady().then(() => {
+        log.info(`Worker transcoder ready (pool of up to ${pool.maxSize})`);
       }).catch((err) => {
         log.error("Worker init failed:", err?.message ?? err);
       });
@@ -12473,6 +12732,7 @@ var HevcDash = (() => {
         const bytes = toUint8Array(data);
         log.debug(`appendBuffer(${bytes.byteLength}B) queued (queue: ${queue.length})`);
         queue.push(bytes);
+        dispatchMore();
         fakeUpdating = true;
         dispatchOnSB("updatestart");
         if (queue.length < MAX_QUEUE_BEFORE_BACKPRESSURE && !config.strictAppendProgress) {
@@ -12493,7 +12753,8 @@ var HevcDash = (() => {
         fakeUpdating = false;
         initParsed = false;
         initAppended = false;
-        if (workerClient) workerClient.abort();
+        inFlight.length = 0;
+        if (pool) pool.abort();
         log.debug("abort() \u2014 queue + transcoder reset (gen=" + abortGeneration + ")");
         realAbort();
       },
@@ -12561,10 +12822,11 @@ var HevcDash = (() => {
           log.debug(`timestampOffset changed (${old} \u2192 ${value}) \u2014 flushing queue`);
           abortGeneration++;
           queue.length = 0;
+          inFlight.length = 0;
           processing = false;
           initParsed = false;
           initAppended = false;
-          if (workerClient) workerClient.abort();
+          if (pool) pool.abort();
           if (fakeUpdating) {
             fakeUpdating = false;
             dispatchOnSB("update");
@@ -12578,29 +12840,76 @@ var HevcDash = (() => {
       configurable: true
     });
     async function transcodeInit(segment) {
-      if (workerClient) {
-        await workerClient.waitReady();
-        await workerClient.processInitSegment(segment);
+      if (pool) {
+        await pool.waitReady();
+        await pool.processInitSegment(segment);
       } else {
         while (!transcoder.isInitialized) await new Promise((r) => setTimeout(r, 10));
         await transcoder.processInitSegment(segment);
       }
     }
-    async function transcodeMediaStreaming(segment, onPartial) {
-      if (workerClient) {
-        return workerClient.processMediaSegmentStreaming(segment, onPartial);
+    async function transcodeMediaStreaming(segment, selfContained, onPartial) {
+      if (pool) {
+        return pool.processMediaSegmentStreaming(segment, onPartial, { selfContained });
       }
       return transcoder.processMediaSegmentStreaming(segment, (h264, init) => {
         return onPartial(h264, init?.initSegment ?? null, init?.codec ?? null);
       });
+    }
+    function startTranscode(segment, generation, selfContained) {
+      const rec = {
+        pending: [],
+        done: false,
+        error: null,
+        wake: null,
+        generation,
+        bytes: segment.byteLength
+      };
+      inFlight.push(rec);
+      if (transcodesRunning++ === 0) config.onTranscodeStart?.();
+      log.debug(`Transcoding segment (${segment.byteLength}B) [streaming${selfContained ? "" : ", open GOP"}]...`);
+      const wake = () => {
+        const w = rec.wake;
+        rec.wake = null;
+        w?.();
+      };
+      transcodeMediaStreaming(segment, selfContained, (h264, initSeg) => {
+        rec.pending.push({ h264, initSeg });
+        wake();
+      }).then(() => {
+        rec.done = true;
+      }, (err) => {
+        rec.error = err;
+        rec.done = true;
+      }).then(() => {
+        if (--transcodesRunning === 0) config.onTranscodeEnd?.();
+        wake();
+      });
+    }
+    function dispatchMore() {
+      const lookahead = pool ? Math.max(1, poolSize) : 1;
+      while (inFlight.length < lookahead && queue.length > 0) {
+        const next = queue[0];
+        if (!initParsed || isInitSegment(next) || muxed) return;
+        const selfContained = isSelfContainedSegment(next);
+        if (!selfContained && inFlight.length > 0) return;
+        queue.shift();
+        startTranscode(next, abortGeneration, selfContained);
+        if (!selfContained) return;
+      }
     }
     async function processNext(target) {
       if (processing) return;
       processing = true;
       const myGeneration = abortGeneration;
       try {
-        while (queue.length > 0) {
+        while (queue.length > 0 || inFlight.length > 0) {
           if (abortGeneration !== myGeneration) return;
+          dispatchMore();
+          if (inFlight.length > 0) {
+            await appendHead(target, myGeneration);
+            continue;
+          }
           const segment = queue.shift();
           if (updatingGetter.call(realSB)) {
             await waitForRealUpdateEnd();
@@ -12625,6 +12934,10 @@ var HevcDash = (() => {
                 dispatchOnSB("update");
                 dispatchOnSB("updateend");
               }
+              continue;
+            }
+            if (!muxed) {
+              startTranscode(segment, myGeneration, isSelfContainedSegment(segment));
               continue;
             }
           }
@@ -12660,46 +12973,7 @@ var HevcDash = (() => {
             }
             continue;
           }
-          log.debug(`Transcoding segment (${segment.byteLength}B) [streaming]...`);
-          config.onTranscodeStart?.();
-          let chunkCount = 0;
-          let firstChunkEmitted = false;
-          await transcodeMediaStreaming(segment, async (h264, initSeg, _codec) => {
-            if (abortGeneration !== myGeneration) return;
-            if (initSeg && !initAppended) {
-              initAppended = true;
-              lastInitSegment = initSeg;
-              if (updatingGetter.call(realSB)) await waitForRealUpdateEnd();
-              if (abortGeneration !== myGeneration) return;
-              realAppend(initSeg.buffer);
-              await waitForRealUpdateEnd();
-              if (abortGeneration !== myGeneration) return;
-              log.debug("H.264 init segment appended [streaming]");
-            }
-            if (updatingGetter.call(realSB)) await waitForRealUpdateEnd();
-            if (abortGeneration !== myGeneration) return;
-            realAppend(h264.buffer);
-            await waitForRealUpdateEnd();
-            chunkCount++;
-            if (!firstChunkEmitted) {
-              firstChunkEmitted = true;
-              if (fakeUpdating && (config.strictAppendProgress || queue.length < MAX_QUEUE_BEFORE_BACKPRESSURE)) {
-                fakeUpdating = false;
-                dispatchOnSB("update");
-                dispatchOnSB("updateend");
-              }
-            }
-          });
-          config.onTranscodeEnd?.();
-          if (abortGeneration !== myGeneration) return;
-          const buffered = target.buffered;
-          const end = buffered.length ? buffered.end(buffered.length - 1).toFixed(2) : "0";
-          log.debug(`Streaming done (${chunkCount} chunks), buffered: ${end}s`);
-          if (fakeUpdating && !config.strictAppendProgress && queue.length < MAX_QUEUE_BEFORE_BACKPRESSURE) {
-            fakeUpdating = false;
-            dispatchOnSB("update");
-            dispatchOnSB("updateend");
-          }
+          startTranscode(segment, myGeneration, isSelfContainedSegment(segment));
         }
       } catch (err) {
         if (abortGeneration !== myGeneration) return;
@@ -12719,6 +12993,56 @@ var HevcDash = (() => {
             dispatchOnSB("updateend");
           }
         }
+      }
+    }
+    async function appendHead(target, myGeneration) {
+      const rec = inFlight[0];
+      let chunkCount = 0;
+      let firstChunkEmitted = false;
+      for (; ; ) {
+        if (abortGeneration !== myGeneration) return;
+        if (rec.pending.length === 0) {
+          if (rec.done) break;
+          await new Promise((resolve) => {
+            rec.wake = resolve;
+          });
+          continue;
+        }
+        const { h264, initSeg } = rec.pending.shift();
+        if (initSeg && !initAppended) {
+          initAppended = true;
+          lastInitSegment = initSeg;
+          if (updatingGetter.call(realSB)) await waitForRealUpdateEnd();
+          if (abortGeneration !== myGeneration) return;
+          realAppend(initSeg.buffer);
+          await waitForRealUpdateEnd();
+          if (abortGeneration !== myGeneration) return;
+          log.debug("H.264 init segment appended [streaming]");
+        }
+        if (updatingGetter.call(realSB)) await waitForRealUpdateEnd();
+        if (abortGeneration !== myGeneration) return;
+        realAppend(h264.buffer);
+        await waitForRealUpdateEnd();
+        chunkCount++;
+        if (!firstChunkEmitted) {
+          firstChunkEmitted = true;
+          if (fakeUpdating && (config.strictAppendProgress || queue.length < MAX_QUEUE_BEFORE_BACKPRESSURE)) {
+            fakeUpdating = false;
+            dispatchOnSB("update");
+            dispatchOnSB("updateend");
+          }
+        }
+      }
+      inFlight.shift();
+      if (abortGeneration !== myGeneration) return;
+      if (rec.error) throw rec.error;
+      const buffered = target.buffered;
+      const end = buffered.length ? buffered.end(buffered.length - 1).toFixed(2) : "0";
+      log.debug(`Streaming done (${chunkCount} chunks, ${rec.bytes}B in), buffered: ${end}s, in flight: ${inFlight.length}`);
+      if (fakeUpdating && !config.strictAppendProgress && queue.length < MAX_QUEUE_BEFORE_BACKPRESSURE) {
+        fakeUpdating = false;
+        dispatchOnSB("update");
+        dispatchOnSB("updateend");
       }
     }
     return realSB;
@@ -13001,7 +13325,11 @@ var HevcDash = (() => {
       wasmBinaryUrl: config.wasmBinaryUrl,
       fps: config.fps,
       bitrate: config.bitrate,
-      workerUrl: config.workerUrl
+      workerUrl: config.workerUrl,
+      poolSize: config.poolSize,
+      // Forwarded like the rest: without it the documented option did nothing on
+      // this plugin, while the hls.js one passes its whole config through.
+      logLevel: config.logLevel
     });
     if (player.registerCustomCapabilitiesFilter) {
       player.registerCustomCapabilitiesFilter(() => true);

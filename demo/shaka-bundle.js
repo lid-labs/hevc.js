@@ -12207,7 +12207,6 @@ var HevcShaka = (() => {
         reject(new Error("Aborted"));
       }
       this._pendingPrepareInit.clear();
-      this._segmentId = 0;
       this._ready = false;
       this._readyPromise = new Promise((resolve) => {
         this._readyResolve = resolve;
