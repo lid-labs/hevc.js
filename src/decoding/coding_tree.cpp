@@ -13,6 +13,23 @@
 
 namespace hevc {
 
+// Fill n bytes of a 4x4-granular grid row with v. n is a CU or TU side in 4x4
+// units, so 1, 2, 4, 8 or 16. memcpy of a constant size is one store; memset of
+// a size the compiler cannot see is a call, which is what the WASM build emits
+// and what made it slower than the 4x4 loops this replaces.
+static inline void fill_grid_row(uint8_t* p, uint8_t v, int n) {
+    const uint64_t w = 0x0101010101010101ull * v;
+    if (n >= 8) {
+        for (int i = 0; i < n; i += 8) std::memcpy(p + i, &w, 8);
+    } else if (n == 4) {
+        std::memcpy(p, &w, 4);
+    } else if (n == 2) {
+        std::memcpy(p, &w, 2);
+    } else {
+        *p = v;
+    }
+}
+
 // Forward declarations for intra (implemented in a separate file)
 void perform_intra_prediction(DecodingContext& ctx, int x0, int y0,
                               int log2PredSize, int cIdx, int intra_mode,
@@ -997,57 +1014,47 @@ void decode_coding_unit(DecodingContext& ctx, int x0, int y0, int log2CbSize) {
 
     // Phase 6: initialize grids for this CU
     if (ctx.log2_tu_size_grid) {
-        int stride = ctx.filter_grid_stride;
-        for (int dy = 0; dy < cbSize; dy += 4) {
-            for (int dx = 0; dx < cbSize; dx += 4) {
-                int gx = (x0 + dx) / 4;
-                int gy = (y0 + dy) / 4;
-                ctx.log2_tu_size_grid[gy * stride + gx] = static_cast<uint8_t>(log2CbSize);
-                ctx.cbf_luma_grid[gy * stride + gx] = 0;
-            }
+        // The grids hold one byte per 4x4 block, so a row of the CU is one
+        // memset and the 4x4 positions need no index of their own. Coordinates
+        // and sizes are multiples of 4 and non-negative, so >> 2 is their / 4 —
+        // which the compiler has to spell out as a signed division.
+        const int stride = ctx.filter_grid_stride;
+        const int gx0 = x0 >> 2, gy0 = y0 >> 2, gSize = cbSize >> 2;
+
+        for (int gy = gy0; gy < gy0 + gSize; gy++) {
+            const int row = gy * stride + gx0;
+            fill_grid_row(ctx.log2_tu_size_grid + row,
+                          static_cast<uint8_t>(log2CbSize), gSize);
+            fill_grid_row(ctx.cbf_luma_grid + row, 0, gSize);
         }
+
+        // A vertical edge runs down one grid column, so it is a strided walk;
+        // a horizontal one runs along a row, so it is a memset.
+        auto mark_edge_v = [&](int gx) {
+            for (int gy = gy0; gy < gy0 + gSize; gy++)
+                ctx.edge_flags_v[gy * stride + gx] = 1;
+        };
+        auto mark_edge_h = [&](int gy) {
+            fill_grid_row(ctx.edge_flags_h + gy * stride + gx0, 1, gSize);
+        };
 
         // §8.7.2.2: CU left/top edges (transform block boundary at trafoDepth=0)
-        // Left edge (vertical): edgeFlags[0][k] for k=0..cbSize-1
-        for (int dy = 0; dy < cbSize; dy += 4) {
-            ctx.edge_flags_v[(y0 + dy) / 4 * stride + x0 / 4] = 1;
-        }
-        // Top edge (horizontal): edgeFlags[k][0] for k=0..cbSize-1
-        for (int dx = 0; dx < cbSize; dx += 4) {
-            ctx.edge_flags_h[y0 / 4 * stride + (x0 + dx) / 4] = 1;
-        }
+        mark_edge_v(gx0);
+        mark_edge_h(gy0);
 
         // §8.7.2.3: PU boundary edges within CU
-        if (part_mode == PartMode::PART_Nx2N || part_mode == PartMode::PART_NxN) {
-            int px = x0 + cbSize / 2;
-            for (int dy = 0; dy < cbSize; dy += 4)
-                ctx.edge_flags_v[(y0 + dy) / 4 * stride + px / 4] = 1;
-        }
-        if (part_mode == PartMode::PART_nLx2N) {
-            int px = x0 + cbSize / 4;
-            for (int dy = 0; dy < cbSize; dy += 4)
-                ctx.edge_flags_v[(y0 + dy) / 4 * stride + px / 4] = 1;
-        }
-        if (part_mode == PartMode::PART_nRx2N) {
-            int px = x0 + 3 * cbSize / 4;
-            for (int dy = 0; dy < cbSize; dy += 4)
-                ctx.edge_flags_v[(y0 + dy) / 4 * stride + px / 4] = 1;
-        }
-        if (part_mode == PartMode::PART_2NxN || part_mode == PartMode::PART_NxN) {
-            int py = y0 + cbSize / 2;
-            for (int dx = 0; dx < cbSize; dx += 4)
-                ctx.edge_flags_h[py / 4 * stride + (x0 + dx) / 4] = 1;
-        }
-        if (part_mode == PartMode::PART_2NxnU) {
-            int py = y0 + cbSize / 4;
-            for (int dx = 0; dx < cbSize; dx += 4)
-                ctx.edge_flags_h[py / 4 * stride + (x0 + dx) / 4] = 1;
-        }
-        if (part_mode == PartMode::PART_2NxnD) {
-            int py = y0 + 3 * cbSize / 4;
-            for (int dx = 0; dx < cbSize; dx += 4)
-                ctx.edge_flags_h[py / 4 * stride + (x0 + dx) / 4] = 1;
-        }
+        if (part_mode == PartMode::PART_Nx2N || part_mode == PartMode::PART_NxN)
+            mark_edge_v(gx0 + (gSize >> 1));
+        if (part_mode == PartMode::PART_nLx2N)
+            mark_edge_v(gx0 + (gSize >> 2));
+        if (part_mode == PartMode::PART_nRx2N)
+            mark_edge_v(gx0 + 3 * (gSize >> 2));
+        if (part_mode == PartMode::PART_2NxN || part_mode == PartMode::PART_NxN)
+            mark_edge_h(gy0 + (gSize >> 1));
+        if (part_mode == PartMode::PART_2NxnU)
+            mark_edge_h(gy0 + (gSize >> 2));
+        if (part_mode == PartMode::PART_2NxnD)
+            mark_edge_h(gy0 + 3 * (gSize >> 2));
     }
 
     // §8.6.1: Store CU position for QP derivation in transform units
@@ -1259,22 +1266,22 @@ void decode_transform_tree(DecodingContext& ctx, int x0, int y0,
         // Phase 6: store TU info for deblocking
         if (ctx.cbf_luma_grid && ctx.log2_tu_size_grid) {
             int trSize = 1 << log2TrafoSize;
-            int stride = ctx.filter_grid_stride;
-            for (int dy = 0; dy < trSize; dy += 4) {
-                for (int dx = 0; dx < trSize; dx += 4) {
-                    int gx = (x0 + dx) / 4;
-                    int gy = (y0 + dy) / 4;
-                    ctx.cbf_luma_grid[gy * stride + gx] = cbf_luma ? 1 : 0;
-                    ctx.log2_tu_size_grid[gy * stride + gx] = static_cast<uint8_t>(log2TrafoSize);
-                }
+            // One byte per 4x4 block: a row of the TU is one memset, and >> 2
+            // stands for the / 4 of non-negative multiples of 4.
+            const int stride = ctx.filter_grid_stride;
+            const int gx0 = x0 >> 2, gy0 = y0 >> 2, gSize = trSize >> 2;
+            for (int gy = gy0; gy < gy0 + gSize; gy++) {
+                const int row = gy * stride + gx0;
+                fill_grid_row(ctx.cbf_luma_grid + row, cbf_luma ? 1 : 0, gSize);
+                fill_grid_row(ctx.log2_tu_size_grid + row,
+                              static_cast<uint8_t>(log2TrafoSize), gSize);
             }
             // §8.7.2.2: TU left edge (vertical) — always 1 for internal edges
             // (CU edge was already set in decode_coding_unit)
-            for (int dy = 0; dy < trSize; dy += 4)
-                ctx.edge_flags_v[(y0 + dy) / 4 * stride + x0 / 4] = 1;
+            for (int gy = gy0; gy < gy0 + gSize; gy++)
+                ctx.edge_flags_v[gy * stride + gx0] = 1;
             // §8.7.2.2: TU top edge (horizontal)
-            for (int dx = 0; dx < trSize; dx += 4)
-                ctx.edge_flags_h[y0 / 4 * stride + (x0 + dx) / 4] = 1;
+            fill_grid_row(ctx.edge_flags_h + gy0 * stride + gx0, 1, gSize);
         }
     }
 }
