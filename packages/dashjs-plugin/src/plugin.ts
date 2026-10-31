@@ -50,7 +50,7 @@ async function hasNativeHevcSupport(): Promise<boolean> {
     // ManagedMediaSource-only browsers (iPhone Safari): trust isTypeSupported —
     // it reflects hardware HEVC there, and the probe below needs classic MSE.
     if (typeof MediaSource === "undefined") return true;
-    // isTypeSupported can lie (e.g. Firefox Win without HEVC extension installed).
+    // isTypeSupported can lie (e.g. Firefox Win with no system decoder).
     // Verify by actually creating a SourceBuffer.
     return await new Promise<boolean>((resolve) => {
       const ms = new MediaSource();

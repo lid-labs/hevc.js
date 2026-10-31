@@ -62,7 +62,7 @@
         "name": "What happens when native HEVC is available?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "Nothing. The plugin checks for native HEVC support at startup and stays dormant when the browser can play HEVC directly &mdash; Safari, any browser on macOS, Chrome 107+ on Windows with an HEVC-capable GPU (Intel Skylake 2015+, NVIDIA Maxwell 2nd gen 2015+, AMD Fiji 2015+), or Edge/Firefox on Windows with the Microsoft HEVC Video Extension installed. Zero overhead."
+          "text": "Nothing. The plugin checks for native HEVC support at startup and stays dormant when the browser can play HEVC directly &mdash; Safari, any browser on macOS, Chrome 107+ on Windows with an HEVC-capable GPU (Intel Skylake 2015+, NVIDIA Maxwell 2nd gen 2015+, AMD Fiji 2015+), or Edge/Firefox on Windows with an HEVC decoder registered with the system. Zero overhead."
         }
       },
       {
@@ -432,7 +432,7 @@ player.initialize(video, <span class="text-green-400">'https://example.com/strea
                 <td><span class="text-green-400">Yes</span> (WebCodecs H.264)</td>
               </tr>
               <tr>
-                <td class="text-white font-medium">Edge <span class="text-silver/50 text-xs">(Win, with HEVC Video Extension)</span></td>
+                <td class="text-white font-medium">Edge <span class="text-silver/50 text-xs">(Win, with system decoder)</span></td>
                 <td><span class="text-green-400">Yes</span> (MFT)</td>
                 <td>No &mdash; bypassed</td>
                 <td class="text-silver/50">&mdash;</td>
@@ -444,7 +444,7 @@ player.initialize(video, <span class="text-green-400">'https://example.com/strea
                 <td><span class="text-green-400">Yes</span> (WebCodecs H.264)</td>
               </tr>
               <tr>
-                <td class="text-white font-medium">Firefox 134+ <span class="text-silver/50 text-xs">(Win, with HEVC Video Extension)</span></td>
+                <td class="text-white font-medium">Firefox 134+ <span class="text-silver/50 text-xs">(Win, with system decoder)</span></td>
                 <td><span class="text-green-400">Yes</span> (MFT)</td>
                 <td>No &mdash; bypassed</td>
                 <td class="text-silver/50">&mdash;</td>
@@ -716,7 +716,7 @@ installMSEIntercept({ wasmUrl: <span class="text-green-400">'/hevc-decode.js'</s
           <details>
             <summary>What happens when native HEVC is available?</summary>
             <div class="faq-answer">
-              <p>Nothing. The plugin checks for native HEVC support at startup and stays dormant when the browser can play HEVC directly &mdash; Safari, any browser on macOS, Chrome 107+ on Windows with an HEVC-capable GPU (Intel Skylake 2015+, NVIDIA Maxwell 2nd gen 2015+, AMD Fiji 2015+), or Edge/Firefox on Windows with the Microsoft HEVC Video Extension installed. Zero overhead.</p>
+              <p>Nothing. The plugin checks for native HEVC support at startup and stays dormant when the browser can play HEVC directly &mdash; Safari, any browser on macOS, Chrome 107+ on Windows with an HEVC-capable GPU (Intel Skylake 2015+, NVIDIA Maxwell 2nd gen 2015+, AMD Fiji 2015+), or Edge/Firefox on Windows with an HEVC decoder registered with the system. Zero overhead.</p>
             </div>
           </details>
 
