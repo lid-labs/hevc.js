@@ -140,24 +140,28 @@ hevc.js 在客户端将 HEVC 转码为 H.264。这需要浏览器提供两样东
 
 - **Chrome 107+(Windows)** 直接使用 `D3D11VideoDecoder` → D3D11VA(DXVA)。**无需 Microsoft 扩展。** 需要支持 HEVC 硬件解码的 GPU(Intel Skylake 2015+、NVIDIA Maxwell 2nd gen / GTX 960 2015+、AMD Fiji / R9 Fury 2015+)。没有软件回退 — 如果 GPU 无法解码 HEVC,Chrome 就无法播放。Chrome < 130 还有 1920×1088 @ 30fps 的上限。
 - **Edge(Windows)** 使用 `VDAVideoDecoder` → MFT(Media Foundation)。**需要 Microsoft [HEVC 视频扩展](https://apps.microsoft.com/detail/9nmzlz57r3t7)**(应用商店约 ¥6)。没有它,无论 GPU 如何都没有 HEVC。
-- **Firefox 133+(Windows)** 也使用 MFT,对 Microsoft HEVC 视频扩展有相同的依赖。
-- **macOS(Safari / Chrome / Edge / Firefox)** 通过 VideoToolbox 原生解码 HEVC。无需扩展。
+- **Firefox 134+(Windows)** 也使用 MFT,对 Microsoft HEVC 视频扩展有相同的依赖。
+- **Firefox 137+(Linux)** 原生解码 HEVC — 通过 VA-API 硬件解码,通过系统 ffmpeg 软件解码。可用性取决于发行版的 ffmpeg 构建;不可用时,SourceBuffer 探测会回退到转码。
+- **macOS(Safari / Chrome / Edge,以及 Firefox 136+)** 通过 VideoToolbox 原生解码 HEVC。无需扩展。
 
 | 浏览器 + 系统 + 条件 | 原生 HEVC | hevc.js 激活? | 转码可用? | 说明 |
 |---|---|---|---|---|
 | **Safari 13+**(macOS/iOS) | 是(VideoToolbox) | 否 — 原生 | — | 通过 macOS/iOS 硬件解码 |
-| **Chrome/Edge/Firefox**(Mac) | 是(VideoToolbox) | 否 — 原生 | — | 通过 macOS 原生解码 |
+| **Chrome/Edge**(Mac) | 是(VideoToolbox) | 否 — 原生 | — | 通过 macOS 原生解码 |
+| **Firefox 136+**(Mac) | 是(VideoToolbox) | 否 — 原生 | — | 通过 macOS 原生解码 |
+| **Firefox < 136**(Mac) | 否 | **是** | **是** | macOS 上的原生 HEVC 自 Firefox 136 起才有 |
 | **Chrome 107+**(Win,支持 HEVC 的 GPU) | 是(D3D11VA) | 否 — 原生 | — | 直接 GPU 解码,无需扩展 |
 | **Chrome 107+**(Win,GPU 不支持 HEVC) | 否 | **是** | **是** | Chrome 没有 HEVC 软件回退 |
 | **Edge**(Win,装了 HEVC 视频扩展) | 是(MFT) | 否 — 原生 | — | 需要 Microsoft [HEVC 视频扩展](https://apps.microsoft.com/detail/9nmzlz57r3t7) |
 | **Edge**(Win,无扩展) | 否 | **是** | **是** | MFT 没有扩展时无解码器 |
-| **Firefox 133+**(Win,装了 HEVC 视频扩展) | 是(MFT) | 否 — 原生 | — | 需要 Microsoft 扩展 |
-| **Firefox 133+**(Win,无扩展) | 上报但是假的 | **是** | **是** | SourceBuffer 探测会捕获这个误报,回退到转码 |
+| **Firefox 134+**(Win,装了 HEVC 视频扩展) | 是(MFT) | 否 — 原生 | — | 需要 Microsoft 扩展 |
+| **Firefox 134+**(Win,无扩展) | 上报但是假的 | **是** | **是** | SourceBuffer 探测会捕获这个误报,回退到转码 |
 | **Chrome/Edge 94–106** | 否 | **是** | **是** | 浏览器尚未支持 HEVC,但 WebCodecs H.264 编码器已可用 |
 | **Chrome/Edge < 94** | 否 | 否 | 否 | 没有 WebCodecs — 直接提供 AVC 内容 |
 | **Chrome**(Linux,启用 VAAPI) | 视情况 | 有时 | **是** | 取决于驱动和 GPU |
 | **Chrome**(Linux,无 VAAPI) | 否 | **是** | **是** | 通过 WebCodecs 进行软件 H.264 编码 |
-| **Firefox**(Linux) | 否 | **是** | 视情况 | 需要通过 WebCodecs 提供可用的 H.264 编码器 — 在无头/虚拟机环境下会失败 |
+| **Firefox 137+**(Linux,ffmpeg 支持 HEVC) | 是(VA-API / ffmpeg) | 否 — 原生 | — | 自 Firefox 137 起原生支持 — VA-API 硬件解码或系统 ffmpeg |
+| **Firefox < 137**(Linux) | 否 | **是** | 视情况 | 需要通过 WebCodecs 提供可用的 H.264 编码器 — 在无头/虚拟机环境下会失败 |
 
 **要求**(所有现代浏览器都支持):
 - **WebAssembly** + **Web Workers**
