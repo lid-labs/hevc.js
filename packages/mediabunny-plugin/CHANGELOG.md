@@ -1,5 +1,12 @@
 # @hevcjs/mediabunny-plugin
 
+## 0.1.1
+
+### Patch Changes
+
+- Updated dependencies [[`aeaca00`](https://github.com/lid-labs/hevc.js/commit/aeaca00476718082cbc1c015255b771f1bfd1db9), [`4019420`](https://github.com/lid-labs/hevc.js/commit/40194201645bc3124be980b4294fc60855902953), [`f26d42f`](https://github.com/lid-labs/hevc.js/commit/f26d42f0ff33a7df53c4299e758cf28d8583f1ff), [`aa43064`](https://github.com/lid-labs/hevc.js/commit/aa430646d070fec3cdea4cc4884003c3b3548b83), [`0bc5147`](https://github.com/lid-labs/hevc.js/commit/0bc5147f114d798e802d0355907cda3697b2f630), [`ed384b8`](https://github.com/lid-labs/hevc.js/commit/ed384b8186195310b43820384b22007b4f685279), [`16fff82`](https://github.com/lid-labs/hevc.js/commit/16fff829fc4e0155afdbd10346eff7f8ca349da8), [`eb2a753`](https://github.com/lid-labs/hevc.js/commit/eb2a753d0695a42142ac808631dbc99bd0a93c2b)]:
+  - @hevcjs/core@1.7.0
+
 ## 0.1.0
 
 ### Minor Changes

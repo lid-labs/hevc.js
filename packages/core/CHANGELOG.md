@@ -1,5 +1,199 @@
 # @hevcjs/core
 
+## 1.7.0
+
+### Minor Changes
+
+- [#372](https://github.com/lid-labs/hevc.js/pull/372) [`16fff82`](https://github.com/lid-labs/hevc.js/commit/16fff829fc4e0155afdbd10346eff7f8ca349da8) Thanks [@privaloops](https://github.com/privaloops)! - Transcode several segments at once. `installMSEIntercept({ poolSize })` keeps up
+  to `poolSize` transcode workers, each with its own WASM decoder, so segments
+  transcode in parallel while the SourceBuffer is still fed in segment order.
+  Default: 2 from four hardware threads up, 1 below; `poolSize: 1` is the previous
+  behaviour, one segment at a time.
+  
+  Measured in Chromium through Playwright on an Apple M4 Pro, 2026-10-30, on the
+  30s ABR DASH preset with transcoding forced: time to buffer 28s of media, three
+  alternated rounds, 10.6s with one worker against 8.1s with two — 1.31x. The
+  whole pipeline does not scale with the pool, since demuxing, the appends and the
+  player's own work stay on one thread and the WebCodecs encode was already
+  asynchronous.
+  
+  A segment goes to a second worker only when it starts on an IDR or a BLA
+  picture, which resets the decoder by type. A CRA-led (open GOP) segment stays on
+  the worker that decoded its predecessor: its RASL pictures reference that
+  predecessor, which is in that worker's DPB and in no other, so another worker
+  would decode them against unrelated pictures — wrong frames rather than an
+  error. Where a stream is segmented that way, the pool therefore has no effect
+  rather than a wrong one.
+  
+  Fixes found while building it:
+  
+  - Nothing is dispatched while an init segment is being parsed. `initParsed` only
+    flips when the parse finishes, so on a re-sent init — an ABR switch — the
+    dispatch could hand a media segment to a transcoder in the middle of parsing
+    other parameter sets; on the main-thread path that is a reentrant call on the
+    one instance parsing them.
+  - `TranscodeWorkerClient.processInitSegment()` waits for the init segment it was
+    given. It returned the promise a previous init had already resolved, so a
+    re-sent init came back before the worker had seen the message, and a caller
+    that awaited it was told the new parameter sets were parsed when they were not.
+  
+  - `TranscodeWorkerClient.abort()` no longer restarts its segment id count. The
+    worker can still be inside a streaming segment when the abort reaches it, and
+    a late `streamingDone` from the abandoned segment matched the handler of a new
+    segment that had been given the same id, resolving it before its data had
+    arrived. Ids stay monotonic, so a late message matches nothing.
+  - `@hevcjs/dashjs-plugin` forwards `logLevel` and `poolSize` to the intercept.
+    `logLevel` was accepted and dropped before, so the documented option did
+    nothing on that plugin.
+
+### Patch Changes
+
+- [#369](https://github.com/lid-labs/hevc.js/pull/369) [`aeaca00`](https://github.com/lid-labs/hevc.js/commit/aeaca00476718082cbc1c015255b771f1bfd1db9) Thanks [@privaloops](https://github.com/privaloops)! - Faster decoding: a picture whose luma and chroma are both 8 bits is now stored
+  one byte per sample instead of two, so motion compensation, the loop filters and
+  the SAO backup copy move half the bytes. With it come an int16-lane default
+  weighted prediction for 8-bit pictures, a `derive_bs` shortcut when both sides of
+  an edge carry the same motion, vectorised motion-compensation copies, one
+  deblocking instance per edge direction and lane-shuffled transform transposes.
+  
+  On one thread on an Apple M4 Pro, 2026-10-30: 6-18% fewer instructions retired
+  and 11-25% fewer cycles across the four reference streams; 135 → 145 fps on
+  `bbb1080_50f.265`, 29.7 → 32.5 fps on `bbb4k_25f.265` and 39.5 → 45.2 fps on
+  `bbb4k_singleslice.265` under Node 24.4.1. Decoded output is unchanged: the 147
+  streams of the JCT-VC HEVC v1 conformance suite still match their reference MD5,
+  and the WASM build decodes the 50-stream set exactly like the native one.
+  
+  The WASM binary grows from 290 418 to 336 019 bytes (116 139 with `gzip -9`),
+  the price of the two sample-type instances of each templated kernel; Main 10
+  keeps its 16-bit path. `HEVCFrame` gains `bytes_per_sample` in the C struct, and
+  the JS side widens an 8-bit plane into the `Uint16Array` planes it already
+  returned, so the JavaScript API is unchanged.
+
+- [#374](https://github.com/lid-labs/hevc.js/pull/374) [`4019420`](https://github.com/lid-labs/hevc.js/commit/40194201645bc3124be980b4294fc60855902953) Thanks [@privaloops](https://github.com/privaloops)! - Faster CABAC: a context variable is one byte. §9.3.2.2 keeps `pStateIdx` and
+  `valMps` apart, and the decoder held them in two bytes; they are now the
+  combined state `pStateIdx << 1 | valMps`, as ffmpeg does. That is one load and
+  one store per bin instead of two, and the `valMps` swap §9.3.4.3.2 prescribes at
+  `pStateIdx` 0 comes out of the LPS transition table rather than a branch and a
+  second store. The three state-indexed tables are built at compile time from
+  Tables 9-48 to 9-50, which stay the single source of truth.
+  
+  Measured on one thread on an Apple M4 Pro, 2026-10-30, two binaries alternated
+  over three rounds, minimum of each: instructions retired 46.411 → 45.763G on
+  `bbb4k_25f.265` (−1.40%), where the residual coding is about 29% of cycles, and
+  25.380 → 25.180G on `bbb1080_50f.265` (−0.79%); cycles 5.408 → 5.300G on the
+  latter, while the 4K cycle reading moved within its noise. Decoded output is
+  unchanged: 147/147 conformance streams, the 50-stream WASM/native diff, and the
+  219 unit tests.
+  
+  The WASM binary grows from 336 019 to 343 610 bytes (117 830 with `gzip -9`),
+  768 of which are the new tables; the docs restate it as 336 KB, ~115 KB
+  gzip-compressed.
+
+- [#374](https://github.com/lid-labs/hevc.js/pull/374) [`f26d42f`](https://github.com/lid-labs/hevc.js/commit/f26d42f0ff33a7df53c4299e758cf28d8583f1ff) Thanks [@privaloops](https://github.com/privaloops)! - Deblocking skips runs of empty edge positions a word at a time. A 1080p picture
+  offers about 130k four-sample segment positions and only 44k of them carry an
+  edge, and the flag grid holds one byte per 4x4 block while the filter walks the
+  8x8 grid, so one 64-bit read answers "is any of the next eight columns worth
+  visiting" — masked to the even bytes for a vertical edge, since the odd ones mark
+  4-pixel-aligned transform boundaries §8.7.2 does not filter.
+  
+  Measured on one thread on an Apple M4 Pro, 2026-10-30, instructions retired, two
+  binaries alternated over three rounds: −0.23% on `bbb1080_50f.265`, −0.19% on
+  `demo/bbb1080_singleslice.265`, −0.25% on `bbb4k_25f.265` and −0.67% on
+  `demo/bbb4k_singleslice.265`, which is where deblocking weighs most. Decoded
+  output is unchanged: 147/147 conformance streams and the 50-stream WASM/native
+  diff.
+
+- [#379](https://github.com/lid-labs/hevc.js/pull/379) [`aa43064`](https://github.com/lid-labs/hevc.js/commit/aa430646d070fec3cdea4cc4884003c3b3548b83) Thanks [@privaloops](https://github.com/privaloops)! - The WASM module reports where the fields of its `HEVCFrame` struct sit, through a
+  new `hevc_frame_layout()` export, and the readers that walk a frame in its memory
+  ask for it instead of carrying their own copy of the offsets.
+  
+  Five readers did: this package's `decoder.ts` and `worker.ts`, and the unbundled
+  `src/wasm/hevc_decoder.js`, `src/wasm/worker.js` and `tools/wasm_decode.cjs`. Only
+  the first two can share a module — the others load as a script, a worker and a
+  CommonJS tool — so the offsets were duplicated by construction, and what kept
+  them honest was a compile-time `offsetof` guard naming the five files. The guard
+  is gone with the duplication it guarded: a reader now follows the binary it is
+  actually talking to.
+  
+  What each reader still names is the **field names**, and a name the module does
+  not report throws rather than reading `undefined` as an offset. A unit test
+  fabricates a layout with every field moved and the struct grown, and fails
+  against hardcoded offsets.
+  
+  `flush()` allocated 52 bytes for the struct where the other paths asked the
+  layout for its size; it asks too now. A field added to `HEVCFrame` would
+  otherwise have had the module write past that allocation.
+  
+  No behaviour change for a caller of `@hevcjs/core`.
+
+- [#376](https://github.com/lid-labs/hevc.js/pull/376) [`0bc5147`](https://github.com/lid-labs/hevc.js/commit/0bc5147f114d798e802d0355907cda3697b2f630) Thanks [@privaloops](https://github.com/privaloops)! - The filter grids are filled a row at a time. `decode_coding_unit` and the
+  transform tree wrote `log2_tu_size_grid`, `cbf_luma_grid` and the edge flags one
+  4x4 block at a time, deriving each index with `(x0 + dx) / 4` — a signed division
+  the compiler has to spell out, since it cannot know the operand is non-negative.
+  A CU or TU row is contiguous in those grids, so it is one store of up to 8 bytes,
+  and the coordinates become shifts.
+  
+  Rows are filled with `memcpy` of a constant size rather than `memset`: for a size
+  the compiler cannot see, the WASM build emits a call, and a 2- or 4-byte call per
+  row costs more than the loop it replaces. Measured — the `memset` version came out
+  at −0.86% to −2.47% of native instructions but −0.27% to +0.68% in WASM, while the
+  version shipped here gains on both.
+  
+  Measured on one thread on an Apple M4 Pro, 2026-10-30, two binaries alternated,
+  min of 3 rounds. Native, instructions retired (`hevc-bench -n 5` under
+  `/usr/bin/time -l`): −1.60% on `bbb1080_50f.265`, −2.34% on
+  `demo/bbb1080_singleslice.265`, −1.41% on `bbb4k_25f.265`, −2.20% on
+  `demo/bbb4k_singleslice.265`. WASM, instructions retired of the `node` process
+  running `tools/bench_wasm.cjs`: −0.89%, −0.70% and −0.64% on the first three.
+  Native cycles land between −0.89% and +0.67%, which is flat: the machine was
+  loaded, where cycles move by several percent between rounds and only instruction
+  counts are stable.
+  
+  Decoded output is unchanged: 147/147 conformance streams, the 51-stream
+  WASM/native diff and 220 ctest. The WASM binary grows from 343 601 to 344 571
+  bytes: `fill_grid_row` spells out four store widths where the loops it replaces
+  were one.
+
+- [#378](https://github.com/lid-labs/hevc.js/pull/378) [`ed384b8`](https://github.com/lid-labs/hevc.js/commit/ed384b8186195310b43820384b22007b4f685279) Thanks [@privaloops](https://github.com/privaloops)! - Building the intra reference samples got two cheaper steps.
+  
+  The samples were read one at a time through `Picture::get()`, which tests the
+  picture's sample width on every one of them. Availability is already decided per
+  4x4 block, so the reads run in runs along a row of the top edge or a column of
+  the left edge: the width is now resolved once per run, and the row case
+  vectorises.
+  
+  The Z-scan address §6.4.1 compares for same-CTB availability was an eight-step
+  bit-interleave loop, run once per 4x4 block tested. It is now one lookup per
+  coordinate in a 256-entry spread table built at compile time.
+  
+  Measured on one thread on an Apple M4 Pro, 2026-10-30, two binaries alternated,
+  min of 3 rounds. Native instructions retired (`hevc-bench -n 5` under
+  `/usr/bin/time -l`): −1.59% on `bbb4k_25f.265`, −1.66% on `bbb1080_50f.265`,
+  −2.48% on `full_qcif_10f.265`, which is all-intra. WASM, instructions retired of
+  the `node` process running `tools/bench_wasm.cjs`: −0.87% and −0.69%. Cycles
+  land between −1.34% and +0.24%, i.e. flat on a loaded machine.
+  
+  Decoded output is unchanged: 147/147 conformance streams, the 51-stream
+  WASM/native diff and 220 ctest.
+
+- [#377](https://github.com/lid-labs/hevc.js/pull/377) [`eb2a753`](https://github.com/lid-labs/hevc.js/commit/eb2a753d0695a42142ac808631dbc99bd0a93c2b) Thanks [@privaloops](https://github.com/privaloops)! - Each decoded picture keeps its motion field for TMVP on a 16x16 grid instead of a
+  4x4 one. §8.5.3.2.9 masks the collocated position down to a 16x16 grid before
+  reading it, so fifteen sixteenths of the copy every picture carried were entries
+  no reader could reach.
+  
+  What this buys is mostly memory, which matters more for the WASM build than the
+  instruction count does: peak resident size over a decode drops 22% at 4K (551 to
+  429 MiB) and 15% at 1080p (287 to 244 MiB), because every picture the DPB holds
+  carries 5.8 MB less at 4K.
+  
+  Measured on one thread on an Apple M4 Pro, 2026-10-30, two binaries alternated,
+  min of 3 rounds, `hevc-bench -n 5` under `/usr/bin/time -l`. Native: instructions
+  retired −0.39% on `bbb4k_25f.265` and −0.31% on `bbb1080_50f.265`, cycles −0.56%
+  and −1.23%. WASM, instructions retired of the `node` process running
+  `tools/bench_wasm.cjs`: −0.23% and −0.42%.
+  
+  Decoded output is unchanged: 147/147 conformance streams, the 51-stream
+  WASM/native diff and 220 ctest.
+
 ## 1.6.0
 
 ### Minor Changes

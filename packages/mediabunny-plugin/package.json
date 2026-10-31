@@ -1,6 +1,6 @@
 {
   "name": "@hevcjs/mediabunny-plugin",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Mediabunny plugin for HEVC/H.265 decoding — registers a custom video decoder backed by @hevcjs/core where WebCodecs cannot decode HEVC",
   "type": "module",
   "main": "./dist/index.js",
