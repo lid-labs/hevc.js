@@ -1,7 +1,7 @@
 /**
  * @hevcjs/mediabunny-plugin — HEVC decoding for Mediabunny where WebCodecs
- * cannot provide it (Chrome on Linux, Firefox on Windows without the HEVC
- * extension, machines without a hardware HEVC decoder).
+ * cannot provide it (Chrome on Linux, Firefox on Windows with no system
+ * decoder, machines without a hardware HEVC decoder).
  *
  * @example
  * ```ts

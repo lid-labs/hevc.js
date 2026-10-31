@@ -1,6 +1,6 @@
 # @hevcjs/mediabunny-plugin
 
-HEVC/H.265 decoding for [Mediabunny](https://mediabunny.dev) where WebCodecs cannot decode it — Chrome on Linux, Firefox on Windows without the HEVC extension, machines without a hardware HEVC decoder. Registers a [custom video decoder](https://mediabunny.dev/guide/supported-formats-and-codecs#custom-coders) backed by the hevc.js WebAssembly decoder; Mediabunny then reads, converts and extracts frames from HEVC tracks as it does for any other codec.
+HEVC/H.265 decoding for [Mediabunny](https://mediabunny.dev) where WebCodecs cannot decode it — Chrome on Linux, Firefox on Windows with no system decoder, machines without a hardware HEVC decoder. Registers a [custom video decoder](https://mediabunny.dev/guide/supported-formats-and-codecs#custom-coders) backed by the hevc.js WebAssembly decoder; Mediabunny then reads, converts and extracts frames from HEVC tracks as it does for any other codec.
 
 Where the browser decodes HEVC itself, the plugin stays out of the way: it only claims the profiles WebCodecs reports as unsupported.
 

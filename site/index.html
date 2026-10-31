@@ -475,7 +475,7 @@
 
 <script>
 // Copied from packages/dashjs-plugin/src/plugin.ts — isTypeSupported can lie
-// (Firefox Win without HEVC extension), so we verify with a real SourceBuffer.
+// (Firefox Win with no system decoder), so we verify with a real SourceBuffer.
 async function hasNativeHevcSupport() {
   try {
     // iPhone Safari only exposes ManagedMediaSource (iOS 17.1+).
