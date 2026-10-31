@@ -206,7 +206,7 @@ hevc.js transcodes HEVC to H.264 client-side. This requires two things from the 
 Each browser has its own decode path on Windows, with different dependencies:
 
 - **Chrome 107+ (Windows)** uses `D3D11VideoDecoder` → D3D11VA (DXVA) directly. **No Microsoft extension required.** Requires a GPU with HEVC hardware decoder (Intel Skylake 2015+, NVIDIA Maxwell 2nd gen / GTX 960 2015+, AMD Fiji / R9 Fury 2015+). No software fallback — if the GPU cannot decode HEVC, Chrome will not play it. Chrome < 130 also caps at 1920×1088 @ 30fps.
-- **Edge (Windows)** uses `VDAVideoDecoder` → MFT (Media Foundation). **Requires the Microsoft [HEVC Video Extension](https://apps.microsoft.com/detail/9nmzlz57r3t7)**. Without it, no HEVC regardless of GPU.
+- **Edge (Windows)** uses `VDAVideoDecoder` → MFT (Media Foundation). **Requires the Microsoft [HEVC Video Extension](https://apps.microsoft.com/detail/9nmzlz57r3t7)**. Without an HEVC MFT, no HEVC regardless of GPU.
 - **Firefox 134+ (Windows)** also uses MFT and has the same dependency on the Microsoft HEVC Video Extension.
 - **Firefox 137+ (Linux)** decodes HEVC natively — hardware via VA-API, software via the system ffmpeg. Availability follows the distro's ffmpeg build; the SourceBuffer probe falls back to transcoding when it doesn't.
 - **macOS (Safari / Chrome / Edge, and Firefox 136+)** decode HEVC natively via VideoToolbox. No extension.
@@ -220,9 +220,9 @@ Each browser has its own decode path on Windows, with different dependencies:
 | **Chrome 107+** (Win, HEVC-capable GPU) | Yes (D3D11VA) | No — native | — | Direct GPU decode, no extension needed |
 | **Chrome 107+** (Win, GPU without HEVC) | No | **Yes** | **Yes** | Chrome has no software HEVC fallback |
 | **Edge** (Win, with HEVC Video Extension) | Yes (MFT) | No — native | — | Requires Microsoft [HEVC Video Extension](https://apps.microsoft.com/detail/9nmzlz57r3t7) |
-| **Edge** (Win, no system decoder) | No | **Yes** | **Yes** | MFT without extension: no decoder |
+| **Edge** (Win, no system decoder) | No | **Yes** | **Yes** | No HEVC MFT installed |
 | **Firefox 134+** (Win, with HEVC Video Extension) | Yes (MFT) | No — native | — | Requires Microsoft extension |
-| **Firefox 134+** (Win, no system decoder) | Reported but fake | **Yes** | **Yes** | SourceBuffer probe catches the false positive, falls back to transcoding |
+| **Firefox 134+** (Win, no system decoder) | Reported but fake | **Yes** | **Yes** | dash.js and hls.js plugins: SourceBuffer probe catches the false positive, falls back to transcoding. Shaka: use `forceTransmux` |
 | **Chrome/Edge 94–106** | No | **Yes** | **Yes** | HEVC not yet shipped in browser, WebCodecs H.264 encoder available |
 | **Chrome/Edge < 94** | No | No | No | No WebCodecs — serve AVC content directly |
 | **Chrome** (Linux, VAAPI enabled) | Variable | Sometimes | **Yes** | Depends on driver and GPU |
