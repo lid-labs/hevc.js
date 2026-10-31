@@ -46,6 +46,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **HLS demo page** (`demo/hls.html`) with the same four presets as the DASH demo (BBB 30s ABR + three test patterns), repackaged from the DASH streams by `tools/gen_hls_streams.sh` (`-c copy`, CODECS attribute injected from the DASH manifest, hvc1 tagging). E2E spec `tests/e2e/hls.spec.ts`.
 
 ### Changed
+- **Browser fallback docs use technical wording** (`README.md`, `site/docs/`): support tables name the missing system decoder.
 - **Cheaper intra reference samples** (`src/decoding/intra_prediction.cpp`), #342, part of #232. Two steps of `build_reference_samples`:
   - The samples were read one at a time through `Picture::get()`, which tests the picture's sample width on every one. Availability is already decided per 4x4 block, so the reads come in runs along a row of the top edge or a column of the left edge: the width is resolved once per run, and the row case vectorises.
   - The Z-scan address §6.4.1 compares for same-CTB availability was an eight-step bit-interleave loop, run once per 4x4 block tested. It is one lookup per coordinate in a 256-entry spread table built at compile time.
