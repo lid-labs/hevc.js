@@ -402,10 +402,22 @@ registerHevcTransmuxer(shaka);
                 <td class="text-silver/50">&mdash;</td>
               </tr>
               <tr>
-                <td class="text-white font-medium">Chrome/Edge/Firefox <span class="text-silver/50 text-xs">(Mac)</span></td>
+                <td class="text-white font-medium">Chrome/Edge <span class="text-silver/50 text-xs">(Mac)</span></td>
                 <td><span class="text-green-400">Yes</span> (VideoToolbox)</td>
                 <td>No &mdash; native</td>
                 <td class="text-silver/50">&mdash;</td>
+              </tr>
+              <tr>
+                <td class="text-white font-medium">Firefox 136+ <span class="text-silver/50 text-xs">(Mac)</span></td>
+                <td><span class="text-green-400">Yes</span> (VideoToolbox)</td>
+                <td>No &mdash; native</td>
+                <td class="text-silver/50">&mdash;</td>
+              </tr>
+              <tr>
+                <td class="text-white font-medium">Firefox &lt; 136 <span class="text-silver/50 text-xs">(Mac)</span></td>
+                <td><span class="text-red-400">No</span></td>
+                <td class="text-accent font-medium">Yes</td>
+                <td><span class="text-green-400">Yes</span></td>
               </tr>
               <tr>
                 <td class="text-white font-medium">Chrome 107+ <span class="text-silver/50 text-xs">(Win, HEVC-capable GPU)</span></td>
@@ -432,13 +444,13 @@ registerHevcTransmuxer(shaka);
                 <td><span class="text-green-400">Yes</span> (WebCodecs H.264)</td>
               </tr>
               <tr>
-                <td class="text-white font-medium">Firefox 133+ <span class="text-silver/50 text-xs">(Win, with HEVC Video Extension)</span></td>
+                <td class="text-white font-medium">Firefox 134+ <span class="text-silver/50 text-xs">(Win, with HEVC Video Extension)</span></td>
                 <td><span class="text-green-400">Yes</span> (MFT)</td>
                 <td>No &mdash; native</td>
                 <td class="text-silver/50">&mdash;</td>
               </tr>
               <tr>
-                <td class="text-white font-medium">Firefox 133+ <span class="text-silver/50 text-xs">(Win, no extension — use forceTransmux)</span></td>
+                <td class="text-white font-medium">Firefox 134+ <span class="text-silver/50 text-xs">(Win, no extension — use forceTransmux)</span></td>
                 <td><span class="text-yellow-400">Reported but fake</span></td>
                 <td class="text-accent font-medium">Yes</td>
                 <td><span class="text-green-400">Yes</span> (force via player.configure)</td>
@@ -468,7 +480,13 @@ registerHevcTransmuxer(shaka);
                 <td><span class="text-green-400">Yes</span> (software encode)</td>
               </tr>
               <tr>
-                <td class="text-white font-medium">Firefox <span class="text-silver/50 text-xs">(Linux)</span></td>
+                <td class="text-white font-medium">Firefox 137+ <span class="text-silver/50 text-xs">(Linux, ffmpeg with HEVC)</span></td>
+                <td><span class="text-green-400">Yes</span> (VA-API / ffmpeg)</td>
+                <td>No &mdash; native</td>
+                <td class="text-silver/50">&mdash;</td>
+              </tr>
+              <tr>
+                <td class="text-white font-medium">Firefox &lt; 137 <span class="text-silver/50 text-xs">(Linux)</span></td>
                 <td><span class="text-red-400">No</span></td>
                 <td class="text-accent font-medium">Yes</td>
                 <td><span class="text-yellow-400">Depends</span> &mdash; needs WebCodecs H.264 encoder</td>
