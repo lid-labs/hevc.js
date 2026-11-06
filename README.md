@@ -31,12 +31,12 @@ See [ROADMAP.md](ROADMAP.md) for what's next.
 
 **Covered**
 
-- **DASH and HLS, VOD and live** — fMP4 segments, through dash.js, Shaka Player or hls.js. Live needs no extra setup: the intercept never reads the manifest, so a `type="dynamic"` MPD or a sliding playlist reaches it as a VOD one does ([details](#how-the-transcoding-works)).
+- **DASH and HLS, VOD and live** — fMP4 segments, through dash.js, Shaka Player or hls.js. Live needs no extra setup: the intercept is handed segments, not the manifest, so a `type="dynamic"` MPD or a sliding playlist reaches it as a VOD one does ([details](#how-the-transcoding-works)).
 - **Decoding files and extracting frames** — `@hevcjs/core/decoder` turns HEVC into YUV with no player involved, and without pulling a demuxer into your bundle. Also available as a [C API](#c-api) for native builds.
 
 **Not covered**
 
-- **Camera and low-latency transports** — RTSP, FLV, WebSocket, WebRTC. No plugin exists for them, and transcoding a segment at a time adds latency a surveillance feed cannot absorb. For HEVC over those transports in a browser, [h265web.js](https://github.com/numberwolf/h265web.js) covers them, which this does not.
+- **Camera and low-latency transports** — RTSP, FLV, WebSocket, WebRTC. No plugin exists for them, and transcoding a segment at a time adds latency a surveillance feed cannot absorb. RTSP needs a server relay in any browser. [h265web.js](https://github.com/numberwolf/h265web.js) documents FLV, WebSocket and WebRTC/WHEP support.
 - **HEVC-in-TS** — unvalidated, see [ROADMAP.md](ROADMAP.md). HLS here means fMP4.
 - **Low-latency DASH and HLS** — LL-HLS, LL-DASH and chunked CMAF. The segment-at-a-time model does not apply to partial chunks.
 
@@ -196,7 +196,7 @@ decoder.destroy();
 
 **Tradeoff**: the software fallback introduces 2-3s of startup latency on the first segment (vs instant playback with native hardware decode). Once buffered, playback is smooth. When native HEVC is available, hevc.js detects it and does nothing.
 
-**Live streams** go through the same path with no extra setup. The intercept never reads the manifest, so a `type="dynamic"` MPD or a sliding HLS playlist reaches it exactly as a VOD one does. Measured on 2026-11-06 against a real sliding window published by `tools/gen_live_streams.sh` (2s segments, 5 in the manifest, older ones deleted from disk): dash.js, Shaka and hls.js each started at the live edge and played 40-60s with no stall, no fetch of an expired segment, and the buffer evicting behind the window — including with the transcode forced onto a main thread throttled 6x, where playback caught up rather than falling behind. Not covered: the low-latency variants (LL-HLS, LL-DASH, chunked CMAF), which the segment-at-a-time model would need separate work to serve.
+**Live streams** go through the same path with no extra setup. The intercept is handed segments, not the manifest, so a `type="dynamic"` MPD or a sliding HLS playlist reaches it exactly as a VOD one does. Measured on 2026-11-06 against a real sliding window published by `tools/gen_live_streams.sh` (2s segments, 5 in the manifest, older ones deleted from disk): dash.js, Shaka and hls.js each started at the live edge and played 40-60s with no stall, no fetch of an expired segment, and the buffer evicting behind the window — including with the transcode forced onto a main thread throttled 6x, where playback caught up rather than falling behind. Not covered: the low-latency variants (LL-HLS, LL-DASH, chunked CMAF), which the segment-at-a-time model would need separate work to serve.
 
 ### Compute-aware quality control
 

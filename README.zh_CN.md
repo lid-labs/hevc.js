@@ -31,12 +31,12 @@
 
 **已支持**
 
-- **DASH 和 HLS，点播与直播** — fMP4 分片，通过 dash.js、Shaka Player 或 hls.js 播放。直播无需额外配置：拦截层从不读取 manifest，所以 `type="dynamic"` 的 MPD 或滑动窗口播放列表与点播走同一条路径（详见[转码工作原理](#转码工作原理)）。
+- **DASH 和 HLS，点播与直播** — fMP4 分片，通过 dash.js、Shaka Player 或 hls.js 播放。直播无需额外配置：拦截层拿到的是分片而不是 manifest，所以 `type="dynamic"` 的 MPD 或滑动窗口播放列表与点播走同一条路径（详见[转码工作原理](#转码工作原理)）。
 - **解码文件与提取帧** — `@hevcjs/core/decoder` 将 HEVC 解码为 YUV，不需要播放器，也不会将解复用器打进你的构建产物。原生构建可使用 [C API](#c-api)。
 
 **不支持**
 
-- **摄像头与低延迟传输** — RTSP、FLV、WebSocket、WebRTC。没有对应的插件，而且按分片转码会引入监控场景无法吸收的延迟。如果需要在浏览器里通过这些传输方式播放 HEVC，[h265web.js](https://github.com/numberwolf/h265web.js) 支持它们，而本项目不支持。
+- **摄像头与低延迟传输** — RTSP、FLV、WebSocket、WebRTC。没有对应的插件，而且按分片转码会引入监控场景无法吸收的延迟。RTSP 在任何浏览器里都需要服务端中转。[h265web.js](https://github.com/numberwolf/h265web.js) 的文档声明支持 FLV、WebSocket 和 WebRTC/WHEP。
 - **HEVC-in-TS** — 尚未验证，见 [ROADMAP.md](ROADMAP.md)。这里的 HLS 指 fMP4。
 - **低延迟 DASH 和 HLS** — LL-HLS、LL-DASH 和分块 CMAF。按分片转码的模式不适用于部分分块。
 
