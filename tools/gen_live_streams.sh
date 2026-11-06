@@ -19,8 +19,13 @@ set -e
 # The output paths below are relative, and .gitignore anchors its live_* patterns at the
 # repository root. Run from anywhere else and the script would write a ./demo/streams/
 # tree that Git does track — segments changing every second, ready to be committed by
-# accident. So move to the root rather than trust the caller's directory.
-cd "$(git rev-parse --show-toplevel)" || exit 1
+# accident. So anchor on where this script lives, which is tools/ of its own checkout.
+#
+# Not `cd "$(git rev-parse --show-toplevel)"`: that answers for the *caller's* repository,
+# so running it from another checkout would write into that one. And its exit status is
+# lost to the substitution — `git rev-parse` failing outside any repository yields an
+# empty string, `cd ""` succeeds, and the guard would pass while changing nothing.
+cd "$(dirname "$0")/.." || exit 1
 
 MODE=${1:-}
 STREAMS="demo/streams"
