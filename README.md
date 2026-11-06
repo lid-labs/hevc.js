@@ -27,6 +27,19 @@ Built in 8 days by one developer, assisted by AI — [read the story](https://ww
 
 See [ROADMAP.md](ROADMAP.md) for what's next.
 
+## Scope
+
+**Covered**
+
+- **DASH and HLS, VOD and live** — fMP4 segments, through dash.js, Shaka Player or hls.js. Live needs no extra setup: the intercept is handed segments, not the manifest, so a `type="dynamic"` MPD or a sliding playlist reaches it as a VOD one does ([details](#how-the-transcoding-works)).
+- **Decoding files and extracting frames** — `@hevcjs/core/decoder` turns HEVC into YUV with no player involved, and without pulling a demuxer into your bundle. Also available as a [C API](#c-api) for native builds.
+
+**Not covered**
+
+- **Camera and low-latency transports** — RTSP, FLV, WebSocket, WebRTC. No plugin exists for them, and transcoding a segment at a time adds the 2-3s first-segment delay measured under Tradeoff, which a live camera feed may not tolerate. [h265web.js](https://github.com/numberwolf/h265web.js) documents FLV, WebSocket and WebRTC/WHEP support.
+- **HEVC-in-TS** — unvalidated, see [ROADMAP.md](ROADMAP.md). HLS here means fMP4.
+- **Low-latency DASH and HLS** — LL-HLS, LL-DASH and chunked CMAF. The segment-at-a-time model does not apply to partial chunks.
+
 ---
 
 ## JavaScript plugin
@@ -151,6 +164,24 @@ await registerHevcDecoder({ workerUrl: '/decode-worker.js' });
 
 Not a player plugin: it registers a custom video decoder with [Mediabunny](https://mediabunny.dev), so reading, converting and extracting frames from HEVC files works where WebCodecs cannot decode HEVC. No transcoding to H.264 here, the decoded frames go to Mediabunny as they are. Profiles the browser decodes natively are left to WebCodecs. Decoding runs in a Web Worker, or on the page's thread without `workerUrl`. See the [plugin README](packages/mediabunny-plugin/README.md).
 
+### Decoding files without a player
+
+When you demux the stream yourself — reading a file, extracting stills, feeding an analysis pipeline — import the decoder on its own. It carries no MSE intercept and no demuxer, so nothing pulls mp4box into your bundle:
+
+```js
+import { HEVCDecoder } from '@hevcjs/core/decoder';
+
+const decoder = await HEVCDecoder.create();
+decoder.feed(annexBAccessUnit);   // one or more complete NAL units, Annex B
+for (const frame of decoder.drain()) {
+  // frame.y / frame.cb / frame.cr, in display order
+}
+const tail = decoder.flush();     // end of stream
+decoder.destroy();
+```
+
+8 and 10-bit, Main and Main 10. See the [core README](packages/core/README.md#decoder-only) for the full surface, and the [C API](#c-api) for native builds.
+
 ### How the transcoding works
 
 1. **MSE intercept** — Patches `MediaSource.addSourceBuffer()` before the player initializes. When the player creates an HEVC SourceBuffer, we return a proxy that accepts HEVC data but feeds H.264 to the real SourceBuffer.
@@ -165,7 +196,7 @@ Not a player plugin: it registers a custom video decoder with [Mediabunny](https
 
 **Tradeoff**: the software fallback introduces 2-3s of startup latency on the first segment (vs instant playback with native hardware decode). Once buffered, playback is smooth. When native HEVC is available, hevc.js detects it and does nothing.
 
-**Live streams** go through the same path with no extra setup. The intercept never reads the manifest, so a `type="dynamic"` MPD or a sliding HLS playlist reaches it exactly as a VOD one does. Measured on 2026-11-06 against a real sliding window published by `tools/gen_live_streams.sh` (2s segments, 5 in the manifest, older ones deleted from disk): dash.js, Shaka and hls.js each started at the live edge and played 40-60s with no stall, no fetch of an expired segment, and the buffer evicting behind the window — including with the transcode forced onto a main thread throttled 6x, where playback caught up rather than falling behind. Not covered: the low-latency variants (LL-HLS, LL-DASH, chunked CMAF), which the segment-at-a-time model would need separate work to serve.
+**Live streams** go through the same path with no extra setup. The intercept is handed segments, not the manifest, so a `type="dynamic"` MPD or a sliding HLS playlist reaches it exactly as a VOD one does. Measured on 2026-11-06 against a real sliding window published by `tools/gen_live_streams.sh` (2s segments, 5 in the manifest, older ones deleted from disk): dash.js, Shaka and hls.js each started at the live edge and played 40-60s with no stall, no fetch of an expired segment, and the buffer evicting behind the window — including with the transcode forced onto a main thread throttled 6x, where playback caught up rather than falling behind. Not covered: the low-latency variants (LL-HLS, LL-DASH, chunked CMAF), which the segment-at-a-time model would need separate work to serve.
 
 ### Compute-aware quality control
 
