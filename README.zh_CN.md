@@ -36,7 +36,7 @@
 
 **不支持**
 
-- **摄像头与低延迟传输** — RTSP、FLV、WebSocket、WebRTC。没有对应的插件，而且按分片转码会引入监控场景无法吸收的延迟。RTSP 在任何浏览器里都需要服务端中转。[h265web.js](https://github.com/numberwolf/h265web.js) 的文档声明支持 FLV、WebSocket 和 WebRTC/WHEP。
+- **摄像头与低延迟传输** — RTSP、FLV、WebSocket、WebRTC。没有对应的插件，而且按分片转码会引入监控场景无法吸收的延迟。[h265web.js](https://github.com/numberwolf/h265web.js) 的文档声明支持 FLV、WebSocket 和 WebRTC/WHEP。
 - **HEVC-in-TS** — 尚未验证，见 [ROADMAP.md](ROADMAP.md)。这里的 HLS 指 fMP4。
 - **低延迟 DASH 和 HLS** — LL-HLS、LL-DASH 和分块 CMAF。按分片转码的模式不适用于部分分块。
 
