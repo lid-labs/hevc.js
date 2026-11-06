@@ -1,12 +1,10 @@
 # hevc.js
 
+[![Live demo](https://img.shields.io/badge/Live_demo-hevcjs.dev-brightgreen.svg)](https://www.hevcjs.dev/demo/dash.html)
+[![Docs](https://img.shields.io/badge/Docs-hevcjs.dev-blue.svg)](https://www.hevcjs.dev/)
 [![Build](https://github.com/lid-labs/hevc.js/actions/workflows/build.yml/badge.svg)](https://github.com/lid-labs/hevc.js/actions/workflows/build.yml)
 [![Tests](https://github.com/lid-labs/hevc.js/actions/workflows/test.yml/badge.svg)](https://github.com/lid-labs/hevc.js/actions/workflows/test.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![npm downloads core](https://img.shields.io/npm/dw/@hevcjs/core?label=core)](https://www.npmjs.com/package/@hevcjs/core)
-[![npm downloads dashjs-plugin](https://img.shields.io/npm/dw/@hevcjs/dashjs-plugin?label=dashjs-plugin)](https://www.npmjs.com/package/@hevcjs/dashjs-plugin)
-[![npm downloads shaka-plugin](https://img.shields.io/npm/dw/@hevcjs/shaka-plugin?label=shaka-plugin)](https://www.npmjs.com/package/@hevcjs/shaka-plugin)
-[![npm downloads hlsjs-plugin](https://img.shields.io/npm/dw/@hevcjs/hlsjs-plugin?label=hlsjs-plugin)](https://www.npmjs.com/package/@hevcjs/hlsjs-plugin)
 
 ##### English | [简体中文](./README.zh_CN.md)
 
@@ -25,7 +23,7 @@ Built in 8 days by one developer, assisted by AI — [read the story](https://ww
 ## Adoption
 
 - **dash.js** — hevc.js ships as an official [HEVC playback sample](https://github.com/Dash-Industry-Forum/dash.js/pull/5028) in dash.js (5.2.1+).
-- **Shaka Player** — the [Shaka plugin](https://www.npmjs.com/package/@hevcjs/shaka-plugin) was built after a Shaka Player maintainer [requested it](https://github.com/lid-labs/hevc.js/issues/101).
+- **Shaka Player** — hevc.js is documented as an [HEVC software fallback](https://github.com/shaka-project/shaka-player/pull/10395) in Shaka Player's README. The [Shaka plugin](https://www.npmjs.com/package/@hevcjs/shaka-plugin) was built after a maintainer [requested it](https://github.com/lid-labs/hevc.js/issues/101).
 
 See [ROADMAP.md](ROADMAP.md) for what's next.
 
@@ -57,6 +55,11 @@ No bundler, no file copying — load everything from public CDNs:
 Cross-origin Worker and WASM loading are handled automatically. For production, prefer the npm install below (self-hosted assets, version pinning).
 
 ### Installation
+
+[![npm downloads core](https://img.shields.io/npm/dw/@hevcjs/core?label=core)](https://www.npmjs.com/package/@hevcjs/core)
+[![npm downloads dashjs-plugin](https://img.shields.io/npm/dw/@hevcjs/dashjs-plugin?label=dashjs-plugin)](https://www.npmjs.com/package/@hevcjs/dashjs-plugin)
+[![npm downloads shaka-plugin](https://img.shields.io/npm/dw/@hevcjs/shaka-plugin?label=shaka-plugin)](https://www.npmjs.com/package/@hevcjs/shaka-plugin)
+[![npm downloads hlsjs-plugin](https://img.shields.io/npm/dw/@hevcjs/hlsjs-plugin?label=hlsjs-plugin)](https://www.npmjs.com/package/@hevcjs/hlsjs-plugin)
 
 ```bash
 npm install @hevcjs/dashjs-plugin   # dash.js
