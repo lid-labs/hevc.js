@@ -21,11 +21,15 @@ set -e
 # tree that Git does track — segments changing every second, ready to be committed by
 # accident. So anchor on where this script lives, which is tools/ of its own checkout.
 #
+# `readlink -f` first, because `$0` is the symlink when the script is reached through one:
+# `dirname "$0"` alone would resolve against ~/bin for a link placed there, and write
+# $HOME/demo/streams/ without a word.
+#
 # Not `cd "$(git rev-parse --show-toplevel)"`: that answers for the *caller's* repository,
 # so running it from another checkout would write into that one. And its exit status is
 # lost to the substitution — `git rev-parse` failing outside any repository yields an
 # empty string, `cd ""` succeeds, and the guard would pass while changing nothing.
-cd "$(dirname "$0")/.." || exit 1
+cd "$(dirname "$(readlink -f "$0")")/.." || exit 1
 
 MODE=${1:-}
 STREAMS="demo/streams"
