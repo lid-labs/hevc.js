@@ -33,11 +33,11 @@
     <button class="demo-btn demo-btn-primary" onclick="loadM3U8()">Load</button>
   </div>
   <div class="demo-presets">
-    <button class="demo-btn" onclick="loadM3U8('streams/hls_abr/master.m3u8')">ABR 480p/720p/1080p + audio (30s)</button>
-    <button class="demo-btn" onclick="loadM3U8('streams/hls_720p/master.m3u8')">720p (10s)</button>
-    <button class="demo-btn" onclick="loadM3U8('streams/hls_1080p/master.m3u8')">1080p (5s)</button>
-    <button class="demo-btn" onclick="loadM3U8('streams/hls_4k/master.m3u8')">4K (5s)</button>
-    <button class="demo-btn" onclick="loadM3U8('streams/hls_muxed/playlist.m3u8')">Muxed A/V (6s)</button>
+    <button class="demo-btn" data-src="streams/hls_abr/master.m3u8" onclick="loadM3U8(this.dataset.src)">ABR 480p/720p/1080p + audio (30s)</button>
+    <button class="demo-btn" data-src="streams/hls_720p/master.m3u8" onclick="loadM3U8(this.dataset.src)">720p (10s)</button>
+    <button class="demo-btn" data-src="streams/hls_1080p/master.m3u8" onclick="loadM3U8(this.dataset.src)">1080p (5s)</button>
+    <button class="demo-btn" data-src="streams/hls_4k/master.m3u8" onclick="loadM3U8(this.dataset.src)">4K (5s)</button>
+    <button class="demo-btn" data-src="streams/hls_muxed/playlist.m3u8" onclick="loadM3U8(this.dataset.src)">Muxed A/V (6s)</button>
   </div>
 
   <div class="demo-toggle">
@@ -114,10 +114,11 @@ busDetach = HevcHls.subscribeSegmentStat((stat) => {
     'frames=' + stat.frames);
 });
 
-async function loadM3U8(presetUrl) {
+async function loadM3U8(presetUrl, { autoplay = true } = {}) {
   const url = presetUrl || document.getElementById('m3u8-url').value.trim();
   if (!url) return;
   document.getElementById('m3u8-url').value = url;
+  hevcDemo.markActivePreset(url);
 
   console.log('[demo] loadM3U8', url);
 
@@ -217,8 +218,9 @@ async function loadM3U8(presetUrl) {
   console.log('[demo] hls.attachMedia() + loadSource()');
   hls.attachMedia(video);
   hls.loadSource(url);
-  video.play().catch((e) => console.warn('[demo] video.play() blocked', e?.message));
-  document.getElementById('status').textContent = 'Loaded — playback should start';
+  if (autoplay) video.play().catch((e) => console.warn('[demo] video.play() blocked', e?.message));
+  document.getElementById('status').textContent =
+    autoplay ? 'Loaded — playback should start' : 'Loaded — press play';
 }
 
 hevcDemo.trackDecodedResolution(
@@ -226,6 +228,9 @@ hevcDemo.trackDecodedResolution(
   document.getElementById('perf-onscreen'),
 );
 document.getElementById('status').textContent = 'Ready — choose a preset or enter an m3u8 URL';
+
+// Show media on arrival rather than an empty player; ?autoload=0 opts out.
+hevcDemo.autoloadFirstPreset(loadM3U8);
 </script>
 <script data-goatcounter="https://privaloops.goatcounter.com/count"
         async src="//gc.zgo.at/count.js"></script>

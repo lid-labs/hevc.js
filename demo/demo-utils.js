@@ -50,8 +50,46 @@
     show();
   }
 
+  /**
+   * Mark the preset the page is currently on. Each page's loader calls it, so a
+   * manual click moves the marker too, not only the load on arrival.
+   */
+  function markActivePreset(url) {
+    var buttons = document.querySelectorAll(".demo-presets .demo-btn[data-src]");
+    for (var i = 0; i < buttons.length; i++) {
+      buttons[i].classList.toggle("demo-btn-active", !!url && buttons[i].dataset.src === url);
+    }
+  }
+
+  /**
+   * Load the first preset on arrival, so the player shows media instead of an
+   * empty box. `load` is the page's own loader, called without autoplay: browsers
+   * block it unmuted anyway, and what matters here is the first frame.
+   *
+   * ?autoload=0 opts out. The E2E helpers pass it, so their own preset clicks stay
+   * the only load — otherwise two loads would race, and `waitUntil: networkidle`
+   * would wait on a stream the test never asked for.
+   */
+  function autoloadFirstPreset(load) {
+    if (new URLSearchParams(location.search).get("autoload") === "0") return;
+    function start() {
+      var first = document.querySelector(".demo-presets .demo-btn[data-src]");
+      if (first) load(first.dataset.src, { autoplay: false });
+    }
+    // The inline script calling this may run before or after DOMContentLoaded,
+    // depending on where the page puts its <script>: a listener alone would never
+    // fire in the second case.
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", start);
+    } else {
+      start();
+    }
+  }
+
   global.hevcDemo = {
     safeAssetUrl: safeAssetUrl,
     trackDecodedResolution: trackDecodedResolution,
+    markActivePreset: markActivePreset,
+    autoloadFirstPreset: autoloadFirstPreset,
   };
 })(window);

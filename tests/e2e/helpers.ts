@@ -15,7 +15,11 @@ export function collectConsoleErrors(page: Page): string[] {
 /** Navigate to a demo page and wait for initial load. Relative: Playwright
  *  resolves it against the configured baseURL, so the target stays in one place. */
 export async function loadDemoPage(page: Page, path: string) {
-  await page.goto(path, { waitUntil: 'networkidle' });
+  // ?autoload=0 keeps the page's own load-on-arrival out of the way: the specs
+  // drive the player by clicking a preset, two concurrent loads would race, and
+  // `networkidle` would otherwise wait on a stream no test asked for.
+  const target = `${path}${path.includes('?') ? '&' : '?'}autoload=0`;
+  await page.goto(target, { waitUntil: 'networkidle' });
 }
 
 /** Click a preset button */
