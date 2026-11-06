@@ -165,6 +165,8 @@ Not a player plugin: it registers a custom video decoder with [Mediabunny](https
 
 **Tradeoff**: the software fallback introduces 2-3s of startup latency on the first segment (vs instant playback with native hardware decode). Once buffered, playback is smooth. When native HEVC is available, hevc.js detects it and does nothing.
 
+**Live streams** go through the same path with no extra setup. The intercept never reads the manifest, so a `type="dynamic"` MPD or a sliding HLS playlist reaches it exactly as a VOD one does. Measured on 2026-11-06 against a real sliding window published by `tools/gen_live_streams.sh` (2s segments, 5 in the manifest, older ones deleted from disk): dash.js, Shaka and hls.js each started at the live edge and played 40-60s with no stall, no fetch of an expired segment, and the buffer evicting behind the window — including with the transcode forced onto a main thread throttled 6x, where playback caught up rather than falling behind. Not covered: the low-latency variants (LL-HLS, LL-DASH, chunked CMAF), which the segment-at-a-time model would need separate work to serve.
+
 ### Compute-aware quality control
 
 WASM-based HEVC transcoding is significantly more expensive than native decode. On low-end CPUs at 1080p, transcoding a 2s segment can take 6s — the buffer drains at -4s per segment and playback freezes. Bandwidth-based ABR (Shaka, dash.js) doesn't see this: the network is fine, so it keeps the top variant.
