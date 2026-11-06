@@ -55,7 +55,7 @@
         "name": "How is hevc.js different from h265web.js?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "h265web.js is a complete standalone player, with its own custom license (CYL_Free-1.0) and its own playback paths \u2014 its core table lists MSE, WebCodecs, WASM/SIMD and WebRTC. hevc.js is not a player: it is an MIT-licensed fallback layer that plugs into the player you already use (dash.js, Shaka Player or hls.js), feeds a real SourceBuffer with H.264, and stays dormant when the browser decodes HEVC natively."
+          "text": "h265web.js is a complete standalone player, with its own custom license (CYL_Free-1.0) and its own playback paths \u2014 its README feature table lists MSE, WebCodec, SIMD (WASM) and Native WebRTC. hevc.js is not a player: it is an MIT-licensed fallback layer that plugs into the player you already use (dash.js, Shaka Player or hls.js), feeds a real SourceBuffer with H.264, and stays dormant when the browser decodes HEVC natively."
         }
       }
     ]
@@ -271,7 +271,7 @@
                 <td>Real SourceBuffer fed with H.264 — the player keeps buffer, seek &amp; ABR control</td>
                 <td>Canvas</td>
                 <td>Files / buffers</td>
-                <td>MSE, WebCodecs, WASM/SIMD or WebRTC, per their core table</td>
+                <td>MSE, WebCodec, SIMD (WASM) or Native WebRTC, per their feature table</td>
               </tr>
               <tr>
                 <td class="param-name">Native HEVC passthrough</td>
