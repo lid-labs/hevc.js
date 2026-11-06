@@ -27,6 +27,19 @@
 
 后续计划见 [ROADMAP.md](ROADMAP.md)。
 
+## 适用范围
+
+**已支持**
+
+- **DASH 和 HLS，点播与直播** — fMP4 分片，通过 dash.js、Shaka Player 或 hls.js 播放。直播无需额外配置：拦截层从不读取 manifest，所以 `type="dynamic"` 的 MPD 或滑动窗口播放列表与点播走同一条路径（详见[转码工作原理](#转码工作原理)）。
+- **解码文件与提取帧** — `@hevcjs/core/decoder` 将 HEVC 解码为 YUV，不需要播放器，也不会将解复用器打进你的构建产物。原生构建可使用 [C API](#c-api)。
+
+**不支持**
+
+- **摄像头与低延迟传输** — RTSP、FLV、WebSocket、WebRTC。没有对应的插件，而且按分片转码会引入监控场景无法吸收的延迟。如果需要在浏览器里通过这些传输方式播放 HEVC，[h265web.js](https://github.com/numberwolf/h265web.js) 支持它们，而本项目不支持。
+- **HEVC-in-TS** — 尚未验证，见 [ROADMAP.md](ROADMAP.md)。这里的 HLS 指 fMP4。
+- **低延迟 DASH 和 HLS** — LL-HLS、LL-DASH 和分块 CMAF。按分片转码的模式不适用于部分分块。
+
 ---
 
 ## JavaScript 插件
@@ -120,6 +133,24 @@ hls.loadSource('https://example.com/playlist.m3u8');
 目前支持 fMP4 HLS:纯视频、音视频分离,以及音视频混装(muxed)的多码率流。对于混装轨道(单个 audiovideo 轨),HEVC 视频会被转码,AAC 音频直接透传,再重新封装为一个合并分片(主线程路径,仅支持 AAC)。详见[插件 README](packages/hlsjs-plugin/README.md)(英文)。
 
 ![hevc.js 通过 hls.js 播放 HEVC HLS 流 — 强制 WASM 转码为 H.264,并在播放器下方实时显示每段转码速度](docs/assets/hlsjs-demo.gif)
+
+### 不依赖播放器解码文件
+
+如果你自己做解复用 — 读取文件、提取单帧、接入分析流水线 — 可以单独引入解码器。它不包含 MSE 拦截也不包含解复用器，因此不会把 mp4box 打进你的构建产物：
+
+```js
+import { HEVCDecoder } from '@hevcjs/core/decoder';
+
+const decoder = await HEVCDecoder.create();
+decoder.feed(annexBAccessUnit);   // 一个或多个完整的 NAL 单元，Annex B
+for (const frame of decoder.drain()) {
+  // frame.y / frame.cb / frame.cr，按显示顺序
+}
+const tail = decoder.flush();     // 流结束
+decoder.destroy();
+```
+
+支持 8 bit 和 10 bit，Main 与 Main 10。完整接口见 [core README](packages/core/README.md#decoder-only)，原生构建见 [C API](#c-api)。
 
 ### 转码工作原理
 

@@ -27,6 +27,19 @@ Built in 8 days by one developer, assisted by AI — [read the story](https://ww
 
 See [ROADMAP.md](ROADMAP.md) for what's next.
 
+## Scope
+
+**Covered**
+
+- **DASH and HLS, VOD and live** — fMP4 segments, through dash.js, Shaka Player or hls.js. Live needs no extra setup: the intercept never reads the manifest, so a `type="dynamic"` MPD or a sliding playlist reaches it as a VOD one does ([details](#how-the-transcoding-works)).
+- **Decoding files and extracting frames** — `@hevcjs/core/decoder` turns HEVC into YUV with no player involved, and without pulling a demuxer into your bundle. Also available as a [C API](#c-api) for native builds.
+
+**Not covered**
+
+- **Camera and low-latency transports** — RTSP, FLV, WebSocket, WebRTC. No plugin exists for them, and transcoding a segment at a time adds latency a surveillance feed cannot absorb. For HEVC over those transports in a browser, [h265web.js](https://github.com/numberwolf/h265web.js) covers them, which this does not.
+- **HEVC-in-TS** — unvalidated, see [ROADMAP.md](ROADMAP.md). HLS here means fMP4.
+- **Low-latency DASH and HLS** — LL-HLS, LL-DASH and chunked CMAF. The segment-at-a-time model does not apply to partial chunks.
+
 ---
 
 ## JavaScript plugin
@@ -150,6 +163,24 @@ await registerHevcDecoder({ workerUrl: '/decode-worker.js' });
 ```
 
 Not a player plugin: it registers a custom video decoder with [Mediabunny](https://mediabunny.dev), so reading, converting and extracting frames from HEVC files works where WebCodecs cannot decode HEVC. No transcoding to H.264 here, the decoded frames go to Mediabunny as they are. Profiles the browser decodes natively are left to WebCodecs. Decoding runs in a Web Worker, or on the page's thread without `workerUrl`. See the [plugin README](packages/mediabunny-plugin/README.md).
+
+### Decoding files without a player
+
+When you demux the stream yourself — reading a file, extracting stills, feeding an analysis pipeline — import the decoder on its own. It carries no MSE intercept and no demuxer, so nothing pulls mp4box into your bundle:
+
+```js
+import { HEVCDecoder } from '@hevcjs/core/decoder';
+
+const decoder = await HEVCDecoder.create();
+decoder.feed(annexBAccessUnit);   // one or more complete NAL units, Annex B
+for (const frame of decoder.drain()) {
+  // frame.y / frame.cb / frame.cr, in display order
+}
+const tail = decoder.flush();     // end of stream
+decoder.destroy();
+```
+
+8 and 10-bit, Main and Main 10. See the [core README](packages/core/README.md#decoder-only) for the full surface, and the [C API](#c-api) for native builds.
 
 ### How the transcoding works
 
