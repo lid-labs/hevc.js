@@ -169,6 +169,11 @@ test.describe('DASH Player — cross-origin asset loading', () => {
       workerUrl: `${crossOriginBase}/transcode-worker.js`,
       wasmUrl: `${crossOriginBase}/hevc-decode.js`,
       wasmBinaryUrl: `${crossOriginBase}/hevc-decode.wasm`,
+      // This spec goes through page.goto itself, so it has to opt out of the
+      // load-on-arrival as loadDemoPage does: otherwise the page would fetch a
+      // stream before enableForceTranscode is set, exercising the cross-origin
+      // path once without the setting the test is about.
+      autoload: '0',
     });
     await page.goto(`dash.html?${params}`, { waitUntil: 'networkidle' });
     await enableForceTranscode(page);

@@ -127,6 +127,14 @@ body {
 }
 .demo-btn-primary:hover { background: #4f46e5; }
 
+/* The preset the page is currently showing. Stronger than :hover, so a loaded
+   page says which stream it is on without the pointer being over the button. */
+.demo-btn-active {
+  background: rgba(99,102,241,0.4);
+  border-color: #6366f1;
+  color: #e0e7ff;
+}
+
 /* ---------- Presets ---------- */
 .demo-presets {
   display: flex;
