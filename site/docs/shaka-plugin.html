@@ -54,7 +54,7 @@
         "name": "Does it work with live streams?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "Yes. The transmuxer converts segments as Shaka requests them, so live (low-latency) and VOD streams both work. The only difference is that the first segment takes 2-3 seconds to transcode, which adds to the initial live edge latency."
+          "text": "Yes. The transmuxer converts segments as Shaka requests them, so live and VOD streams both work. The only difference is that the first segment takes 2-3 seconds to transcode, which adds to the initial live edge latency. The low-latency variants — LL-HLS, LL-DASH and chunked CMAF — are not covered."
         }
       },
       {
@@ -719,7 +719,7 @@ handle();    <span class="text-silver/50">// unregister transmuxer + detach</spa
           <details>
             <summary>Does it work with live streams?</summary>
             <div class="faq-answer">
-              <p>Yes. The transmuxer converts segments as Shaka requests them, so live (low-latency) and VOD streams both work. The only difference is that the first segment takes 2-3 seconds to transcode, which adds to the initial live edge latency.</p>
+              <p>Yes. The transmuxer converts segments as Shaka requests them, so live and VOD streams both work. The only difference is that the first segment takes 2-3 seconds to transcode, which adds to the initial live edge latency. The low-latency variants — LL-HLS, LL-DASH and chunked CMAF — are not covered.</p>
             </div>
           </details>
 
