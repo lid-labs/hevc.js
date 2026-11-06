@@ -36,7 +36,7 @@ See [ROADMAP.md](ROADMAP.md) for what's next.
 
 **Not covered**
 
-- **Camera and low-latency transports** — RTSP, FLV, WebSocket, WebRTC. No plugin exists for them, and transcoding a segment at a time adds latency a surveillance feed cannot absorb. [h265web.js](https://github.com/numberwolf/h265web.js) documents FLV, WebSocket and WebRTC/WHEP support.
+- **Camera and low-latency transports** — RTSP, FLV, WebSocket, WebRTC. No plugin exists for them, and transcoding a segment at a time adds the 2-3s first-segment delay measured under Tradeoff, which a live camera feed may not tolerate. [h265web.js](https://github.com/numberwolf/h265web.js) documents FLV, WebSocket and WebRTC/WHEP support.
 - **HEVC-in-TS** — unvalidated, see [ROADMAP.md](ROADMAP.md). HLS here means fMP4.
 - **Low-latency DASH and HLS** — LL-HLS, LL-DASH and chunked CMAF. The segment-at-a-time model does not apply to partial chunks.
 
