@@ -23,7 +23,7 @@ Built in 8 days by one developer, assisted by AI — [read the story](https://ww
 ## Adoption
 
 - **dash.js** — hevc.js ships as an official [HEVC playback sample](https://github.com/Dash-Industry-Forum/dash.js/pull/5028) in dash.js (5.2.1+).
-- **Shaka Player** — the [Shaka plugin](https://www.npmjs.com/package/@hevcjs/shaka-plugin) was built after a Shaka Player maintainer [requested it](https://github.com/lid-labs/hevc.js/issues/101).
+- **Shaka Player** — hevc.js is documented as an [HEVC software fallback](https://github.com/shaka-project/shaka-player/pull/10395) in Shaka Player's README. The [Shaka plugin](https://www.npmjs.com/package/@hevcjs/shaka-plugin) was built after a maintainer [requested it](https://github.com/lid-labs/hevc.js/issues/101).
 
 See [ROADMAP.md](ROADMAP.md) for what's next.
 

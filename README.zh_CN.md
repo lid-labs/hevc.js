@@ -23,7 +23,7 @@
 ## 采用情况
 
 - **dash.js** — hevc.js 已作为官方 [HEVC 播放示例](https://github.com/Dash-Industry-Forum/dash.js/pull/5028) 收录于 dash.js(5.2.1+)。
-- **Shaka Player** — [Shaka 插件](https://www.npmjs.com/package/@hevcjs/shaka-plugin) 是应 Shaka Player 维护者的[请求](https://github.com/lid-labs/hevc.js/issues/101)而开发的。
+- **Shaka Player** — hevc.js 已作为 [HEVC 软件回退方案](https://github.com/shaka-project/shaka-player/pull/10395) 收录于 Shaka Player 的 README。[Shaka 插件](https://www.npmjs.com/package/@hevcjs/shaka-plugin) 是应维护者的[请求](https://github.com/lid-labs/hevc.js/issues/101)而开发的。
 
 后续计划见 [ROADMAP.md](ROADMAP.md)。
 
