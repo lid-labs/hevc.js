@@ -1,6 +1,6 @@
 # hevc.js
 
-[![Live demo](https://img.shields.io/badge/Live_demo-hevcjs.dev-brightgreen.svg)](https://www.hevcjs.dev/demo/)
+[![Live demo](https://img.shields.io/badge/Live_demo-hevcjs.dev-brightgreen.svg)](https://www.hevcjs.dev/demo/dash.html)
 [![Docs](https://img.shields.io/badge/Docs-hevcjs.dev-blue.svg)](https://www.hevcjs.dev/)
 [![Build](https://github.com/lid-labs/hevc.js/actions/workflows/build.yml/badge.svg)](https://github.com/lid-labs/hevc.js/actions/workflows/build.yml)
 [![Tests](https://github.com/lid-labs/hevc.js/actions/workflows/test.yml/badge.svg)](https://github.com/lid-labs/hevc.js/actions/workflows/test.yml)
