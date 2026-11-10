@@ -21,10 +21,10 @@ have not seen a segment yet can do.
 
 No user-agent test. Measured on an Apple M4 Pro / macOS 26.6, Firefox 155 and
 Zen (Gecko 159) both accept `realtime` at every resolution, while #380 reports a
-refusal on Zen under macOS too — so the refusal was not reproduced, and nothing
-static predicts it. Zen also reports `Firefox/159.0`, so matching `Firefox/`
-would downgrade two browsers that need nothing and still miss the one that
-refuses.
+refusal on Zen under macOS too — so the refusal was not reproduced, and what
+flips it is not established. The Zen measured here reports `Firefox/159.0`, the
+same string a refusing Zen would send, so no pattern over the user agent can
+separate them; it also matches Firefox 155, which needs nothing.
 
 Bumped minor rather than patch: `checkSupport()` gains an optional parameter and
 the class a `latencyMode` getter, which is a compatible addition to a publicly
