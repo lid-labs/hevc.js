@@ -68,6 +68,48 @@ open(master_path, "w").writelines(out)
 PY
 }
 
+# ffmpeg sizes BANDWIDTH and AVERAGE-BANDWIDTH from the video rendition alone,
+# but a client playing a variant also downloads the audio group, and the spec
+# (RFC 8216 4.3.4.2) wants both attributes to cover everything it fetches. The
+# gap made mediastreamvalidator reject hls_abr with a 16.45% bitrate error.
+#
+# The audio mean is added to both attributes, peak included. Adding an audio
+# peak instead overstated BANDWIDTH by up to 29%: the trailing audio segment
+# lasts 16ms yet holds a whole AAC frame, which reads as a 837 kb/s burst that
+# no real client ever sees. Video peak plus audio mean lands within 0.2% of
+# what the validator measures for the combined rendition.
+add_audio_bandwidth() {
+  local master=$1 audio_pl=$2
+  python3 - "$master" "$audio_pl" <<'PY'
+import os, re, sys
+master_path, audio_path = sys.argv[1], sys.argv[2]
+base = os.path.dirname(audio_path)
+durs, sizes, init_size = [], [], 0
+for line in open(audio_path):
+    line = line.strip()
+    m = re.match(r'#EXT-X-MAP:URI="([^"]+)"', line)
+    if m:
+        init_size = os.path.getsize(os.path.join(base, m.group(1)))
+        continue
+    m = re.match(r"#EXTINF:([\d.]+)", line)
+    if m:
+        durs.append(float(m.group(1)))
+    elif line and not line.startswith("#"):
+        sizes.append(os.path.getsize(os.path.join(base, line)))
+if not durs or len(durs) != len(sizes):
+    raise SystemExit(f"audio playlist unreadable: {len(durs)} EXTINF vs {len(sizes)} segments")
+# The init segment counts once, spread over the whole playlist.
+audio_avg = round((sum(sizes) + init_size) * 8 / sum(durs))
+def bump(line):
+    line = re.sub(r"\bAVERAGE-BANDWIDTH=(\d+)",
+                  lambda m: f"AVERAGE-BANDWIDTH={int(m.group(1)) + audio_avg}", line)
+    return re.sub(r"(?<!-)\bBANDWIDTH=(\d+)",
+                  lambda m: f"BANDWIDTH={int(m.group(1)) + audio_avg}", line)
+out = [bump(l) if l.startswith("#EXT-X-STREAM-INF") else l for l in open(master_path)]
+open(master_path, "w").writelines(out)
+PY
+}
+
 # --- hls_abr: BBB 30s, 3 HEVC variants + demuxed AAC audio group ------------
 gen_abr() {
   local dir="$STREAMS/hls_abr" src="$STREAMS/dash_abr"
@@ -96,6 +138,10 @@ gen_abr() {
     "$dir/media_%v.m3u8"
 
   add_codecs "$dir/master.m3u8" "$src/manifest.mpd"
+  # Before add_audio_bandwidth: it derives bitrates from the EXTINF durations,
+  # so it has to read the corrected ones.
+  python3 tools/fix_hls_durations.py "$dir/master.m3u8"
+  add_audio_bandwidth "$dir/master.m3u8" "$dir/media_audio.m3u8"
 
   # The DASH source is hev1 with in-band parameter sets and an empty hvcC, which
   # is valid there. HLS needs hvc1, and -tag:v only relabels the track: the init
@@ -143,6 +189,10 @@ gen_mire() {
     "$dir/media_%v.m3u8"
 
   add_codecs "$dir/master.m3u8" "$src/manifest.mpd"
+  # Before add_audio_bandwidth: it derives bitrates from the EXTINF durations,
+  # so it has to read the corrected ones.
+  python3 tools/fix_hls_durations.py "$dir/master.m3u8"
+  add_audio_bandwidth "$dir/master.m3u8" "$dir/media_audio.m3u8"
 
   echo "✓ hls_${name} ← dash_${name} ($(du -sh "$dir" | cut -f1))"
 }
@@ -160,7 +210,7 @@ gen_muxed() {
   ffmpeg -y -loglevel error \
     -f lavfi -i "testsrc2=size=640x360:rate=25:duration=6" \
     -f lavfi -i "sine=frequency=1000:sample_rate=48000:duration=6" \
-    -c:v libx265 -preset ultrafast -x265-params "keyint=25:min-keyint=25:scenecut=0" \
+    -c:v libx265 -preset ultrafast -x265-params "keyint=25:min-keyint=25:scenecut=0:info=0" \
     -pix_fmt yuv420p -tag:v hvc1 -c:a aac -b:a 128k \
     -map 0:v -map 1:a \
     -f hls -hls_time 2 -hls_playlist_type vod -hls_segment_type fmp4 \
@@ -175,5 +225,10 @@ gen_mire 720p 2
 gen_mire 1080p 1
 gen_mire 4k 1
 gen_muxed
+
+# Apple's validator is the authority on HLS conformance, and it caught defects
+# that review and three mainstream players missed. Never publish without it.
+echo
+./tools/validate_hls_streams.sh
 
 echo "Done. Entry points: $STREAMS/hls_*/master.m3u8"

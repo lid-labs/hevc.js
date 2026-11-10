@@ -112,6 +112,31 @@ pnpm test:e2e:prod
 E2E_CPU_THROTTLE=10 npx playwright test --project=local-chromium -g "drops the cap"
 ```
 
+### Regenerating the demo streams
+
+`tools/gen_dash_streams.sh` encodes the DASH mires; `tools/gen_hls_streams.sh`
+repackages those into HLS, so the two demos carry the same bitstreams. Both need
+ffmpeg.
+
+```bash
+./tools/gen_dash_streams.sh      # then, since HLS is built from DASH:
+./tools/gen_hls_streams.sh       # ends with the conformance check below
+./tools/validate_hls_streams.sh  # on its own, without regenerating
+```
+
+The check runs Apple's `mediastreamvalidator` over every `demo/streams/hls_*` and
+fails on any message it reports. It is there because ffmpeg's HLS fMP4 muxer
+overstates `EXTINF` by the B-frame reorder delay, which shipped unnoticed: Chrome
+never reads these streams raw — hevc.js remuxes every segment and rewrites the
+timings — so the defect only surfaced on iOS, where HEVC is native and the
+library withdraws. Reviewing the playlists by eye did not catch it either, nor did
+dash.js, Shaka and hls.js, which all played them.
+
+The validator comes with Apple's [HTTP Live Streaming
+Tools](https://developer.apple.com/documentation/http-live-streaming/using-apple-s-http-live-streaming-tools),
+macOS only. Without it the check prints a warning and passes, so generating on
+another platform still works — the gate is for whoever publishes the demo.
+
 ### Benchmarking
 
 `hevc-bench`, built with the native targets, times the decode alone: each run

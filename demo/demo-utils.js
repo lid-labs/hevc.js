@@ -86,6 +86,36 @@
     }
   }
 
+  /**
+   * Disable the "Force transcoding" toggle where it cannot work. The intercept
+   * patches classic MediaSource, and iPhone Safari exposes only
+   * ManagedMediaSource (iOS 17.1+), so checking the box there used to start a
+   * load that stopped with an error message. Say so on the label instead, before
+   * the click. HEVC is native on those devices anyway, so nothing is lost but
+   * the ability to demo the WASM pipeline.
+   */
+  function markTranscodeUnavailable() {
+    if (typeof MediaSource !== "undefined") return;
+    var box = document.getElementById("force-transcode");
+    var label = document.querySelector('label[for="force-transcode"]');
+    if (!box) return;
+    box.checked = false;
+    box.disabled = true;
+    if (label) {
+      label.textContent =
+        "Force transcoding — unavailable here: this browser exposes only " +
+        "ManagedMediaSource, which the intercept cannot patch. HEVC plays natively.";
+    }
+  }
+
+  // Runs on load for every page carrying the toggle; the inline script may run
+  // before or after DOMContentLoaded, so handle both as autoloadFirstPreset does.
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", markTranscodeUnavailable);
+  } else {
+    markTranscodeUnavailable();
+  }
+
   global.hevcDemo = {
     safeAssetUrl: safeAssetUrl,
     trackDecodedResolution: trackDecodedResolution,
