@@ -93,3 +93,13 @@ jobs:
           commit-message: "chore(release): version packages"
           # v2 reads the token from this input only, not from GITHUB_TOKEN in env
           github-token: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
+
+      # changesets/action reports success from what `changeset publish` printed,
+      # not from the registry (#402: five packages announced, four served).
+      # Tags and GitHub releases are already created by then and cannot be
+      # rolled back; the goal is a red run that names the missing packages.
+      - name: Verify the registry serves what was published
+        if: steps.changesets.outputs.published == 'true'
+        env:
+          PUBLISHED: ${{ steps.changesets.outputs.publishedPackages }}
+        run: scripts/verify-published.sh
