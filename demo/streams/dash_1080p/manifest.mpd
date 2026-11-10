@@ -7,19 +7,17 @@
 	type="static"
 	mediaPresentationDuration="PT5.0S"
 	maxSegmentDuration="PT1.0S"
-	minBufferTime="PT2.3S">
+	minBufferTime="PT2.0S">
 	<ProgramInformation>
 	</ProgramInformation>
 	<ServiceDescription id="0">
 	</ServiceDescription>
 	<Period id="0" start="PT0.0S">
 		<AdaptationSet id="0" contentType="video" startWithSAP="1" segmentAlignment="true" bitstreamSwitching="true" frameRate="25/1" maxWidth="1920" maxHeight="1080" par="16:9">
-			<Representation id="0" mimeType="video/mp4" codecs="hev1.1.6.L120.90" bandwidth="4610659" width="1920" height="1080" sar="1:1">
+			<Representation id="0" mimeType="video/mp4" codecs="hvc1.1.6.L120.90" bandwidth="6096811" width="1920" height="1080" sar="1:1">
 				<SegmentTemplate timescale="12800" initialization="init_$RepresentationID$.mp4" media="seg_$RepresentationID$_$Number%03d$.m4s" startNumber="1">
 					<SegmentTimeline>
-						<S t="0" d="10752" />
-						<S d="12800" r="2" />
-						<S d="14848" />
+						<S t="0" d="12800" r="4" />
 					</SegmentTimeline>
 				</SegmentTemplate>
 			</Representation>
@@ -29,9 +27,9 @@
 				<AudioChannelConfiguration schemeIdUri="urn:mpeg:dash:23003:3:audio_channel_configuration:2011" value="1" />
 				<SegmentTemplate timescale="48000" initialization="init_$RepresentationID$.mp4" media="seg_$RepresentationID$_$Number%03d$.m4s" startNumber="1">
 					<SegmentTimeline>
-						<S t="0" d="36864" />
+						<S t="0" d="47104" />
 						<S d="48128" r="3" />
-						<S d="10624" />
+						<S d="384" />
 					</SegmentTimeline>
 				</SegmentTemplate>
 			</Representation>
