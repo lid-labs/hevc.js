@@ -8,7 +8,7 @@ export type {
   WorkerResponse,
 } from "./types.js";
 export { H264Encoder } from "./h264-encoder.js";
-export type { H264EncoderConfig, EncodedChunk } from "./h264-encoder.js";
+export type { H264EncoderConfig, EncodedChunk, LatencyMode } from "./h264-encoder.js";
 export { FrameRenderer } from "./renderer.js";
 export { FMP4Demuxer } from "./fmp4-demuxer.js";
 export type { DemuxedSample, VideoTrackInfo } from "./fmp4-demuxer.js";
