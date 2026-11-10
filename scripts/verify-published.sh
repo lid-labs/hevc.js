@@ -11,6 +11,14 @@ ATTEMPTS="${ATTEMPTS:-12}"   # 12 x 15s = 3 min
 DELAY="${DELAY:-15}"
 REGISTRY="${REGISTRY:-https://registry.npmjs.org}"
 
+# jq inside the process substitution below cannot fail the script: check here
+# that the input parses and lists at least one package, else we'd pass vacuously.
+count=$(jq 'length' <<<"$PUBLISHED") || { echo "::error::PUBLISHED is not valid JSON"; exit 1; }
+if [ "$count" -lt 1 ] 2>/dev/null; then
+  echo "::error::PUBLISHED lists no package; nothing to verify"
+  exit 1
+fi
+
 missing=()
 while IFS=$'\t' read -r name version; do
   # Scoped names need the slash encoded: @hevcjs/core -> @hevcjs%2Fcore
