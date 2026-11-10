@@ -1,5 +1,5 @@
 ---
-"@hevcjs/core": patch
+"@hevcjs/core": minor
 ---
 
 H264Encoder: probe the configuration that gets used, and fall back from `realtime` to `quality`
@@ -19,6 +19,13 @@ format. `checkSupport()` takes optional dimensions, since the codec string
 depends on resolution; without them it probes 720p, which is what callers that
 have not seen a segment yet can do.
 
-No user-agent test: whether `realtime` is accepted turns out to depend on the
-encoder backend rather than the engine — Firefox 155 accepts it on macOS, through
-VideoToolbox — so only trying can tell.
+No user-agent test. Measured on an Apple M4 Pro / macOS 26.6, Firefox 155 and
+Zen (Gecko 159) both accept `realtime` at every resolution, while #380 reports a
+refusal on Zen under macOS too — so the refusal was not reproduced, and nothing
+static predicts it. Zen also reports `Firefox/159.0`, so matching `Firefox/`
+would downgrade two browsers that need nothing and still miss the one that
+refuses.
+
+Bumped minor rather than patch: `checkSupport()` gains an optional parameter and
+the class a `latencyMode` getter, which is a compatible addition to a publicly
+exported class.

@@ -39,10 +39,16 @@ function pickH264Codec(w: number, h: number): string {
  * is the fallback, and it differs only in how the encoder buffers — not in
  * the output format, so falling back costs latency and nothing else.
  *
- * Whether `realtime` is accepted depends on the encoder backend rather than
- * the engine: Firefox 155 accepts it on macOS, where H.264 goes through
- * VideoToolbox, and was reported to refuse it elsewhere (#380). No
- * user-agent test can predict that; only trying can.
+ * Why try rather than decide: whether `realtime` is accepted cannot be
+ * predicted from the engine, its version or the platform. Measured on an
+ * Apple M4 Pro / macOS 26.6, both Firefox 155 and Zen (Gecko 159) accept it
+ * at 720p, 1080p and 4K, through `isConfigSupported()` and a real
+ * `configure()` alike — while #380 reports a refusal on Zen under macOS as
+ * well. Whatever flips it was not reproduced here.
+ *
+ * What that rules out is a user-agent test: Zen reports `Firefox/159.0`, so
+ * matching `Firefox/` would downgrade both browsers measured above, which
+ * need nothing, and still miss whichever build actually refuses.
  */
 const LATENCY_MODES = ["realtime", "quality"] as const;
 
