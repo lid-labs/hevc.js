@@ -226,7 +226,7 @@ export class H264Encoder {
    * Pass the stream's dimensions when they are known: the codec string
    * depends on resolution, so a probe at the default 720p cannot answer for
    * a 4K encode. Callers that probe before seeing a segment — both plugins
-   * do — get the default, and the constructor's own fallback covers the rest.
+   * do — keep that gap: the fallback changes `latencyMode`, not the codec.
    */
   static async checkSupport(options?: {
     width?: number;
