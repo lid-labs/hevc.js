@@ -49,9 +49,9 @@ describe("registerHevcDecoder({ workerUrl })", () => {
     const workerUrl = pathToFileURL(`${wasmDir}decode-worker.js`).href;
     await registerHevcDecoder({ workerUrl });
 
-    await expectDecodesThroughMediabunny();
+    const packetCount = await expectDecodesThroughMediabunny();
     expect(started).toEqual([workerUrl]);
     // One answer per packet: every frame came back from the worker
-    expect(outputMessages).toBe(250);
+    expect(outputMessages).toBe(packetCount);
   }, DECODE_TEST_TIMEOUT);
 });
