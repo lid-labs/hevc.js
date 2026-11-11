@@ -63,12 +63,12 @@ The options of the first call stay in effect: later calls return the same regist
 
 - **Profiles**: Main and Main 10, 4:2:0. Other HEVC tracks are left to WebCodecs.
 - **Output**: `I420` frames, `I420P10` for 10-bit streams where `VideoFrame` accepts it; elsewhere 10-bit frames are scaled down to 8 bits.
+- **Colour**: each frame carries the track's colour space, which Mediabunny reads from the container's `colr` box and, for whatever that box leaves out, from the SPS. What neither gives is BT.709, limited range.
 - **Packets**: MP4/MOV-style (`hvcC` description, length-prefixed NAL units) and Annex B.
 
 ## Limitations
 
 - The native probe tests one level per profile (level 3.1). A browser that decodes HEVC at that level but not at a higher one is not detected, and Mediabunny will report those tracks as undecodable; `force: true` covers that case.
-- No colour metadata is attached to the frames yet: they take `VideoFrame`'s defaults.
 
 ## License
 

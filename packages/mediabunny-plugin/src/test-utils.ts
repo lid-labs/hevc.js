@@ -17,7 +17,17 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { expect } from "vitest";
-import { ALL_FORMATS, BufferSource, EncodedPacketSink, Input, VideoSampleSink } from "mediabunny";
+import {
+  ALL_FORMATS,
+  BufferSource,
+  BufferTarget,
+  EncodedPacketSink,
+  EncodedVideoPacketSource,
+  Input,
+  Mp4OutputFormat,
+  Output,
+  VideoSampleSink,
+} from "mediabunny";
 import { HEVCDecoder } from "@hevcjs/core/decoder";
 import type { HEVCFrame } from "@hevcjs/core/decoder";
 import { packetToAnnexB, readStreamConfig } from "./bitstream.js";
@@ -113,6 +123,52 @@ export async function expectDecodesThroughMediabunny(): Promise<number> {
   expect(firstAndLast[1]).toEqual(i420(frames[frames.length - 1]!));
 
   return displayOrder.length;
+}
+
+/** HLG, as an iPhone records HDR video: its primaries, transfer and matrix all differ from REC709's, the default */
+export const HLG: VideoColorSpaceInit = {
+  // TypeScript's DOM types predate the HDR values WebCodecs defines (bt2020, hlg, pq, bt2020-ncl)
+  primaries: "bt2020" as VideoColorPrimaries,
+  transfer: "hlg" as VideoTransferCharacteristics,
+  matrix: "bt2020-ncl" as VideoMatrixCoefficients,
+  fullRange: false,
+};
+
+/**
+ * Remuxes the stream's first GOP into an MP4 whose `colr` box says
+ * `colorSpace`, then decodes it through Mediabunny with the registered plugin:
+ * Mediabunny reads the box into the decoder config, and every frame must carry it.
+ */
+export async function expectFramesCarryColorSpace(colorSpace: VideoColorSpaceInit): Promise<void> {
+  const source = new Input({ source: new BufferSource(loadStream()), formats: ALL_FORMATS });
+  const sourceTrack = (await source.getPrimaryVideoTrack())!;
+  const decoderConfig = (await sourceTrack.getDecoderConfig())!;
+
+  const output = new Output({ format: new Mp4OutputFormat(), target: new BufferTarget() });
+  const packetSource = new EncodedVideoPacketSource("hevc");
+  output.addVideoTrack(packetSource);
+  await output.start();
+  let meta: EncodedVideoChunkMetadata | undefined = { decoderConfig: { ...decoderConfig, colorSpace } };
+  let keyPackets = 0;
+  for await (const packet of new EncodedPacketSink(sourceTrack).packets()) {
+    // The next key packet starts the second GOP: the first decodes on its own
+    if (packet.type === "key" && ++keyPackets > 1) break;
+    await packetSource.add(packet, meta);
+    meta = undefined;
+  }
+  await output.finalize();
+
+  const input = new Input({ source: new BufferSource(output.target.buffer!), formats: ALL_FORMATS });
+  const track = (await input.getPrimaryVideoTrack())!;
+  expect((await track.getDecoderConfig())!.colorSpace).toEqual(colorSpace);
+
+  let frames = 0;
+  for await (const sample of new VideoSampleSink(track).samples()) {
+    expect(sample.colorSpace.toJSON()).toEqual(colorSpace);
+    frames++;
+    sample.close();
+  }
+  expect(frames).toBeGreaterThan(0);
 }
 
 /** Decodes ~240 frames of 720p twice: ~4s on an M4 Pro, 11.6s on a GitHub runner */
