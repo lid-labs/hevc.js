@@ -8,7 +8,7 @@
  * only honest check configures a real encoder and flushes it — the empty
  * `flush()` right after `configure()` settles it without encoding a frame.
  *
- * The probe itself is the one @uplg posted in #399; this driver speaks
+ * The probe itself is the one uplg posted in #399; this driver speaks
  * WebDriver BiDi (Gecko) and CDP (Chromium) directly, so it needs no
  * dependency beyond node 22+ (global WebSocket) and a browser on the machine.
  *
@@ -20,8 +20,9 @@
  * is. Exit 2 means the browser could not be driven, which is not a verdict.
  */
 import { createServer } from "node:http";
+import { createServer as createSocketServer } from "node:net";
 import { spawn } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -78,7 +79,18 @@ const server = createServer((_, res) =>
   res.setHeader("content-type", "text/html").end("<!doctype html><title>probe</title>"));
 await new Promise((r) => server.listen(0, "127.0.0.1", r));
 const url = `http://127.0.0.1:${server.address().port}/`;
-const port = 9222 + Math.floor(Math.random() * 500);
+
+// A port the OS says is free, rather than a guess: 9222 is the usual CDP
+// port, and a browser the user already has open would answer there — the
+// probe would then drive their session instead of its own.
+const port = await new Promise((resolve, reject) => {
+  const probeSocket = createSocketServer();
+  probeSocket.on("error", reject);
+  probeSocket.listen(0, "127.0.0.1", () => {
+    const { port: free } = probeSocket.address();
+    probeSocket.close(() => resolve(free));
+  });
+});
 const profile = mkdtempSync(join(tmpdir(), "webcodecs-probe-"));
 
 // A throwaway profile, and --no-remote for Gecko: never attach to the
@@ -168,6 +180,7 @@ try {
   try { socket?.close(); } catch { /* never opened */ }
   child.kill("SIGTERM");
   server.close();
+  try { rmSync(profile, { recursive: true, force: true }); } catch { /* the browser may still hold it */ }
 }
 
 if (out) {
