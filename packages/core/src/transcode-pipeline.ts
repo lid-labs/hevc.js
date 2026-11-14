@@ -145,6 +145,14 @@ export class TranscodePipeline {
 
   private async _encodeAndAppend(frames: HEVCFrame[]): Promise<void> {
     if (!this._encoder) {
+      // The constructor cannot run this check itself: it is synchronous, and
+      // an asynchronous refusal needs an await (#406).
+      await H264Encoder.validateLatencyModes({
+        width: frames[0]!.width,
+        height: frames[0]!.height,
+        fps: this._fps,
+        bitrate: this._config.bitrate,
+      });
       this._encoder = new H264Encoder({
         width: frames[0]!.width,
         height: frames[0]!.height,

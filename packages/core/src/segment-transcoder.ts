@@ -188,6 +188,8 @@ export class SegmentTranscoder {
       throw new Error("prepareInit: missing dimensions in HEVC init segment");
     }
 
+    await this._primeLatencyMode(this._width, this._height);
+
     // Use a *throwaway* encoder for the warmup so that the real encoder
     // (created lazily by processMediaSegment) starts in a clean state and
     // its first emitted chunk corresponds to the first real frame. Sharing
@@ -280,6 +282,8 @@ export class SegmentTranscoder {
       this._fpsAutoDetected = true;
       log.debug(`Auto-detected fps: ${this._fps.toFixed(2)} (timescale=${this._timescale}, sample_duration=${samples[0]!.duration})`);
     }
+
+    await this._primeLatencyMode(this._width, this._height);
 
     // Sort sample PTS (composition times) for display-order timestamp assignment.
     // drain() returns frames in display order (POC), but samples are in decode order.
@@ -487,6 +491,8 @@ export class SegmentTranscoder {
       this._fps = this._timescale / samples[0]!.duration;
       this._fpsAutoDetected = true;
     }
+
+    await this._primeLatencyMode(this._width, this._height);
 
     // Sort PTS for display-order timestamp assignment (same fix as sequential path)
     const sortedPts = samples.map(s => s.pts).sort((a, b) => a - b);
@@ -712,6 +718,25 @@ export class SegmentTranscoder {
     if (!this._encoder || (width === this._width && height === this._height)) return;
     log.info(`Resolution changed ${this._width}x${this._height} → ${width}x${height}, recreating encoder`);
     this._dropEncoder();
+  }
+
+  /**
+   * Resolve the encoder's latency mode before anything constructs one.
+   *
+   * `_prepareEncoder()` runs inside the decoder's drain callback and
+   * `H264Encoder`'s constructor is synchronous, while the check that sees an
+   * asynchronous refusal is not (#406). So it belongs here, on the entry
+   * points that already are async — and in this realm, which is the one the
+   * encoder lives in. The memo makes every call after the first free.
+   */
+  private async _primeLatencyMode(width: number, height: number): Promise<void> {
+    if (width === 0 || height === 0) return;
+    await H264Encoder.validateLatencyModes({
+      width,
+      height,
+      fps: this._fps,
+      bitrate: this._config.bitrate,
+    });
   }
 
   /** Create the H.264 encoder, or recreate it when the resolution changed (ABR). */
