@@ -19,19 +19,35 @@ ATTEMPTS="${ATTEMPTS:-12}"   # 12 x 15s = 3 min
 DELAY="${DELAY:-15}"
 REGISTRY="${REGISTRY:-https://registry.npmjs.org}"
 
-# jq inside the process substitution below cannot fail the script: check here
-# that the input parses and lists at least one package, else we'd pass vacuously.
-# The type is checked as well as the count. A valid JSON scalar — `"x"` — has a
-# `length` of its own, so it would clear a bare count check and only fail later,
-# inside that process substitution, where the loop would simply not run and this
-# script would exit 0 having verified nothing. `-1` folds that into the same
-# branch as an empty array.
-count=$(jq 'if type == "array" then length else -1 end' <<<"$PUBLISHED") ||
+# The shape is checked here, not just the count, because `jq` inside the process
+# substitution below cannot fail this script: whatever it refuses to read leaves
+# the loop unrun, and the script would exit 0 having verified nothing. Measured
+# on the version that only counted: `[1]` printed a jq error and exited 0, and
+# `[{"name":"@hevcjs/core"}]` queried the registry without a version — the
+# packument answers 200, so it printed `ok @hevcjs/core@` and exited 0 for a
+# package it never checked. A change in the shape of the action's output, which
+# is what #412 was, would land exactly there.
+shape=$(jq -r '
+  if type != "array" then "not-an-array"
+  elif length == 0 then "empty"
+  elif any(.[]; (type != "object")
+                or ((.name | type) != "string") or (.name == "")
+                or ((.version | type) != "string") or (.version == "")) then "bad-entry"
+  else "ok" end' <<<"$PUBLISHED") ||
   { echo "::error::PUBLISHED is not valid JSON"; exit 1; }
-if [ "$count" -lt 1 ] 2>/dev/null; then
-  echo "::error::PUBLISHED is not a non-empty JSON array of packages (type: $(jq -c 'type' <<<"$PUBLISHED" 2>/dev/null || echo unknown))"
-  exit 1
-fi
+
+case "$shape" in
+  ok) ;;
+  not-an-array)
+    echo "::error::PUBLISHED is not a JSON array (type: $(jq -c 'type' <<<"$PUBLISHED"))"
+    exit 1 ;;
+  empty)
+    echo "::error::PUBLISHED lists no package; nothing to verify"
+    exit 1 ;;
+  bad-entry)
+    echo "::error::PUBLISHED has entries without a usable name and version, so nothing can be verified: $(jq -c . <<<"$PUBLISHED" | cut -c1-300)"
+    exit 1 ;;
+esac
 
 missing=()
 while IFS=$'\t' read -r name version; do
