@@ -10721,31 +10721,99 @@ var HevcShaka = (() => {
     if (pixels > 921600) return "avc1.64002a";
     return "avc1.640028";
   }
-  var H264Encoder = class {
+  var LATENCY_MODES = ["realtime", "quality"];
+  var PROBE_WIDTH = 1280;
+  var PROBE_HEIGHT = 720;
+  var refusedLatencyModes = /* @__PURE__ */ new Set();
+  var latencyValidation = null;
+  function describeError(error) {
+    return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+  }
+  async function probeLatencyMode(config) {
+    let callbackError = null;
+    let encoder = null;
+    try {
+      encoder = new VideoEncoder({
+        output: () => {
+        },
+        error: (e) => {
+          callbackError = e;
+        }
+      });
+      encoder.configure(config);
+      await encoder.flush();
+      return encoder.state === "configured" && callbackError === null;
+    } catch {
+      return false;
+    } finally {
+      try {
+        encoder?.close();
+      } catch {
+      }
+    }
+  }
+  function buildEncoderConfig(width, height, fps, bitrate, latencyMode) {
+    return {
+      codec: pickH264Codec(width, height),
+      width,
+      height,
+      bitrate: bitrate ?? width * height * fps * 0.1,
+      // ~0.1 bpp
+      framerate: fps,
+      hardwareAcceleration: "no-preference",
+      latencyMode,
+      avc: { format: "avc" }
+    };
+  }
+  var H264Encoder = class _H264Encoder {
     constructor(config) {
       this._codecDescription = null;
+      this._error = null;
       this.onChunk = null;
       this.onCodecDescription = null;
       this._width = config.width;
       this._height = config.height;
       this._fps = config.fps ?? 25;
-      this._encoder = new VideoEncoder({
-        output: (chunk, metadata) => this._handleOutput(chunk, metadata),
-        error: (e) => {
-          throw new Error(`VideoEncoder error: ${e.message}`);
+      let chosen = null;
+      const failures = [];
+      for (const latencyMode of LATENCY_MODES.filter((m) => !refusedLatencyModes.has(m))) {
+        const encoder = new VideoEncoder({
+          output: (chunk, metadata) => this._handleOutput(chunk, metadata),
+          // Never throw from here: this runs as a browser task, outside any
+          // catchable stack, which is what made #406 a dead stream instead of a
+          // fallback. flush() surfaces it.
+          error: (e) => {
+            this._error = e;
+          }
+        });
+        try {
+          encoder.configure(
+            buildEncoderConfig(this._width, this._height, this._fps, config.bitrate, latencyMode)
+          );
+          chosen = { encoder, latencyMode };
+          break;
+        } catch (error) {
+          failures.push(`${latencyMode} \u2014 ${describeError(error)}`);
+          try {
+            encoder.close();
+          } catch {
+          }
         }
-      });
-      this._encoder.configure({
-        codec: pickH264Codec(this._width, this._height),
-        width: this._width,
-        height: this._height,
-        bitrate: config.bitrate ?? this._width * this._height * this._fps * 0.1,
-        // ~0.1 bpp
-        framerate: this._fps,
-        hardwareAcceleration: "no-preference",
-        latencyMode: "realtime",
-        avc: { format: "avc" }
-      });
+      }
+      if (!chosen) {
+        throw new Error(
+          failures.length > 0 ? `VideoEncoder.configure() refused every latency mode (${failures.join("; ")})` : `Every latency mode was refused by this backend (${[...refusedLatencyModes].join(", ")})`
+        );
+      }
+      this._encoder = chosen.encoder;
+      this._latencyMode = chosen.latencyMode;
+    }
+    /**
+     * The latency mode this encoder actually got. `"quality"` means `"realtime"`
+     * was refused by the backend; output format is identical either way.
+     */
+    get latencyMode() {
+      return this._latencyMode;
     }
     /** Get the H.264 codec string used by this encoder */
     get codec() {
@@ -10760,6 +10828,11 @@ var HevcShaka = (() => {
      * Converts Uint16Array YUV planes to I420 Uint8Array, creates VideoFrame, encodes.
      */
     encode(frame, timestampUs, keyFrame = false) {
+      if (this._error) {
+        throw new Error(
+          `VideoEncoder is no longer usable in latencyMode "${this._latencyMode}" (${describeError(this._error)})`
+        );
+      }
       const w = frame.width;
       const h = frame.height;
       const cw = frame.chromaWidth;
@@ -10791,9 +10864,26 @@ var HevcShaka = (() => {
       this._encoder.encode(videoFrame, { keyFrame });
       videoFrame.close();
     }
-    /** Flush the encoder — waits for all pending chunks to be output */
+    /**
+     * Flush the encoder — waits for all pending chunks to be output.
+     *
+     * Also where an asynchronous failure surfaces. The error callback only
+     * records (#406), so this is what turns it into a rejection, on a path
+     * every caller already awaits.
+     */
     async flush() {
-      await this._encoder.flush();
+      try {
+        await this._encoder.flush();
+      } catch (error) {
+        throw new Error(
+          `VideoEncoder.flush() failed in latencyMode "${this._latencyMode}": ${describeError(this._error ?? error)}`
+        );
+      }
+      if (this._error) {
+        throw new Error(
+          `VideoEncoder failed in latencyMode "${this._latencyMode}": ${describeError(this._error)}`
+        );
+      }
     }
     /** Close the encoder and release resources */
     close() {
@@ -10804,26 +10894,55 @@ var HevcShaka = (() => {
       return typeof VideoEncoder !== "undefined";
     }
     /**
-     * Async capability probe — checks that VideoEncoder can actually encode H.264.
-     * Firefox exposes VideoEncoder but may not support H.264 encoding.
-     * Returns false if the API is missing or the config is not supported.
+     * Async capability probe — answers whether this environment can encode
+     * H.264 with the configuration this class builds, by actually configuring
+     * an encoder and flushing it empty. `isConfigSupported()` alone cannot
+     * answer: it says yes for a mode Gecko then refuses asynchronously (#406).
+     *
+     * Pass the stream's dimensions when they are known: the codec string
+     * depends on resolution, so a probe at the default 720p cannot answer for
+     * a 4K encode. Callers that probe before seeing a segment — both plugins
+     * do — keep that gap: the fallback changes `latencyMode`, not the codec
+     * (#399).
      */
-    static async checkSupport() {
+    static async checkSupport(options) {
       if (typeof VideoEncoder === "undefined") return false;
       if (typeof VideoEncoder.isConfigSupported !== "function") return false;
-      try {
-        const result = await VideoEncoder.isConfigSupported({
-          codec: "avc1.640028",
-          width: 640,
-          height: 480,
-          bitrate: 1e6,
-          framerate: 25,
-          hardwareAcceleration: "prefer-software"
-        });
-        return result.supported === true;
-      } catch {
-        return false;
-      }
+      return await _H264Encoder.validateLatencyModes(options) !== null;
+    }
+    /**
+     * Resolve which latency mode this backend really encodes in, and remember
+     * it for the realm. Returns the first viable mode, or `null` when none is.
+     *
+     * Call it from an async path before anything constructs an encoder: the
+     * constructor is synchronous and cannot run this check itself, which is
+     * exactly how #406 shipped. Repeat calls return the first result — the
+     * memo is a promise, so concurrent callers share one validation.
+     */
+    static async validateLatencyModes(options) {
+      if (typeof VideoEncoder === "undefined") return null;
+      latencyValidation ?? (latencyValidation = (async () => {
+        const width = options?.width ?? PROBE_WIDTH;
+        const height = options?.height ?? PROBE_HEIGHT;
+        const fps = options?.fps ?? 25;
+        for (const latencyMode of LATENCY_MODES) {
+          const config = buildEncoderConfig(width, height, fps, options?.bitrate, latencyMode);
+          if (typeof VideoEncoder.isConfigSupported === "function") {
+            try {
+              const result = await VideoEncoder.isConfigSupported(config);
+              if (result.supported !== true) {
+                refusedLatencyModes.add(latencyMode);
+                continue;
+              }
+            } catch {
+            }
+          }
+          if (await probeLatencyMode(config)) return latencyMode;
+          refusedLatencyModes.add(latencyMode);
+        }
+        return null;
+      })());
+      return latencyValidation;
     }
     _handleOutput(chunk, metadata) {
       if (metadata?.decoderConfig?.description && !this._codecDescription) {
@@ -11570,6 +11689,7 @@ var HevcShaka = (() => {
       if (this._width === 0 || this._height === 0) {
         throw new Error("prepareInit: missing dimensions in HEVC init segment");
       }
+      await this._primeLatencyMode(this._width, this._height);
       const warmup = new H264Encoder({
         width: this._width,
         height: this._height,
@@ -11623,6 +11743,7 @@ var HevcShaka = (() => {
         this._fpsAutoDetected = true;
         log.debug(`Auto-detected fps: ${this._fps.toFixed(2)} (timescale=${this._timescale}, sample_duration=${samples[0].duration})`);
       }
+      await this._primeLatencyMode(this._width, this._height);
       const sortedPts = samples.map((s) => s.pts).sort((a, b) => a - b);
       const ptsAssigner = new DisplayPtsAssigner(sortedPts, samples[0].duration);
       const assigned = [];
@@ -11757,6 +11878,7 @@ var HevcShaka = (() => {
         this._fps = this._timescale / samples[0].duration;
         this._fpsAutoDetected = true;
       }
+      await this._primeLatencyMode(this._width, this._height);
       const sortedPts = samples.map((s) => s.pts).sort((a, b) => a - b);
       const ptsAssigner = new DisplayPtsAssigner(sortedPts, samples[0].duration);
       if (!this._paramSetsFed && this._paramSetsBuffer) {
@@ -11933,6 +12055,24 @@ var HevcShaka = (() => {
       if (!this._encoder || width === this._width && height === this._height) return;
       log.info(`Resolution changed ${this._width}x${this._height} \u2192 ${width}x${height}, recreating encoder`);
       this._dropEncoder();
+    }
+    /**
+     * Resolve the encoder's latency mode before anything constructs one.
+     *
+     * `_prepareEncoder()` runs inside the decoder's drain callback and
+     * `H264Encoder`'s constructor is synchronous, while the check that sees an
+     * asynchronous refusal is not (#406). So it belongs here, on the entry
+     * points that already are async — and in this realm, which is the one the
+     * encoder lives in. The memo makes every call after the first free.
+     */
+    async _primeLatencyMode(width, height) {
+      if (width === 0 || height === 0) return;
+      await H264Encoder.validateLatencyModes({
+        width,
+        height,
+        fps: this._fps,
+        bitrate: this._config.bitrate
+      });
     }
     /** Create the H.264 encoder, or recreate it when the resolution changed (ABR). */
     _prepareEncoder(width, height) {

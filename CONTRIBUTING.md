@@ -112,6 +112,24 @@ pnpm test:e2e:prod
 E2E_CPU_THROTTLE=10 npx playwright test --project=local-chromium -g "drops the cap"
 ```
 
+### Probing a browser's WebCodecs latency modes
+
+Whether a browser encodes H.264 in the `latencyMode` it accepts cannot be read
+from `isConfigSupported()`: Gecko answers `true`, takes `configure()` without
+throwing, and then closes the encoder through its error callback (#406). The
+probe configures a real encoder and flushes it empty, which settles it without
+encoding a frame.
+
+```bash
+node tools/probe_webcodecs_latency.mjs gecko /Applications/Zen.app/Contents/MacOS/zen
+node tools/probe_webcodecs_latency.mjs chromium "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+```
+
+It needs no dependency beyond node 22+ and a browser on the machine — it drives
+Gecko over WebDriver BiDi and Chromium over CDP itself, headless, in a throwaway
+profile. It exits 1 when a mode the browser accepted twice encoded nothing, and 2
+when the browser could not be driven, which is not a verdict.
+
 ### Regenerating the demo streams
 
 `tools/gen_dash_streams.sh` encodes the DASH mires; `tools/gen_hls_streams.sh`

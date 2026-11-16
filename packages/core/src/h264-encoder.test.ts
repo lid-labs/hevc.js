@@ -1,10 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { H264Encoder } from "./h264-encoder.js";
+import { H264Encoder, __resetLatencyValidation } from "./h264-encoder.js";
 
 // Node has no VideoEncoder: every test stubs the one it needs.
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  // The validation memo lives in the module, so it would leak into the next
+  // test — a realm lasts the whole file.
+  __resetLatencyValidation();
 });
 
 type Mode = "realtime" | "quality" | undefined;
@@ -12,10 +15,14 @@ type Mode = "realtime" | "quality" | undefined;
 /**
  * Minimal VideoEncoder stand-in. `refuse` names the latency modes whose
  * configure() throws NotSupportedError, which is how a backend that does not
- * take a mode reports it. Every config it is handed is recorded, so a test can
- * compare what was probed against what was configured.
+ * take a mode reports it synchronously. `asyncRefuse` names the modes refused
+ * the way Gecko does it (#406): isConfigSupported() says yes, configure()
+ * takes it, and the refusal only arrives through the error callback, with
+ * flush() rejecting and the encoder closed. Every config it is handed is
+ * recorded, so a test can compare what was probed against what was
+ * configured.
  */
-function fakeVideoEncoder(refuse: Mode[] = []) {
+function fakeVideoEncoder(refuse: Mode[] = [], asyncRefuse: Mode[] = []) {
   const configured: VideoEncoderConfig[] = [];
   const probed: VideoEncoderConfig[] = [];
   const closed: number[] = [];
@@ -24,17 +31,34 @@ function fakeVideoEncoder(refuse: Mode[] = []) {
   class FakeVideoEncoder {
     state = "unconfigured";
     private _id: number;
-    constructor(_init: VideoEncoderInit) {
+    private _mode: Mode;
+    private _onError: (e: Error) => void;
+    constructor(init: VideoEncoderInit) {
       this._id = instances++;
+      this._onError = init.error as unknown as (e: Error) => void;
     }
     configure(config: VideoEncoderConfig): void {
       configured.push(config);
+      this._mode = config.latencyMode;
       if (refuse.includes(config.latencyMode)) {
         const error = new Error("The given encoding is not supported");
         error.name = "NotSupportedError";
         throw error;
       }
       this.state = "configured";
+    }
+    encode(): void {}
+    flush(): Promise<void> {
+      if (asyncRefuse.includes(this._mode)) {
+        const error = new Error("The given encoding is not supported.");
+        error.name = "EncodingError";
+        // Order as measured: the callback fires, the encoder is closed, and
+        // the pending flush rejects.
+        this._onError(error);
+        this.state = "closed";
+        return Promise.reject(error);
+      }
+      return Promise.resolve();
     }
     close(): void {
       closed.push(this._id);
@@ -75,7 +99,7 @@ describe("H264Encoder.checkSupport", () => {
     });
 
     new H264Encoder({ width: probe!.width, height: probe!.height, fps: probe!.framerate });
-    expect(fake.configured[0]).toEqual(probe);
+    expect(fake.configured[fake.configured.length - 1]).toEqual(probe);
   });
 
   it("accepts a backend that only takes quality, after realtime is refused", async () => {
@@ -138,5 +162,80 @@ describe("H264Encoder constructor", () => {
     const fake = fakeVideoEncoder();
     new H264Encoder({ width: 1920, height: 1080 });
     expect(fake.configured[0]).toMatchObject({ codec: "avc1.64002a", width: 1920, height: 1080 });
+  });
+});
+
+describe("H264Encoder.validateLatencyModes", () => {
+  it("rejects a mode the backend only refuses asynchronously", async () => {
+    // The defect of #406: isConfigSupported() and configure() both accept
+    // realtime, and the encoder dies a few milliseconds later.
+    const fake = fakeVideoEncoder([], ["realtime"]);
+    expect(await H264Encoder.validateLatencyModes()).toBe("quality");
+    expect(fake.probed.map(c => c.latencyMode)).toEqual(["realtime", "quality"]);
+    expect(fake.configured.map(c => c.latencyMode)).toEqual(["realtime", "quality"]);
+  });
+
+  it("keeps realtime on a backend that encodes in it", async () => {
+    fakeVideoEncoder();
+    expect(await H264Encoder.validateLatencyModes()).toBe("realtime");
+  });
+
+  it("returns null when every mode is refused asynchronously", async () => {
+    fakeVideoEncoder([], ["realtime", "quality"]);
+    expect(await H264Encoder.validateLatencyModes()).toBeNull();
+    expect(await H264Encoder.checkSupport()).toBe(false);
+  });
+
+  it("validates once per realm, however many callers ask", async () => {
+    const fake = fakeVideoEncoder([], ["realtime"]);
+    const [a, b] = await Promise.all([
+      H264Encoder.validateLatencyModes(),
+      H264Encoder.validateLatencyModes(),
+    ]);
+    expect([a, b]).toEqual(["quality", "quality"]);
+    await H264Encoder.validateLatencyModes();
+    expect(fake.probed).toHaveLength(2);
+  });
+
+  it("makes the constructor skip the mode it refused", async () => {
+    const fake = fakeVideoEncoder([], ["realtime"]);
+    await H264Encoder.validateLatencyModes({ width: 1280, height: 720 });
+    const before = fake.configured.length;
+
+    const encoder = new H264Encoder({ width: 1280, height: 720 });
+
+    expect(encoder.latencyMode).toBe("quality");
+    // Not even tried: a synchronous configure() cannot tell this mode apart
+    // from a working one.
+    expect(fake.configured.slice(before).map(c => c.latencyMode)).toEqual(["quality"]);
+  });
+
+  it("names both modes when validation left none", async () => {
+    fakeVideoEncoder([], ["realtime", "quality"]);
+    await H264Encoder.validateLatencyModes();
+    expect(() => new H264Encoder({ width: 1280, height: 720 })).toThrow(/realtime.*quality/);
+  });
+});
+
+describe("H264Encoder asynchronous failure", () => {
+  // Without validation — a realm that was never primed — the encoder still has
+  // to fail where a caller can catch it, instead of throwing from a browser
+  // task as it did before #406.
+  it("rejects from flush() instead of throwing from the error callback", async () => {
+    fakeVideoEncoder([], ["realtime"]);
+    const encoder = new H264Encoder({ width: 1280, height: 720 });
+    expect(encoder.latencyMode).toBe("realtime");
+
+    await expect(encoder.flush()).rejects.toThrow(/EncodingError.*not supported/);
+    await expect(encoder.flush()).rejects.toThrow(/realtime/);
+  });
+
+  it("refuses to encode once the encoder has failed", async () => {
+    fakeVideoEncoder([], ["realtime"]);
+    const encoder = new H264Encoder({ width: 1280, height: 720 });
+    await expect(encoder.flush()).rejects.toThrow();
+
+    expect(() => encoder.encode({ width: 1280, height: 720 } as never, 0, true))
+      .toThrow(/no longer usable/);
   });
 });
