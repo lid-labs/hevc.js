@@ -16,11 +16,27 @@
  * Shaka's default, i.e. the behaviour this issue is about.
  *
  * The latency is measured and printed rather than bounded — see the note above
- * the sampling loop. Against the local demo server it is not even
- * comparable: Shaka takes its ABR decisions from NetworkingEngine progress
- * events, and a local server hands over a whole segment at once, so those
- * events are scarce and decisions with them (24-28s locally against 9.3-9.9s
- * deployed, at the same 8s setting).
+ * the sampling loop.
+ *
+ * **Against the local demo server the measurement is not reliable**, so this
+ * spec reports its series and skips there rather than failing (#408). Shaka
+ * drives `SimpleAbrManager.suggestStreams_()` from the bandwidth samples
+ * `segmentDownloaded()` feeds it, and a local server hands over a whole
+ * segment without a measurable download time — so whether any ABR decision
+ * happens at all is a matter of luck. Three runs on `main` at 08e3442,
+ * macOS 27.2.1 / Apple M4 Pro, local Chrome, 6x throttle, 180s budget: twice
+ * the active variant never obeyed a cap that had lowered at ~9.8s, once it
+ * obeyed 14.3s after it. An instrumented run of the first kind showed the cap
+ * correctly on the player — `abr.enabled` true, `switchInterval` 2,
+ * `abr.restrictions.maxHeight` 720 at 6.5s then 480 at 13.8s — while
+ * `getStats().estimatedBandwidth` stayed frozen at its initial 9600 kbps,
+ * `switchHistory` held one single entry (the initial pick, t=60ms) and
+ * `adaptation` fired once, at t=62ms. ABR took no decision in which the cap
+ * could be honoured, which is not a cap that failed.
+ *
+ * The same code measured 7.1s against the deployed site on 2026-11-16, which
+ * is the target the assertion below runs on — and the one `e2e-throttled.yml`
+ * uses nightly.
  */
 import { test, expect, type Page } from '@playwright/test';
 import { IS_LOCAL } from './target';
@@ -178,15 +194,23 @@ test.describe('Compute-aware cap — time to reach the screen', () => {
         lowerAt == null,
         `the cap never lowered in this run, so there is no latency to measure:\n${series}`,
       );
+      // See the header: against the local server Shaka may take no ABR
+      // decision at all after its initial pick, so whether the cap reaches the
+      // screen within the budget is luck rather than a property of the code.
+      // Everything above still ran — the series is reported, and the
+      // switchInterval assertion is exact on either target.
+      test.skip(
+        IS_LOCAL,
+        `local target: Shaka's ABR decisions are too scarce here for this latency to mean anything (#408):\n${series}`,
+      );
       expect(
         obeyedAt,
         `the cap lowered at ${(lowerAt! / 1000).toFixed(1)}s and the active variant never obeyed it:\n${series}`,
       ).not.toBeNull();
 
-      console.log(
-        `[#263] ${IS_LOCAL ? 'local' : 'deployed'} target: latency ${latencyS!.toFixed(1)}s` +
-          `${IS_LOCAL ? ' (not comparable — scarce progress events against the local server)' : ''}`,
-      );
+      // Only the deployed target reaches this line: the skip above returns on
+      // a local one.
+      console.log(`[#263] deployed target: latency ${latencyS!.toFixed(1)}s`);
     } finally {
       await restoreCpu();
     }
