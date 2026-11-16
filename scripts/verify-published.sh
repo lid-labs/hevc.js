@@ -1,21 +1,35 @@
 #!/usr/bin/env bash
 # Reads each "published" package back from the npm registry and fails if any
-# is missing. Input: the `publishedPackages` output of changesets/action, i.e.
+# is missing. Input: the `published-packages` output of changesets/action, i.e.
 # a JSON array of {"name": "...", "version": "..."}, in $PUBLISHED.
 # The registry is queried directly with curl: `npm view` caches locally, and
-# a new version takes ~70s to be served after `npm publish` (measured, #402).
+# a new version takes ~70s to be served after `npm publish` (measured, #402;
+# 2.5 min across the five packages on 2026-11-16).
 set -u
 
-: "${PUBLISHED:?PUBLISHED (JSON array) is required}"
+# The caller only runs this when changesets reported a publication, so an empty
+# input means the list did not reach us rather than "nothing was published" —
+# a renamed or misspelled output name reads as "" in a GitHub expression, which
+# is how #412 went unnoticed. Say so, instead of just "required".
+if [ -z "${PUBLISHED:-}" ]; then
+  echo "::error::PUBLISHED is empty. Packages were published but the list did not reach this step — check the output name in release.yml against the pinned changesets/action (v2: published-packages)."
+  exit 1
+fi
 ATTEMPTS="${ATTEMPTS:-12}"   # 12 x 15s = 3 min
 DELAY="${DELAY:-15}"
 REGISTRY="${REGISTRY:-https://registry.npmjs.org}"
 
 # jq inside the process substitution below cannot fail the script: check here
 # that the input parses and lists at least one package, else we'd pass vacuously.
-count=$(jq 'length' <<<"$PUBLISHED") || { echo "::error::PUBLISHED is not valid JSON"; exit 1; }
+# The type is checked as well as the count. A valid JSON scalar — `"x"` — has a
+# `length` of its own, so it would clear a bare count check and only fail later,
+# inside that process substitution, where the loop would simply not run and this
+# script would exit 0 having verified nothing. `-1` folds that into the same
+# branch as an empty array.
+count=$(jq 'if type == "array" then length else -1 end' <<<"$PUBLISHED") ||
+  { echo "::error::PUBLISHED is not valid JSON"; exit 1; }
 if [ "$count" -lt 1 ] 2>/dev/null; then
-  echo "::error::PUBLISHED lists no package; nothing to verify"
+  echo "::error::PUBLISHED is not a non-empty JSON array of packages (type: $(jq -c 'type' <<<"$PUBLISHED" 2>/dev/null || echo unknown))"
   exit 1
 fi
 
