@@ -47,6 +47,15 @@ case "$shape" in
   bad-entry)
     echo "::error::PUBLISHED has entries without a usable name and version, so nothing can be verified: $(jq -c . <<<"$PUBLISHED" | cut -c1-300)"
     exit 1 ;;
+  *)
+    # `jq` can succeed while emitting nothing — whitespace-only input clears the
+    # `-z` test above and parses to no value at all — or emitting one verdict per
+    # document, for input holding several (`1 2`). Both leave `$shape` matching
+    # none of the branches above, and without this one the script would fall
+    # through to a loop that reads nothing and exit 0, reporting success for a
+    # release it never looked at.
+    echo "::error::PUBLISHED could not be classified (jq verdict: '$shape'); refusing to report a release as verified"
+    exit 1 ;;
 esac
 
 missing=()
