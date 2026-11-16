@@ -101,5 +101,10 @@ jobs:
       - name: Verify the registry serves what was published
         if: steps.changesets.outputs.published == 'true'
         env:
-          PUBLISHED: ${{ steps.changesets.outputs.publishedPackages }}
+          # `published-packages`, not the v1 `publishedPackages`: v2 renamed its
+          # outputs to kebab-case, except `published` — which is why the `if`
+          # above kept working while this resolved to "" and the step died on
+          # its own input without querying anything (#412). An unknown output
+          # name is not an error in GitHub expressions, it is an empty string.
+          PUBLISHED: ${{ steps.changesets.outputs.published-packages }}
         run: scripts/verify-published.sh
