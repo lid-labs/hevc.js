@@ -37,7 +37,7 @@
     "ott",
     "media-source-extensions"
   ],
-  "author": "privaloops",
+  "author": { "name": "Lion informatique et Développement (LID)", "url": "https://www.developpement.ai" },
   "license": "MIT",
   "homepage": "https://hevcjs.dev",
   "repository": {

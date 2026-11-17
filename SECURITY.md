@@ -16,7 +16,7 @@ If you discover a security vulnerability in hevc.js, please report it responsibl
 Instead, use one of these channels:
 
 1. **GitHub Security Advisories** (preferred): [Report a vulnerability](https://github.com/lid-labs/hevc.js/security/advisories/new)
-2. **Email**: contact@developpement.ai
+2. **Email**: contact@developpement.ai (Lion informatique et Développement, LID)
 
 ### What to include
 
