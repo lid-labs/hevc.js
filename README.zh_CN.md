@@ -405,7 +405,7 @@ npx serve demo      # 打开 http://localhost:3000
 
 ## 许可证
 
-MIT — 详见 [LICENSE](LICENSE)。
+MIT — 详见 [LICENSE](LICENSE)。hevc.js 由 Lion informatique et Développement(LID)开发和维护。
 
 HEVC/H.265 可能涉及由 Access Advance 等专利池管理的专利。本软件是一个独立实现,不包含也不授予任何专利许可。用户有责任在其所在司法管辖区和使用场景下评估专利义务。
 

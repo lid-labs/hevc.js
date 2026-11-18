@@ -77,7 +77,7 @@
     "hlsjs"
   ],
   "license": "MIT",
-  "author": "Thibaut Lion",
+  "author": { "name": "Lion informatique et Développement (LID)", "url": "https://www.developpement.ai" },
   "homepage": "https://hevcjs.dev",
   "repository": {
     "type": "git",

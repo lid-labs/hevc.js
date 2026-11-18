@@ -507,7 +507,7 @@ Thanks goes to these people ([emoji key](https://allcontributors.org/docs/en/emo
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE). hevc.js is developed and maintained by Lion informatique et Développement (LID).
 
 HEVC/H.265 may be covered by patents managed by Access Advance and other patent pools. This software is an independent implementation and does not include or grant any patent license. Users are responsible for evaluating patent obligations in their jurisdiction and use case.
 
