@@ -1,5 +1,13 @@
 # @hevcjs/mediabunny-plugin
 
+## 0.1.4
+
+### Patch Changes
+
+- [#416](https://github.com/lid-labs/hevc.js/pull/416) [`0636d02`](https://github.com/lid-labs/hevc.js/commit/0636d024365c4b8994962a15ebbd2cd49c6026b4) Thanks [@privaloops](https://github.com/privaloops)! - Package metadata: the `author` field now names the publisher, Lion informatique et Développement (LID). No code change.
+- Updated dependencies [[`0636d02`](https://github.com/lid-labs/hevc.js/commit/0636d024365c4b8994962a15ebbd2cd49c6026b4)]:
+  - @hevcjs/core@1.9.1
+
 ## 0.1.3
 
 ### Patch Changes
