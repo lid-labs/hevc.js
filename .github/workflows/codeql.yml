@@ -56,7 +56,7 @@ jobs:
           # list as "docs only". The jobs below then run anyway, because they test
           # `needs.changes.result != 'success'`: a failed gate must never turn into
           # skipped jobs, which count as passed.
-          files=$(gh api "repos/$REPO/pulls/$PR/files" --paginate -q '.[].filename')
+          files=$(gh api "repos/$REPO/pulls/$PR/files" --paginate -q '.[] | .filename, (.previous_filename // empty)')
           # Anything that is neither Markdown nor under docs/ counts as code.
           if grep -qvE '\.md$|^docs/' <<< "$files"; then code=true; else code=false; fi
           echo "code=$code" >> "$GITHUB_OUTPUT"
