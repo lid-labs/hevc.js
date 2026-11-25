@@ -135,6 +135,13 @@ jobs:
 
       - name: Run unit tests
         working-directory: build
+        # The Debug build logs every decoder category to stderr unless a filter
+        # is set, and ctest captures it: 819,000 lines for one test, which took
+        # 24 s and then went past its 120 s timeout when the runner image changed.
+        # NONE matches no category (0.29 s locally for the same test). Unset it
+        # to get the trace back when a test fails.
+        env:
+          HEVC_DEBUG_FILTER: NONE
         run: ctest --output-on-failure --label-exclude oracle
 
       - name: Verify test count
