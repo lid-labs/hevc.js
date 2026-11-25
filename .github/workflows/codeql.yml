@@ -27,9 +27,48 @@ permissions:
   contents: read
 
 jobs:
+  # Gate for pull requests that only touch documentation. Jobs are skipped with
+  # `if:` rather than the workflow with `paths-ignore`: a skipped job reports as
+  # passed, whereas a skipped workflow leaves the required checks pending and
+  # the pull request unmergeable. Every other event runs everything.
+  changes:
+    name: Changed paths
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+      cpp: ${{ steps.filter.outputs.cpp }}
+    steps:
+      - id: filter
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [ "$EVENT" != pull_request ]; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            echo "cpp=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # A failed API call stops this job (bash -e) instead of reading an empty
+          # list as "docs only". The jobs below then run anyway, because they test
+          # `needs.changes.result != 'success'`: a failed gate must never turn into
+          # skipped jobs, which count as passed.
+          files=$(gh api "repos/$REPO/pulls/$PR/files" --paginate -q '.[] | .filename, (.previous_filename // empty)')
+          # Anything that is neither Markdown nor under docs/ counts as code.
+          if grep -qvE '\.md$|^docs/' <<< "$files"; then code=true; else code=false; fi
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          # The C++ analysis only matters when the decoder sources or the build change.
+          if grep -qE '^src/|^CMakeLists\.txt$' <<< "$files"; then cpp=true; else cpp=false; fi
+          echo "cpp=$cpp" >> "$GITHUB_OUTPUT"
+
   analyze-cpp:
     name: Analyze C++
     runs-on: ubuntu-latest
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.cpp == 'true') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -52,6 +91,8 @@ jobs:
   analyze-js:
     name: Analyze JavaScript/TypeScript
     runs-on: ubuntu-latest
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.code == 'true') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 

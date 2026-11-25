@@ -198,6 +198,8 @@ This repo uses [Changesets](https://github.com/changesets/changesets) to manage 
 
 PRs that only touch docs, CI, tests, or build configuration don't need a changeset.
 
+A PR whose files are all Markdown or under `docs/` skips the test, build and CodeQL jobs (the `Changed paths` job decides); the C++ CodeQL analysis runs on a PR only when `src/` or `CMakeLists.txt` changes.
+
 A CI check (`Changeset present`) fails a PR that changes `src/`, `packages/*/src/` (test files excepted) or `packages/core/wasm/` without adding or modifying a changeset. For a change with no observable effect, such as a pure refactor, run `pnpm changeset --empty`: it records that no release note is needed without bumping any version. The check cannot tell whether a changeset still describes the whole diff — revisit it after every later fix in the same PR.
 
 ### Don't
