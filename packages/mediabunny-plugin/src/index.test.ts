@@ -1,7 +1,14 @@
 /** The plugin decoding on the page's thread, end to end through Mediabunny under Node. */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { registerHevcDecoder } from "./index.js";
-import { DECODE_TEST_TIMEOUT, expectDecodesThroughMediabunny, installWasmGlobal, removeWasmGlobal } from "./test-utils.js";
+import {
+  DECODE_TEST_TIMEOUT,
+  expectDecodesThroughMediabunny,
+  expectFramesCarryColorSpace,
+  HLG,
+  installWasmGlobal,
+  removeWasmGlobal,
+} from "./test-utils.js";
 
 beforeAll(installWasmGlobal);
 afterAll(removeWasmGlobal);
@@ -16,5 +23,10 @@ describe("registerHevcDecoder", () => {
   it("decodes an HEVC track through Mediabunny, frames timed in display order", async () => {
     await registerHevcDecoder();
     await expectDecodesThroughMediabunny();
+  }, DECODE_TEST_TIMEOUT);
+
+  it("gives every frame the colour space of the track", async () => {
+    await registerHevcDecoder();
+    await expectFramesCarryColorSpace(HLG);
   }, DECODE_TEST_TIMEOUT);
 });

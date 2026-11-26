@@ -18,6 +18,7 @@ import type { VideoCodec } from "mediabunny";
 import { HEVCDecoder } from "@hevcjs/core/decoder";
 import type { DecoderOptions } from "@hevcjs/core/decoder";
 import { packetToAnnexB, readStreamConfig } from "./bitstream.js";
+import { frameColorSpace } from "./color-space.js";
 import { packFrame } from "./frames.js";
 import type { PackedFrame } from "./frames.js";
 import { OutputTimestamps } from "./output-timestamps.js";
@@ -137,6 +138,7 @@ class HevcDecoder extends CustomVideoDecoder {
   private _nalLengthSize = 0;
   private _lastYield = 0;
   private readonly _timestamps = new OutputTimestamps();
+  private _colorSpace: VideoColorSpaceInit | null = null;
 
   static override supports(codec: VideoCodec, config: VideoDecoderConfig): boolean {
     if (!settings || codec !== "hevc") return false;
@@ -150,6 +152,7 @@ class HevcDecoder extends CustomVideoDecoder {
   async init(): Promise<void> {
     const stream = readStreamConfig(this.config.codec, this.config.description);
     const { worker, decoderOptions, i420p10 } = settings!;
+    this._colorSpace = frameColorSpace(this.config.colorSpace);
 
     if (worker) {
       this._worker = await DecodeWorkerClient.open(
@@ -215,12 +218,12 @@ class HevcDecoder extends CustomVideoDecoder {
       const slot = this._timestamps.next(frame);
       // More frames than packets only comes out of a corrupt stream
       if (!slot) continue;
-      this.onSample(toVideoSample(frame, slot));
+      this.onSample(toVideoSample(frame, slot, this._colorSpace!));
     }
   }
 }
 
-function toVideoSample(frame: PackedFrame, slot: SlotTime): VideoSample {
+function toVideoSample(frame: PackedFrame, slot: SlotTime, colorSpace: VideoColorSpaceInit): VideoSample {
   const { format, data, width: codedWidth, height: codedHeight } = frame;
 
   if (typeof VideoFrame !== "undefined") {
@@ -232,6 +235,7 @@ function toVideoSample(frame: PackedFrame, slot: SlotTime): VideoSample {
       codedHeight,
       timestamp: Math.round(slot.timestamp * 1e6),
       duration: Math.round(slot.duration * 1e6),
+      colorSpace,
     });
     return new VideoSample(videoFrame, { timestamp: slot.timestamp, duration: slot.duration });
   }
@@ -242,5 +246,6 @@ function toVideoSample(frame: PackedFrame, slot: SlotTime): VideoSample {
     codedHeight,
     timestamp: slot.timestamp,
     duration: slot.duration,
+    colorSpace,
   });
 }

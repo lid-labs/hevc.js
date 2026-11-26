@@ -9,7 +9,15 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDecodeWorkerHandler } from "./decode-worker.js";
 import { registerHevcDecoder } from "./index.js";
 import type { ToWorker } from "./worker-protocol.js";
-import { DECODE_TEST_TIMEOUT, expectDecodesThroughMediabunny, installWasmGlobal, removeWasmGlobal, wasmDir } from "./test-utils.js";
+import {
+  DECODE_TEST_TIMEOUT,
+  expectDecodesThroughMediabunny,
+  expectFramesCarryColorSpace,
+  HLG,
+  installWasmGlobal,
+  removeWasmGlobal,
+  wasmDir,
+} from "./test-utils.js";
 
 const started: string[] = [];
 let outputMessages = 0;
@@ -53,5 +61,10 @@ describe("registerHevcDecoder({ workerUrl })", () => {
     expect(started).toEqual([workerUrl]);
     // One answer per packet: every frame came back from the worker
     expect(outputMessages).toBe(packetCount);
+  }, DECODE_TEST_TIMEOUT);
+
+  // After the test above, which registers with the worker and counts its messages
+  it("gives every frame the colour space of the track", async () => {
+    await expectFramesCarryColorSpace(HLG);
   }, DECODE_TEST_TIMEOUT);
 });
